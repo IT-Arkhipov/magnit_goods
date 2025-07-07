@@ -1,6 +1,5 @@
 from dataclasses import dataclass
-from codes import *
-
+from .codes import *
 
 @dataclass
 class Products:
@@ -17,3 +16,5 @@ syry_mm = Products(
     product="Сыры",
     codes=syry_mm_codes
 )
+
+products = [moloko_yaytsa, syry_mm]
