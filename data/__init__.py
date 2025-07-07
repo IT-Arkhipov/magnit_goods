@@ -1,1 +1,1 @@
-from .product_codes import *
+from .products import *
