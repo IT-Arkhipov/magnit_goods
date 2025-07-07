@@ -7,6 +7,7 @@ load_dotenv()
 
 class Settings(BaseSettings):
     store_code: str
+    goods_url: str
 
 
 settings = Settings()
