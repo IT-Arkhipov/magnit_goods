@@ -1,8 +1,9 @@
+from pages.product_pages import list_products
 from utils import settings
 
 
 def main():
-    print(settings.store_code)
+    list_products()
 
 
 if __name__ == "__main__":
