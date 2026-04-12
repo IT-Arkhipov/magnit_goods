@@ -8,7 +8,7 @@ from datetime import datetime
 from sqlalchemy import or_
 from src.server.database import get_db
 from src.server.models import Store, ScanJob
-from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest
+from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
 
@@ -300,15 +300,14 @@ def scan_stores(
 
 @router.post("/delete-batch", status_code=204)
 def delete_stores_batch(
-    req: dict,
+    req: DeleteStoresRequest,
     db: Session = Depends(get_db),
 ):
     """Удалить несколько магазинов по ID."""
-    ids = req.get("ids", [])
-    if not ids:
+    if not req.ids:
         raise HTTPException(status_code=400, detail="Список ID пуст")
-    
-    db.query(Store).filter(Store.id.in_(ids)).delete(synchronize_session=False)
+
+    db.query(Store).filter(Store.id.in_(req.ids)).delete(synchronize_session=False)
     db.commit()
     return None
 

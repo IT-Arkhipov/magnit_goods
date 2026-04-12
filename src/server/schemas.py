@@ -76,6 +76,10 @@ class SelectStoreRequest(BaseModel):
     update_env: bool = True
 
 
+class DeleteStoresRequest(BaseModel):
+    ids: list[int]
+
+
 # ===== ScanJob =====
 
 class ScanJobResponse(BaseModel):
