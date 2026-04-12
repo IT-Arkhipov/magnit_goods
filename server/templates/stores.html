@@ -49,6 +49,49 @@
     </form>
 </div>
 
+<!-- Сканирование по адресу -->
+<div class="card">
+    <h2>Сканировать магазины по адресу</h2>
+    <p style="color:#666;margin-bottom:12px;">Введите город и улицу. Сервер найдёт все магазины через API Магнита и добавит в базу.</p>
+    <div class="form-row">
+        <div class="form-group">
+            <label>Город</label>
+            <input type="text" id="scan-city" placeholder="Новочебоксарск" style="width:180px">
+        </div>
+        <div class="form-group">
+            <label>Улица (опционально)</label>
+            <input type="text" id="scan-street" placeholder="ул. Строителей" style="width:180px">
+        </div>
+        <div class="form-group">
+            <label>Типы магазинов</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Магнит" checked> Магнит
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Экстра" checked> Экстра
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Мини" checked> Мини
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Семейный" checked> Семейный
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Моя цена"> Моя цена
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Заряд"> Заряд
+                </label>
+            </div>
+        </div>
+        <div class="form-group" style="align-self:end;">
+            <button class="btn btn-success" onclick="scanByAddress()">Сканировать</button>
+        </div>
+    </div>
+    <div id="scan-address-status" style="margin-top:12px;"></div>
+</div>
+
 <!-- Сканирование по кодам -->
 <div class="card">
     <h2>Сканировать магазины по кодам</h2>
@@ -72,7 +115,7 @@
             <button class="btn btn-success" onclick="scanByCodes()">Сканировать</button>
         </div>
     </div>
-    <div id="scan-status" style="margin-top:12px;"></div>
+    <div id="scan-codes-status" style="margin-top:12px;"></div>
 </div>
 
 <!-- Поиск -->
@@ -150,11 +193,60 @@ async function autoFillStore() {
     }
 }
 
+// === Сканирование по адресу ===
+async function scanByAddress() {
+    const city = document.getElementById('scan-city').value.trim();
+    const street = document.getElementById('scan-street').value.trim();
+    const statusDiv = document.getElementById('scan-address-status');
+
+    if (!city) {
+        alert('Введите город');
+        return;
+    }
+
+    // Собираем выбранные типы
+    const typeCheckboxes = document.querySelectorAll('.scan-type-cb:checked');
+    const storeTypes = Array.from(typeCheckboxes).map(cb => cb.value);
+
+    if (storeTypes.length === 0) {
+        alert('Выберите хотя бы один тип магазина');
+        return;
+    }
+
+    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования...</div>';
+
+    try {
+        const resp = await fetch('/api/stores/scan', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                city: city,
+                street: street || null,
+                store_types: storeTypes,
+                force_update: false,
+            }),
+        });
+        const data = await resp.json();
+
+        if (data.job_id) {
+            statusDiv.innerHTML = `
+                <div class="badge badge-info">Задание #${data.job_id} запущено</div>
+                <div id="scan-address-progress" style="margin-top:8px;"></div>
+            `;
+            pollJobStatus(data.job_id, 'scan-address-progress', true);
+        } else if (data.detail) {
+            statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${data.detail}</div>`;
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
 // === Сканирование по кодам ===
 async function scanByCodes() {
     const codes = document.getElementById('scan-codes').value.trim();
     const storeType = document.getElementById('scan-type').value;
-    const statusDiv = document.getElementById('scan-status');
+    const statusDiv = document.getElementById('scan-codes-status');
 
     if (!codes) {
         alert('Введите коды магазинов');
@@ -173,9 +265,9 @@ async function scanByCodes() {
         if (data.job_id) {
             statusDiv.innerHTML = `
                 <div class="badge badge-info">Задание #${data.job_id} запущено (${data.codes_count} магазинов)</div>
-                <div id="scan-progress" style="margin-top:8px;"></div>
+                <div id="scan-codes-progress" style="margin-top:8px;"></div>
             `;
-            pollJobStatus(data.job_id);
+            pollJobStatus(data.job_id, 'scan-codes-progress', true);
         } else if (data.detail) {
             statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${data.detail}</div>`;
         }
@@ -184,8 +276,8 @@ async function scanByCodes() {
     }
 }
 
-async function pollJobStatus(jobId) {
-    const progressDiv = document.getElementById('scan-progress');
+async function pollJobStatus(jobId, progressDivId, refreshTable) {
+    const progressDiv = document.getElementById(progressDivId);
 
     const checkStatus = async () => {
         try {
@@ -210,7 +302,7 @@ async function pollJobStatus(jobId) {
                         </div>
                     `;
                 }
-                filterStores(); // Обновляем таблицу
+                if (refreshTable) filterStores();
             } else if (job.status === 'failed') {
                 if (progressDiv) {
                     progressDiv.innerHTML = `<div class="badge badge-danger">✗ Ошибка: ${job.error_message}</div>`;

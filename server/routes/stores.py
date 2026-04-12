@@ -168,7 +168,7 @@ def scan_stores(
     db: Session = Depends(get_db),
 ):
     """
-    Сканирование магазинов по городу/улице (фоновая задача).
+    Сканирование магазинов по городу/улице через API Магнита.
     """
     # Проверяем нет ли уже запущенного задания
     running_job = db.query(ScanJob).filter(
@@ -204,12 +204,11 @@ def scan_stores(
         job_db.started_at = datetime.utcnow()
         db.commit()
 
-        selector = None
+        stores_api = None
         try:
-            from server.services.store_selector import MagnitStoreSelector
+            from server.services.magnit_api import StoresAPI
 
-            selector = MagnitStoreSelector(headless=True)
-            selector.start()
+            stores_api = StoresAPI()
 
             def update_progress(progress: int, message: str):
                 try:
@@ -221,11 +220,19 @@ def scan_stores(
                 except:
                     pass
 
-            # Сканируем
-            stores_data = selector.run_full_scan(
-                city=req.city,
-                street=req.street,
-                store_types=req.store_types,
+            # Формируем поисковый запрос
+            query = req.city
+            if req.street:
+                query += f" {req.street}"
+
+            # Получаем коды типов для API
+            type_codes = req.get_store_type_codes()
+
+            # Сканируем через API
+            stores_data = stores_api.search_all_stores(
+                query=query,
+                store_types=type_codes,
+                page_size=50,
                 progress_callback=update_progress,
             )
 
@@ -236,27 +243,25 @@ def scan_stores(
                 if not store_data.get("full_address"):
                     continue
 
-                # Ищем по адресу
+                # Ищем по store_code
                 existing = db.query(Store).filter(
-                    Store.full_address == store_data["full_address"],
-                    Store.city == store_data.get("city"),
+                    Store.store_code == store_data["store_code"]
                 ).first()
 
                 if existing and req.force_update:
                     # Обновляем
-                    for key, value in store_data.items():
-                        if hasattr(existing, key) and value is not None:
-                            setattr(existing, key, value)
+                    existing.store_type = store_data.get("store_type", existing.store_type)
+                    existing.city = store_data.get("city", existing.city)
+                    existing.address = store_data.get("address", existing.address)
+                    existing.full_address = store_data.get("full_address", existing.full_address)
+                    existing.name = store_data.get("name", existing.name)
                     updated += 1
                 elif not existing:
                     # Создаём новый
-                    # Генерируем store_code если нет
-                    store_code = store_data.get("store_code") or f"TEMP_{datetime.utcnow().strftime('%Y%m%d%H%M%S%f')}_{len(stores_data)}"
-
                     new_store = Store(
-                        store_code=store_code,
+                        store_code=store_data["store_code"],
                         store_type=store_data.get("store_type", "Неизвестно"),
-                        city=store_data.get("city", "Неизвестно"),
+                        city=store_data.get("city", ""),
                         address=store_data.get("address", ""),
                         full_address=store_data.get("full_address", ""),
                         name=store_data.get("name"),
@@ -272,7 +277,7 @@ def scan_stores(
             job_db.items_added = added
             job_db.items_updated = updated
             job_db.progress = 100
-            job_db.progress_message = "Сканирование завершено"
+            job_db.progress_message = f"Завершено: найдено {len(stores_data)}, добавлено {added}, обновлено {updated}"
             db.commit()
 
         except Exception as e:
@@ -282,9 +287,9 @@ def scan_stores(
             job_db.finished_at = datetime.utcnow()
             db.commit()
         finally:
-            if selector:
+            if stores_api:
                 try:
-                    selector.close()
+                    stores_api.close()
                 except:
                     pass
 

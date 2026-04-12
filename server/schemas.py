@@ -37,11 +37,35 @@ class StoreResponse(StoreBase):
 
 # ===== Scan Request =====
 
+# Маппинг типов магазинов: человекочитаемый → API код
+STORE_TYPE_TO_CODE = {
+    "Магнит": "MM",
+    "Экстра": "GM",
+    "Семейный": "DG",
+    "Мини": "ME",
+    "Опт": "MO",
+    "Моя цена": "MC",
+    "Заряд": "ZARYAD",
+}
+
+# Обратный маппинг
+STORE_CODE_TO_TYPE = {v: k for k, v in STORE_TYPE_TO_CODE.items()}
+
+
 class ScanStoresRequest(BaseModel):
     city: str
     street: Optional[str] = None
-    store_types: list[str] = ["Экстра", "Мини", "Семейный"]
+    store_types: list[str] = ["Магнит", "Экстра", "Мини", "Семейный"]
     force_update: bool = False
+
+    def get_store_type_codes(self) -> list[str]:
+        """Преобразовать типы в коды API."""
+        codes = []
+        for t in self.store_types:
+            code = STORE_TYPE_TO_CODE.get(t)
+            if code:
+                codes.append(code)
+        return codes if codes else list(STORE_TYPE_TO_CODE.values())
 
 
 class SelectStoreRequest(BaseModel):
