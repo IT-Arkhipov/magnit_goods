@@ -1,16 +1,26 @@
 {
-  "mcp": {
-    "exclude": [
-      "excel"
-    ]
-  },
+  "mcp": {},
   "$version": 3,
   "permissions": {
     "allow": [
       "Bash(python *)",
       "Bash(ren *)",
       "Bash(rmdir *)",
-      "Bash(del *)"
+      "Bash(del *)",
+      "Bash(mkdir *)",
+      "Bash(venv\\scripts\\pip *)",
+      "Bash(venv\\scripts\\python *)",
+      "mcp__playwright__browser_navigate",
+      "Bash(taskkill *)",
+      "Bash(venv\\scripts\\uvicorn *)",
+      "Bash(findstr *)",
+      "Bash(start *)",
+      "Bash(timeout *)",
+      "Bash(curl *)",
+      "Bash(venv\\scripts\\python.exe *)",
+      "Bash(tasklist)",
+      "Bash(git add *)",
+      "Bash(git commit *)"
     ]
   }
 }
