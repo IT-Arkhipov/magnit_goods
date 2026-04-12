@@ -1,0 +1,167 @@
+{% extends "base.html" %}
+
+{% block title %}Каталог - Магнит Goods{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Каталог категорий</h2>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Код магазина</label>
+            <input type="text" id="storeCode" placeholder="Например: 12345" value="{{ store_code or '' }}">
+        </div>
+        <button class="btn btn-primary" onclick="scanCategories()">Обновить категории</button>
+        <button class="btn btn-success" onclick="scanProducts()">Сканировать товары</button>
+    </div>
+
+    <div id="scan-status"></div>
+</div>
+
+<div class="card">
+    <h2>Дерево категорий</h2>
+    <div id="categories-list">
+        <p style="color: #666;">Нажмите "Обновить категории" для загрузки</p>
+    </div>
+</div>
+
+<script>
+async function scanCategories() {
+    const storeCode = document.getElementById('storeCode').value;
+    if (!storeCode) {
+        alert('Укажите код магазина');
+        return;
+    }
+
+    const statusDiv = document.getElementById('scan-status');
+    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования...</div>';
+
+    try {
+        const response = await fetch(`/api/categories/scan?store_code=${encodeURIComponent(storeCode)}`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.job_id) {
+            statusDiv.innerHTML = `<div class="badge badge-info">Задание #${data.job_id} запущено</div>`;
+            pollJobStatus(data.job_id);
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+async function scanProducts() {
+    const storeCode = document.getElementById('storeCode').value;
+    if (!storeCode) {
+        alert('Укажите код магазина');
+        return;
+    }
+
+    const statusDiv = document.getElementById('scan-status');
+    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования товаров...</div>';
+
+    try {
+        const response = await fetch(`/api/catalog/scan?store_code=${encodeURIComponent(storeCode)}&tracked_only=true`, {
+            method: 'POST'
+        });
+        const data = await response.json();
+
+        if (data.job_id) {
+            statusDiv.innerHTML = `<div class="badge badge-info">Задание #${data.job_id} запущено</div>`;
+            pollJobStatus(data.job_id);
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+async function loadCategories() {
+    const storeCode = document.getElementById('storeCode').value;
+    if (!storeCode) return;
+
+    try {
+        const response = await fetch(`/api/categories?store_code=${encodeURIComponent(storeCode)}`);
+        const categories = await response.json();
+
+        const listDiv = document.getElementById('categories-list');
+        if (categories.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Категории не найдены</p>';
+            return;
+        }
+
+        let html = '<ul class="category-tree">';
+        categories.forEach(cat => {
+            html += `
+                <li>
+                    <div style="display: flex; justify-content: space-between; align-items: center;">
+                        <div>
+                            <strong>${cat.name}</strong>
+                            <span class="badge badge-info">${cat.product_count || 0} товаров</span>
+                            ${cat.last_scanned ? `<span class="badge badge-success">Обновлено: ${new Date(cat.last_scanned).toLocaleDateString()}</span>` : ''}
+                        </div>
+                        <label class="toggle-switch">
+                            <input type="checkbox" ${cat.is_tracked ? 'checked' : ''} onchange="toggleTrack(${cat.id}, this.checked)">
+                            <span class="toggle-slider"></span>
+                        </label>
+                    </div>
+                </li>
+            `;
+        });
+        html += '</ul>';
+        listDiv.innerHTML = html;
+    } catch (e) {
+        console.error('Ошибка загрузки категорий:', e);
+    }
+}
+
+async function toggleTrack(categoryId, track) {
+    try {
+        await fetch(`/api/categories/${categoryId}/track?track=${track}`, {
+            method: 'PUT'
+        });
+    } catch (e) {
+        console.error('Ошибка обновления:', e);
+    }
+}
+
+async function pollJobStatus(jobId) {
+    const statusDiv = document.getElementById('scan-status');
+
+    const checkStatus = async () => {
+        try {
+            const response = await fetch(`/api/jobs/${jobId}`);
+            const job = await response.json();
+
+            if (job.status === 'running' || job.status === 'pending') {
+                statusDiv.innerHTML = `
+                    <div>
+                        <div class="progress-bar" style="margin: 8px 0;">
+                            <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
+                        </div>
+                        <small>${job.progress_message || 'Выполняется...'} (${job.progress}%)</small>
+                    </div>
+                `;
+                setTimeout(checkStatus, 2000);
+            } else if (job.status === 'completed') {
+                statusDiv.innerHTML = `
+                    <div class="badge badge-success">
+                        ✓ Завершено! Просканировано: ${job.items_scanned}, Добавлено: ${job.items_added}
+                    </div>
+                `;
+                loadCategories();
+            } else if (job.status === 'failed') {
+                statusDiv.innerHTML = `<div class="badge badge-danger">✗ Ошибка: ${job.error_message}</div>`;
+            }
+        } catch (e) {
+            console.error('Ошибка проверки статуса:', e);
+        }
+    };
+
+    checkStatus();
+}
+
+// Загружаем категории при загрузке страницы
+document.getElementById('storeCode').addEventListener('change', loadCategories);
+</script>
+{% endblock %}

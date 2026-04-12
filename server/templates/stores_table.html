@@ -1,0 +1,30 @@
+{% if stores %}
+<table>
+    <thead>
+        <tr>
+            <th>ID</th>
+            <th>Тип</th>
+            <th>Город</th>
+            <th>Адрес</th>
+            <th>Код</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for store in stores %}
+        <tr>
+            <td>{{ store.id }}</td>
+            <td><span class="badge badge-info">{{ store.store_type }}</span></td>
+            <td>{{ store.city }}</td>
+            <td>{{ store.full_address }}</td>
+            <td><code>{{ store.store_code }}</code></td>
+            <td>
+                <button class="btn btn-danger btn-sm" onclick="deleteStore({{ store.id }})">Удалить</button>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Магазины не найдены. Добавьте первый магазин.</p>
+{% endif %}

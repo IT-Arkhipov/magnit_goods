@@ -1,0 +1,105 @@
+{% extends "base.html" %}
+
+{% block title %}Задания - Магнит Goods{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Задания на сканирование</h2>
+
+    <div class="form-row">
+        <button class="btn btn-primary" onclick="loadJobs()">Обновить список</button>
+    </div>
+</div>
+
+<div class="card">
+    <div id="jobs-list">
+        <p style="color: #666;">Нажмите "Обновить список" для загрузки заданий</p>
+    </div>
+</div>
+
+<script>
+async function loadJobs() {
+    const listDiv = document.getElementById('jobs-list');
+    listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
+
+    try {
+        const response = await fetch('/api/jobs?limit=50');
+        const jobs = await response.json();
+
+        if (jobs.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Заданий нет</p>';
+            return;
+        }
+
+        let html = `
+            <table>
+                <thead>
+                    <tr>
+                        <th>ID</th>
+                        <th>Тип</th>
+                        <th>Статус</th>
+                        <th>Прогресс</th>
+                        <th>Просканировано</th>
+                        <th>Добавлено</th>
+                        <th>Обновлено</th>
+                        <th>Дата создания</th>
+                        <th>Действия</th>
+                    </tr>
+                </thead>
+                <tbody>
+        `;
+
+        jobs.forEach(job => {
+            const statusBadge = job.status === 'completed' ? 'badge-success' :
+                               job.status === 'running' ? 'badge-info' :
+                               job.status === 'failed' ? 'badge-danger' : 'badge-warning';
+
+            const statusText = job.status === 'completed' ? '✓ Завершено' :
+                              job.status === 'running' ? '⏳ Выполняется' :
+                              job.status === 'failed' ? '✗ Ошибка' : '⏸ Ожидание';
+
+            html += `
+                <tr>
+                    <td>#${job.id}</td>
+                    <td><strong>${job.job_type}</strong></td>
+                    <td><span class="badge ${statusBadge}">${statusText}</span></td>
+                    <td>
+                        ${job.status === 'running' || job.status === 'pending' ? `
+                            <div class="progress-bar" style="width: 100px;">
+                                <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
+                            </div>
+                            <small>${job.progress}%</small>
+                        ` : job.progress + '%'}
+                    </td>
+                    <td>${job.items_scanned || 0}</td>
+                    <td>${job.items_added || 0}</td>
+                    <td>${job.items_updated || 0}</td>
+                    <td>${new Date(job.created_at).toLocaleString()}</td>
+                    <td>
+                        ${job.status === 'failed' ? `<span class="badge badge-danger" title="${job.error_message}">Ошибка</span>` : ''}
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += '</tbody></table>';
+        listDiv.innerHTML = html;
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+// Автообновление каждые 5 секунд
+setInterval(() => {
+    const listDiv = document.getElementById('jobs-list');
+    if (listDiv && listDiv.innerHTML.includes('Загрузка')) {
+        // Не обновляем если уже идёт загрузка
+        return;
+    }
+    loadJobs();
+}, 5000);
+
+// Загружаем задания при загрузке страницы
+loadJobs();
+</script>
+{% endblock %}

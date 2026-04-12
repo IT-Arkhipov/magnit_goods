@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+
+{% block title %}Скидки - Магнит Goods{% endblock %}
+
+{% block content %}
+<div class="card">
+    <h2>Товары со сниженными ценами</h2>
+
+    <div class="form-row">
+        <div class="form-group">
+            <label>Код магазина</label>
+            <input type="text" id="storeCode" placeholder="Например: 12345" value="{{ store_code or '' }}">
+        </div>
+        <div class="form-group">
+            <label>Минимальная скидка (%)</label>
+            <input type="number" id="minDiscount" value="10" min="0" max="100">
+        </div>
+        <button class="btn btn-primary" onclick="loadDeals()">Найти скидки</button>
+        <button class="btn btn-success" onclick="loadAlerts()">Уведомления</button>
+        <button class="btn btn-primary" onclick="loadStatistics()">Статистика</button>
+    </div>
+</div>
+
+<div id="statistics" style="display: none;" class="card">
+    <h2>Статистика</h2>
+    <div id="statistics-content"></div>
+</div>
+
+<div class="card">
+    <div id="deals-list">
+        <p style="color: #666;">Нажмите "Найти скидки" для отображения товаров со скидками</p>
+    </div>
+</div>
+
+<script>
+async function loadDeals() {
+    const storeCode = document.getElementById('storeCode').value;
+    const minDiscount = document.getElementById('minDiscount').value;
+
+    if (!storeCode) {
+        alert('Укажите код магазина');
+        return;
+    }
+
+    const listDiv = document.getElementById('deals-list');
+    listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
+
+    try {
+        const response = await fetch(`/api/prices/decreased?store_code=${encodeURIComponent(storeCode)}&min_discount_percent=${minDiscount}&limit=100`);
+        const deals = await response.json();
+
+        if (deals.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Товары со скидками не найдены</p>';
+            return;
+        }
+
+        let html = '<div class="product-grid">';
+        deals.forEach(deal => {
+            html += `
+                <div class="product-card">
+                    ${deal.image_url ? `<img src="${deal.image_url}" onerror="this.style.display='none'">` : '<div style="height: 180px; background: #f0f0f0; display: flex; align-items: center; justify-content: center; color: #999;">Нет фото</div>'}
+                    <div class="product-card-body">
+                        <h4 style="margin-bottom: 8px;">${deal.name}</h4>
+                        <div style="margin-bottom: 8px;">
+                            <span class="price-old">${deal.previous_price} ₽</span>
+                            <span class="price-current" style="margin-left: 8px;">${deal.current_price} ₽</span>
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="discount-badge">-${deal.discount_percent}%</span>
+                            <span class="badge badge-success">Экономия ${deal.discount_amount} ₽</span>
+                        </div>
+                        ${deal.in_stock ? '<div style="margin-top: 8px;"><span class="badge badge-success">В наличии</span></div>' : '<div style="margin-top: 8px;"><span class="badge badge-danger">Нет в наличии</span></div>'}
+                    </div>
+                </div>
+            `;
+        });
+        html += '</div>';
+        listDiv.innerHTML = html;
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+async function loadAlerts() {
+    const storeCode = document.getElementById('storeCode').value;
+
+    if (!storeCode) {
+        alert('Укажите код магазина');
+        return;
+    }
+
+    const listDiv = document.getElementById('deals-list');
+    listDiv.innerHTML = '<p style="color: #666;">Загрузка уведомлений...</p>';
+
+    try {
+        const response = await fetch(`/api/prices/alerts?store_code=${encodeURIComponent(storeCode)}&min_discount_percent=10&days=7`);
+        const alerts = await response.json();
+
+        if (alerts.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Нет уведомлений за последние 7 дней</p>';
+            return;
+        }
+
+        let html = '<h3>Уведомления об изменениях цен</h3>';
+        alerts.forEach(alert => {
+            html += `
+                <div style="padding: 12px; border-left: 4px solid ${alert.type === 'decreased' ? '#28a745' : '#dc3545'}; background: #f9f9f9; margin-bottom: 8px; border-radius: 4px;">
+                    <strong>${alert.name}</strong><br>
+                    <small>${new Date(alert.date).toLocaleDateString()}</small><br>
+                    ${alert.type === 'decreased' ? '↓' : '↑'} Цена: <strong>${alert.current_price} ₽</strong> (было: ${alert.previous_price} ₽)
+                    <span class="discount-badge">${alert.change_percent > 0 ? '-' : '+'}${Math.abs(alert.change_percent)}%</span>
+                </div>
+            `;
+        });
+        listDiv.innerHTML = html;
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+async function loadStatistics() {
+    const storeCode = document.getElementById('storeCode').value;
+
+    if (!storeCode) {
+        alert('Укажите код магазина');
+        return;
+    }
+
+    const statsDiv = document.getElementById('statistics');
+    const contentDiv = document.getElementById('statistics-content');
+    statsDiv.style.display = 'block';
+    contentDiv.innerHTML = '<p>Загрузка...</p>';
+
+    try {
+        const response = await fetch(`/api/prices/statistics?store_code=${encodeURIComponent(storeCode)}`);
+        const stats = await response.json();
+
+        contentDiv.innerHTML = `
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px;">
+                <div style="text-align: center; padding: 16px; background: #e7f3ff; border-radius: 8px;">
+                    <div style="font-size: 32px; font-weight: bold; color: #0066cc;">${stats.total_products}</div>
+                    <div style="color: #666;">Всего товаров</div>
+                </div>
+                <div style="text-align: center; padding: 16px; background: #d4edda; border-radius: 8px;">
+                    <div style="font-size: 32px; font-weight: bold; color: #28a745;">${stats.decreased_last_7_days}</div>
+                    <div style="color: #666;">Снижены (7 дней)</div>
+                </div>
+                <div style="text-align: center; padding: 16px; background: #f8d7da; border-radius: 8px;">
+                    <div style="font-size: 32px; font-weight: bold; color: #dc3545;">${stats.increased_last_7_days}</div>
+                    <div style="color: #666;">Повышены (7 дней)</div>
+                </div>
+                <div style="text-align: center; padding: 16px; background: #fff3cd; border-radius: 8px;">
+                    <div style="font-size: 32px; font-weight: bold; color: #856404;">${stats.stable || 0}</div>
+                    <div style="color: #666;">Без изменений</div>
+                </div>
+            </div>
+        `;
+    } catch (e) {
+        contentDiv.innerHTML = `<p style="color: #dc3545;">Ошибка: ${e.message}</p>`;
+    }
+}
+</script>
+{% endblock %}
