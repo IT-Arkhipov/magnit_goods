@@ -298,6 +298,21 @@ def scan_stores(
     return {"job_id": job.id, "status": "pending"}
 
 
+@router.post("/delete-batch", status_code=204)
+def delete_stores_batch(
+    req: dict,
+    db: Session = Depends(get_db),
+):
+    """Удалить несколько магазинов по ID."""
+    ids = req.get("ids", [])
+    if not ids:
+        raise HTTPException(status_code=400, detail="Список ID пуст")
+    
+    db.query(Store).filter(Store.id.in_(ids)).delete(synchronize_session=False)
+    db.commit()
+    return None
+
+
 @router.get("/by-code/{store_code}", response_model=StoreResponse)
 def get_store_by_code(
     store_code: str,

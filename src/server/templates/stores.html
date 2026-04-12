@@ -140,9 +140,14 @@
     </div>
 </div>
 
-<!-- Таблица -->
+<!-- Список магазинов -->
 <div class="card">
-    <h2>Список магазинов</h2>
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="margin:0;">Список магазинов</h2>
+        <button id="delete-selected-btn" class="btn btn-danger" style="display:none;" onclick="deleteSelectedStores()">
+            Удалить выбранные (<span id="selected-count">0</span>)
+        </button>
+    </div>
     <div id="stores-table">
         {% include "stores_table.html" %}
     </div>
@@ -190,6 +195,49 @@ async function autoFillStore() {
         }
     } catch (e) {
         statusDiv.innerHTML = '<span class="badge badge-danger">Ошибка поиска</span>';
+    }
+}
+
+// === Чекбоксы и массовое удаление ===
+function toggleAllStores(checked) {
+    document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = checked);
+    updateDeleteButton();
+}
+
+function updateDeleteButton() {
+    const checked = document.querySelectorAll('.store-checkbox:checked');
+    const btn = document.getElementById('delete-selected-btn');
+    const count = document.getElementById('selected-count');
+    
+    if (checked.length > 0) {
+        btn.style.display = 'inline-block';
+        count.textContent = checked.length;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+async function deleteSelectedStores() {
+    const checked = document.querySelectorAll('.store-checkbox:checked');
+    const ids = Array.from(checked).map(cb => parseInt(cb.value));
+    
+    if (ids.length === 0) return;
+    if (!confirm(`Удалить ${ids.length} магазин(ов)?`)) return;
+    
+    try {
+        const resp = await fetch('/api/stores/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        if (resp.ok) {
+            filterStores();
+        } else {
+            const data = await resp.json();
+            alert('Ошибка: ' + (data.detail || 'Не удалось удалить'));
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
     }
 }
 
