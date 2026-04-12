@@ -65,6 +65,10 @@ db.sqlite3-journal
 src/data/magnit.db
 *.png
 
+# Editor / tool settings
+.qwen/settings.json
+.playwright-mcp/
+
 # Flask stuff:
 instance/
 .webassets-cache
