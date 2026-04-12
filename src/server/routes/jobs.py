@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from server.database import get_db
-from server.models import ScanJob
-from server.schemas import ScanJobResponse
+from src.server.database import get_db
+from src.server.models import ScanJob
+from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api/jobs", tags=["Задания"])
 

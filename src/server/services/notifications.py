@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
 
-from server.models import Product, PriceHistory, Category
+from src.server.models import Product, PriceHistory, Category
 
 
 class NotificationService:
@@ -53,7 +53,7 @@ class NotificationService:
         )
 
         # Топ-5 скидок
-        tracker = __import__("server.services.price_tracker", fromlist=["PriceTracker"]).PriceTracker(
+        tracker = __import__("src.server.services.price_tracker", fromlist=["PriceTracker"]).PriceTracker(
             self.db, self.store_code
         )
         top_deals = tracker.get_decreased_prices(min_discount_percent=10.0, limit=5)

@@ -7,8 +7,8 @@ from datetime import datetime
 from typing import Optional
 import json
 
-from server.models import Category, Product, PriceHistory, ScanJob
-from server.services.magnit_api import MagnitAPIClient
+from src.server.models import Category, Product, PriceHistory, ScanJob
+from src.server.services.magnit_api import MagnitAPIClient
 
 
 class CatalogScanner:

@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 
-from server.database import get_db
-from server.models import ScanJob
-from server.schemas import ScanJobResponse
+from src.server.database import get_db
+from src.server.models import ScanJob
+from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
 
@@ -22,7 +22,7 @@ def get_decreased_prices(
     db: Session = Depends(get_db),
 ):
     """Товары со сниженными ценами."""
-    from server.services.price_tracker import PriceTracker
+    from src.server.services.price_tracker import PriceTracker
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
@@ -43,7 +43,7 @@ def get_increased_prices(
     db: Session = Depends(get_db),
 ):
     """Товары с выросшими ценами."""
-    from server.services.price_tracker import PriceTracker
+    from src.server.services.price_tracker import PriceTracker
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
@@ -64,7 +64,7 @@ def get_price_alerts(
     db: Session = Depends(get_db),
 ):
     """Уведомления о значительных изменениях цен."""
-    from server.services.price_tracker import PriceTracker
+    from src.server.services.price_tracker import PriceTracker
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
@@ -83,7 +83,7 @@ def get_statistics(
     db: Session = Depends(get_db),
 ):
     """Общая статистика по изменениям цен."""
-    from server.services.price_tracker import PriceTracker
+    from src.server.services.price_tracker import PriceTracker
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
@@ -103,7 +103,7 @@ def update_prices(
     """
     Обновить цены для отслеживаемых товаров (фоновая задача).
     """
-    from server.services.catalog_scanner import CatalogScanner
+    from src.server.services.catalog_scanner import CatalogScanner
 
     cat_ids = None
     if category_ids:
@@ -166,7 +166,7 @@ def get_daily_report(
     db: Session = Depends(get_db),
 ):
     """Ежедневный отчёт об изменениях цен."""
-    from server.services.notifications import NotificationService
+    from src.server.services.notifications import NotificationService
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
@@ -183,7 +183,7 @@ def get_product_price_history(
     db: Session = Depends(get_db),
 ):
     """История цен конкретного товара."""
-    from server.services.price_tracker import PriceTracker
+    from src.server.services.price_tracker import PriceTracker
 
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")

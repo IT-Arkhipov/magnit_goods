@@ -8,11 +8,11 @@ from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
 
-from server.database import SessionLocal
-from server.models import ScanJob, Category
-from server.services.catalog_scanner import CatalogScanner
-from server.services.price_tracker import PriceTracker
-from server.services.notifications import NotificationService
+from src.server.database import SessionLocal
+from src.server.models import ScanJob, Category
+from src.server.services.catalog_scanner import CatalogScanner
+from src.server.services.price_tracker import PriceTracker
+from src.server.services.notifications import NotificationService
 
 logger = logging.getLogger(__name__)
 

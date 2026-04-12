@@ -4,7 +4,7 @@ from sqlalchemy import (
 from sqlalchemy.orm import relationship
 from datetime import datetime
 
-from server.database import Base
+from src.server.database import Base
 
 
 class Store(Base):

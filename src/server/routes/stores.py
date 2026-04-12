@@ -6,9 +6,9 @@ import dotenv
 from datetime import datetime
 
 from sqlalchemy import or_
-from server.database import get_db
-from server.models import Store, ScanJob
-from server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest
+from src.server.database import get_db
+from src.server.models import Store, ScanJob
+from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
 
@@ -123,7 +123,7 @@ def select_store(
     # Обновляем .env если нужно
     env_updated = False
     if req.update_env:
-        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), '.env')
+        env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.env')
         dotenv.load_dotenv(env_path)
 
         env_vars = {
@@ -206,7 +206,7 @@ def scan_stores(
 
         stores_api = None
         try:
-            from server.services.magnit_api import StoresAPI
+            from src.server.services.magnit_api import StoresAPI
 
             stores_api = StoresAPI()
 
@@ -362,7 +362,7 @@ def scan_stores_by_codes(
 
         selector = None
         try:
-            from server.services.store_selector import MagnitStoreSelector
+            from src.server.services.store_selector import MagnitStoreSelector
 
             selector = MagnitStoreSelector(headless=True)
             selector.start()

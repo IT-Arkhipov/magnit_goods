@@ -6,9 +6,9 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 
-from server.database import get_db
-from server.models import Category, Product, ScanJob
-from server.schemas import ScanJobResponse
+from src.server.database import get_db
+from src.server.models import Category, Product, ScanJob
+from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api", tags=["Каталог"])
 
@@ -45,7 +45,7 @@ def scan_categories(
     """
     Сканировать категории каталога (фоновая задача).
     """
-    from server.services.catalog_scanner import CatalogScanner
+    from src.server.services.catalog_scanner import CatalogScanner
 
     # Создаём задание
     job = ScanJob(
@@ -225,7 +225,7 @@ def scan_products(
     """
     Сканировать товары из категорий (фоновая задача).
     """
-    from server.services.catalog_scanner import CatalogScanner
+    from src.server.services.catalog_scanner import CatalogScanner
 
     # Парсим category_ids
     cat_ids = None

@@ -11,8 +11,8 @@ from datetime import datetime
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, PROJECT_ROOT)
 
-from server.database import SessionLocal, init_db
-from server.models import Store
+from src.server.database import SessionLocal, init_db
+from src.server.models import Store
 
 
 def import_stores_from_yaml(yaml_path: str):

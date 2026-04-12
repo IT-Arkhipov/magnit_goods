@@ -7,7 +7,7 @@ from sqlalchemy import func, and_
 from datetime import datetime, timedelta
 from typing import Optional
 
-from server.models import Product, PriceHistory, Category, ScanJob
+from src.server.models import Product, PriceHistory, Category, ScanJob
 
 
 class PriceTracker:

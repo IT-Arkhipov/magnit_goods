@@ -7,11 +7,11 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import os
 
-from server.database import engine, init_db, get_db
-from server.models import Store
-from server.schemas import StoreCreate
-from server.routes import stores, jobs, catalog, prices
-from server.scheduler import init_scheduler, shutdown_scheduler
+from src.server.database import engine, init_db, get_db
+from src.server.models import Store
+from src.server.schemas import StoreCreate
+from src.server.routes import stores, jobs, catalog, prices
+from src.server.scheduler import init_scheduler, shutdown_scheduler
 import os
 
 
@@ -145,4 +145,4 @@ async def create_store_htmx(
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("server.main:app", host="0.0.0.0", port=8000, reload=True)
+    uvicorn.run("src.server.main:app", host="0.0.0.0", port=8000, reload=True)
