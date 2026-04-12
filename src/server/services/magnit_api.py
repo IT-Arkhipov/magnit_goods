@@ -212,13 +212,13 @@ class MagnitAPIClient:
         self.session.close()
 
 
-# Маппинг типов: API код → UI-лейбл (как отображается на сайте magnit.ru)
-# Проверено через Playwright: фильтр "М.Косметик" → storeTypeV2: DG
+# Маппинг типов: API код → UI-лейбл
+# UI фильтр "Экстра" → storeTypeV2: ME (проверено через API)
 STORE_TYPE_MAP = {
     "MM": "Магнит",
-    "ME": "Мини",
+    "ME": "Экстра",
     "DG": "М.Косметик",
-    "GM": "Экстра",
+    "GM": "Гипермаркет",
     "MO": "Опт",
     "MC": "Моя цена",
     "ZARYAD": "Заряд",

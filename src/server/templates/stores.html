@@ -15,9 +15,9 @@
                 <label>Тип</label>
                 <select name="store_type" id="input-store-type" required>
                     <option value="Магнит">Магнит</option>
-                    <option value="М.Косметик">М.Косметик</option>
-                    <option value="Мини">Мини</option>
                     <option value="Экстра">Экстра</option>
+                    <option value="М.Косметик">М.Косметик</option>
+                    <option value="Гипермаркет">Гипермаркет</option>
                     <option value="Опт">Опт</option>
                     <option value="Моя цена">Моя цена</option>
                     <option value="Заряд">Заряд</option>
@@ -69,13 +69,13 @@
                     <input type="checkbox" class="scan-type-cb" value="Магнит" checked> Магнит
                 </label>
                 <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="М.Косметик"> М.Косметик
-                </label>
-                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="Мини"> Мини
-                </label>
-                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
                     <input type="checkbox" class="scan-type-cb" value="Экстра" checked> Экстра
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="М.Косметик" checked> М.Косметик
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Гипермаркет"> Гипермаркет
                 </label>
                 <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
                     <input type="checkbox" class="scan-type-cb" value="Моя цена"> Моя цена
@@ -106,9 +106,9 @@
             <select id="scan-type">
                 <option value="">Авто</option>
                 <option value="Магнит">Магнит</option>
-                <option value="М.Косметик">М.Косметик</option>
-                <option value="Мини">Мини</option>
                 <option value="Экстра">Экстра</option>
+                <option value="М.Косметик">М.Косметик</option>
+                <option value="Гипермаркет">Гипермаркет</option>
             </select>
         </div>
         <div class="form-group" style="align-self:end;">
@@ -131,9 +131,9 @@
             <select id="search-type" style="width:140px">
                 <option value="">Все типы</option>
                 <option value="Магнит">Магнит</option>
-                <option value="М.Косметик">М.Косметик</option>
-                <option value="Мини">Мини</option>
                 <option value="Экстра">Экстра</option>
+                <option value="М.Косметик">М.Косметик</option>
+                <option value="Гипермаркет">Гипермаркет</option>
             </select>
         </div>
         <button class="btn btn-primary" onclick="filterStores()">Найти</button>

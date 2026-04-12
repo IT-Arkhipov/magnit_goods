@@ -37,13 +37,13 @@ class StoreResponse(StoreBase):
 
 # ===== Scan Request =====
 
-# Маппинг типов магазинов: API код → UI-лейбл (как отображается на сайте magnit.ru)
-# Проверено через Playwright: фильтр "М.Косметик" на сайте → storeTypeV2: DG
+# Маппинг типов магазинов: API код → UI-лейбл
+# Проверено через API Магнита: UI фильтр "Экстра" → storeTypeV2: ME
 STORE_CODE_TO_TYPE = {
     "MM": "Магнит",
-    "ME": "Мини",
+    "ME": "Экстра",
     "DG": "М.Косметик",
-    "GM": "Экстра",
+    "GM": "Гипермаркет",
     "MO": "Опт",
     "MC": "Моя цена",
     "ZARYAD": "Заряд",
@@ -56,7 +56,7 @@ STORE_TYPE_TO_CODE = {v: k for k, v in STORE_CODE_TO_TYPE.items()}
 class ScanStoresRequest(BaseModel):
     city: str
     street: Optional[str] = None
-    store_types: list[str] = ["Магнит", "М.Косметик", "Мини", "Экстра"]
+    store_types: list[str] = ["Магнит", "Экстра", "М.Косметик"]
     force_update: bool = False
 
     def get_store_type_codes(self) -> list[str]:
