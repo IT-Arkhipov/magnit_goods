@@ -212,17 +212,18 @@ class MagnitAPIClient:
         self.session.close()
 
 
-# Маппинг типов: API код → UI-лейбл
-# UI фильтр "Экстра" → storeTypeV2: ME (проверено через API)
+# Маппинг типов: API код → UI-лейбл (кнопки на magnit.ru/shops)
+# Проверено через Playwright 2026-04-13: клик по кнопке → storeTypeListV2 в запросе
+# URL кнопки: ?storeType=<код>
 STORE_TYPE_MAP = {
     "MM": "Магнит",
     "ME": "Экстра",
     "DG": "М.Косметик",
-    "GM": "Гипермаркет",
+    "GM": "Семейный",
     "MO": "Опт",
     "MC": "Моя цена",
     "ZARYAD": "Заряд",
-    "DARKSTORE": "Даркстор",
+    "DARKSTORE": "Мигом",
     "MM_MINI": "Мини",
 }
 
@@ -345,6 +346,7 @@ class StoresAPI:
         store_types: Optional[list[str]] = None,
         page_size: int = 50,
         progress_callback=None,
+        max_pages: int = 20,
     ) -> list[dict]:
         """
         Поиск всех магазинов с пагинацией.
@@ -354,19 +356,23 @@ class StoresAPI:
             store_types: Список типов
             page_size: Размер страницы
             progress_callback: Функция (progress, message)
+            max_pages: Максимальное число страниц (защита от зацикливания)
 
         Returns:
             Полный список найденных магазинов
         """
         all_stores = []
         offset = 0
+        page_num = 0
 
         if progress_callback:
             progress_callback(5, f"Поиск: {query}")
 
-        while True:
+        while page_num < max_pages:
+            page_num += 1
             result = self.search_stores(query, store_types, limit=page_size, offset=offset)
-            all_stores.extend(result["stores"])
+            new_stores = result["stores"]
+            all_stores.extend(new_stores)
 
             total = result["total_count"]
             current = len(all_stores)
@@ -375,7 +381,12 @@ class StoresAPI:
                 progress_pct = min(90, int((current / max(total, 1)) * 85) + 5)
                 progress_callback(progress_pct, f"Найдено {current}/{total} магазинов")
 
+            # Нет больше данных
             if not result["has_more"]:
+                break
+
+            # Не получили ни одного нового магазина — зацикливание
+            if len(new_stores) == 0:
                 break
 
             offset = result["next_offset"]

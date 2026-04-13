@@ -1,9 +1,10 @@
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from typing import Optional
 import os
 import dotenv
-from datetime import datetime
+from datetime import datetime, timedelta
+import time
 
 from sqlalchemy import or_
 from src.server.database import get_db
@@ -11,6 +12,36 @@ from src.server.models import Store, ScanJob
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
+
+
+def _cleanup_stale_jobs(db: Session):
+    """Перевести зависшие running-задания в failed (started_at > 2 мин назад)."""
+    stale_cutoff = datetime.utcnow() - timedelta(minutes=2)
+    stale_jobs = db.query(ScanJob).filter(
+        ScanJob.job_type == "stores",
+        ScanJob.status == "running",
+        ScanJob.started_at < stale_cutoff,
+    ).all()
+    for job in stale_jobs:
+        job.status = "failed"
+        job.error_message = "Задание зависло и было автоматически отменено"
+        job.finished_at = datetime.utcnow()
+    if stale_jobs:
+        db.commit()
+
+
+def _mark_all_running_failed_on_startup(db: Session):
+    """При старте сервера пометить все running задания как failed (процесс был убит)."""
+    stale_jobs = db.query(ScanJob).filter(
+        ScanJob.job_type == "stores",
+        ScanJob.status == "running",
+    ).all()
+    for job in stale_jobs:
+        job.status = "failed"
+        job.error_message = "Сервер был перезапущен, задание прервано"
+        job.finished_at = datetime.utcnow()
+    if stale_jobs:
+        db.commit()
 
 
 @router.get("", response_model=list[StoreResponse])
@@ -63,7 +94,7 @@ def search_stores(
 
 
 @router.get("/{store_id}", response_model=StoreResponse)
-def get_store(store_id: int, db: Session = Depends(get_db)):
+def get_store(store_id: str, db: Session = Depends(get_db)):
     """Получить магазин по ID."""
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
@@ -86,7 +117,7 @@ def update_store(store_id: int, data: StoreUpdate, db: Session = Depends(get_db)
 
 
 @router.delete("/{store_id}", status_code=204)
-def delete_store(store_id: int, db: Session = Depends(get_db)):
+def delete_store(store_id: str, db: Session = Depends(get_db)):
     """Удалить магазин."""
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
@@ -164,12 +195,14 @@ def select_store(
 @router.post("/scan")
 def scan_stores(
     req: ScanStoresRequest,
-    background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
 ):
     """
-    Сканирование магазинов по городу/улице через API Магнита.
+    Сканирование магазинов по городу/улице через API Магнита (синхронно).
     """
+    # Очистка зависших заданий
+    _cleanup_stale_jobs(db)
+
     # Проверяем нет ли уже запущенного задания
     running_job = db.query(ScanJob).filter(
         ScanJob.job_type == "stores",
@@ -186,116 +219,140 @@ def scan_stores(
     job = ScanJob(
         job_type="stores",
         store_code=None,
-        status="pending",
+        status="running",
         created_at=datetime.utcnow(),
+        started_at=datetime.utcnow(),
         progress=0,
-        progress_message="Задание создано",
+        progress_message="Запуск сканирования",
     )
     db.add(job)
     db.commit()
     db.refresh(job)
 
-    def run_scan():
-        job_db = db.query(ScanJob).filter(ScanJob.id == job.id).first()
-        if not job_db:
-            return
+    stores_api = None
+    try:
+        from src.server.services.magnit_api import StoresAPI
 
-        job_db.status = "running"
-        job_db.started_at = datetime.utcnow()
+        stores_api = StoresAPI()
+
+        def update_progress(progress: int, message: str):
+            try:
+                jp = db.query(ScanJob).filter(ScanJob.id == job.id).first()
+                if jp:
+                    jp.progress = max(0, progress)
+                    jp.progress_message = message
+                    db.commit()
+            except Exception:
+                db.rollback()
+
+        # Формируем поисковый запрос
+        query = req.city
+        if req.street:
+            query += f" {req.street}"
+
+        # Получаем коды типов для API
+        type_codes = req.get_store_type_codes()
+
+        # Сканируем через API
+        stores_data = stores_api.search_all_stores(
+            query=query,
+            store_types=type_codes,
+            page_size=50,
+            progress_callback=update_progress,
+        )
+
+        # Сохраняем в БД — пакетная обработка для скорости
+        print(f"[scan #{job.id}] Сохранение {len(stores_data)} магазинов...", flush=True)
+
+        # Дедупликация по store_code (API может возвращать дубли)
+        seen_codes = {}
+        for sd in stores_data:
+            code = sd.get("store_code")
+            if code and code not in seen_codes:
+                seen_codes[code] = sd
+        unique_stores = list(seen_codes.values())
+        print(f"[scan #{job.id}] Уникальных магазинов: {len(unique_stores)}", flush=True)
+
+        # Получаем все существующие store_code одним запросом
+        existing_codes = {row[0]: row[1] for row in db.query(Store.store_code, Store.id).all()}
+
+        to_insert = []
+        to_update = []
+        for store_data in unique_stores:
+            if not store_data.get("full_address"):
+                continue
+            code = store_data["store_code"]
+            if code in existing_codes:
+                if req.force_update:
+                    to_update.append({
+                        "id": existing_codes[code],
+                        "store_type": store_data.get("store_type"),
+                        "city": store_data.get("city", ""),
+                        "address": store_data.get("address", ""),
+                        "full_address": store_data.get("full_address", ""),
+                        "name": store_data.get("name"),
+                    })
+            else:
+                to_insert.append(Store(
+                    store_code=code,
+                    store_type=store_data.get("store_type", "Неизвестно"),
+                    city=store_data.get("city", ""),
+                    address=store_data.get("address", ""),
+                    full_address=store_data.get("full_address", ""),
+                    name=store_data.get("name"),
+                ))
+
+        # Пакетное добавление
+        if to_insert:
+            db.add_all(to_insert)
+            added = len(to_insert)
+            print(f"[scan #{job.id}] Вставка {added} магазинов...", flush=True)
+            db.commit()
+            print(f"[scan #{job.id}] Вставка завершена", flush=True)
+        else:
+            added = 0
+
+        # Пакетное обновление
+        if to_update:
+            from sqlalchemy import update as sa_update
+            for item in to_update:
+                stmt = sa_update(Store).where(Store.id == item["id"]).values(
+                    store_type=item["store_type"],
+                    city=item["city"],
+                    address=item["address"],
+                    full_address=item["full_address"],
+                    name=item["name"],
+                )
+                db.execute(stmt)
+            updated = len(to_update)
+            db.commit()
+            print(f"[scan #{job.id}] Обновление {updated} магазинов завершено", flush=True)
+        else:
+            updated = 0
+
+        job.status = "completed"
+        job.finished_at = datetime.utcnow()
+        job.items_scanned = len(unique_stores)
+        job.items_added = added
+        job.items_updated = updated
+        job.progress = 100
+        job.progress_message = f"Завершено: найдено {len(unique_stores)}, добавлено {added}, обновлено {updated}"
         db.commit()
 
-        stores_api = None
-        try:
-            from src.server.services.magnit_api import StoresAPI
+    except Exception as e:
+        print(f"Ошибка сканирования: {e}")
+        job.status = "failed"
+        job.error_message = str(e)
+        job.finished_at = datetime.utcnow()
+        db.commit()
+    finally:
+        if stores_api:
+            try:
+                stores_api.close()
+            except Exception:
+                pass
 
-            stores_api = StoresAPI()
-
-            def update_progress(progress: int, message: str):
-                try:
-                    job_update = db.query(ScanJob).filter(ScanJob.id == job.id).first()
-                    if job_update:
-                        job_update.progress = max(0, progress)
-                        job_update.progress_message = message
-                        db.commit()
-                except:
-                    pass
-
-            # Формируем поисковый запрос
-            query = req.city
-            if req.street:
-                query += f" {req.street}"
-
-            # Получаем коды типов для API
-            type_codes = req.get_store_type_codes()
-
-            # Сканируем через API
-            stores_data = stores_api.search_all_stores(
-                query=query,
-                store_types=type_codes,
-                page_size=50,
-                progress_callback=update_progress,
-            )
-
-            # Сохраняем в БД
-            added = 0
-            updated = 0
-            for store_data in stores_data:
-                if not store_data.get("full_address"):
-                    continue
-
-                # Ищем по store_code
-                existing = db.query(Store).filter(
-                    Store.store_code == store_data["store_code"]
-                ).first()
-
-                if existing and req.force_update:
-                    # Обновляем
-                    existing.store_type = store_data.get("store_type", existing.store_type)
-                    existing.city = store_data.get("city", existing.city)
-                    existing.address = store_data.get("address", existing.address)
-                    existing.full_address = store_data.get("full_address", existing.full_address)
-                    existing.name = store_data.get("name", existing.name)
-                    updated += 1
-                elif not existing:
-                    # Создаём новый
-                    new_store = Store(
-                        store_code=store_data["store_code"],
-                        store_type=store_data.get("store_type", "Неизвестно"),
-                        city=store_data.get("city", ""),
-                        address=store_data.get("address", ""),
-                        full_address=store_data.get("full_address", ""),
-                        name=store_data.get("name"),
-                    )
-                    db.add(new_store)
-                    added += 1
-
-            db.commit()
-
-            job_db.status = "completed"
-            job_db.finished_at = datetime.utcnow()
-            job_db.items_scanned = len(stores_data)
-            job_db.items_added = added
-            job_db.items_updated = updated
-            job_db.progress = 100
-            job_db.progress_message = f"Завершено: найдено {len(stores_data)}, добавлено {added}, обновлено {updated}"
-            db.commit()
-
-        except Exception as e:
-            print(f"Ошибка сканирования: {e}")
-            job_db.status = "failed"
-            job_db.error_message = str(e)
-            job_db.finished_at = datetime.utcnow()
-            db.commit()
-        finally:
-            if stores_api:
-                try:
-                    stores_api.close()
-                except:
-                    pass
-
-    background_tasks.add_task(run_scan)
-
-    return {"job_id": job.id, "status": "pending"}
+    return {"job_id": job.id, "status": job.status, "items_scanned": job.items_scanned, "items_added": job.items_added}
 
 
 @router.post("/delete-batch", status_code=204)
@@ -322,198 +379,3 @@ def get_store_by_code(
     if not store:
         raise HTTPException(status_code=404, detail="Магазин с таким кодом не найден в базе")
     return store
-
-
-@router.post("/scan-by-codes")
-def scan_stores_by_codes(
-    codes: str = Query(..., description="Список кодов магазинов через запятую"),
-    store_type: Optional[str] = Query(None, description="Тип магазина для всех"),
-    force_update: bool = Query(False),
-    background_tasks: BackgroundTasks = None,
-    db: Session = Depends(get_db),
-):
-    """
-    Сканирование магазинов по списку кодов (фоновая задача).
-    """
-    # Парсим коды
-    code_list = [c.strip() for c in codes.split(",") if c.strip()]
-    if not code_list:
-        raise HTTPException(status_code=400, detail="Список кодов пуст")
-
-    # Проверяем нет ли уже запущенного задания
-    running_job = db.query(ScanJob).filter(
-        ScanJob.job_type == "stores",
-        ScanJob.status == "running",
-    ).first()
-
-    if running_job:
-        raise HTTPException(
-            status_code=409,
-            detail="Сканирование уже выполняется"
-        )
-
-    # Создаём задание
-    job = ScanJob(
-        job_type="stores",
-        store_code=None,
-        status="pending",
-        created_at=datetime.utcnow(),
-        progress=0,
-        progress_message=f"Задание создано: {len(code_list)} магазинов",
-    )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-
-    def run_scan():
-        job_db = db.query(ScanJob).filter(ScanJob.id == job.id).first()
-        if not job_db:
-            return
-
-        job_db.status = "running"
-        job_db.started_at = datetime.utcnow()
-        db.commit()
-
-        selector = None
-        try:
-            from src.server.services.store_selector import MagnitStoreSelector
-
-            selector = MagnitStoreSelector(headless=True)
-            selector.start()
-
-            def update_progress(progress: int, message: str):
-                try:
-                    job_update = db.query(ScanJob).filter(ScanJob.id == job.id).first()
-                    if job_update:
-                        job_update.progress = max(0, progress)
-                        job_update.progress_message = message
-                        db.commit()
-                except:
-                    pass
-
-            update_progress(5, "Открытие страницы Магнита...")
-
-            # Открываем страницу выбора магазина
-            selector.open_store_selector()
-            selector.select_mode_in_store()
-            selector.click_select_store_button()
-
-            added = 0
-            updated = 0
-            failed = 0
-            total = len(code_list)
-
-            for i, code in enumerate(code_list):
-                progress = 10 + int((i / total) * 80)
-                update_progress(progress, f"Сканирую магазин {code} ({i+1}/{total})...")
-
-                try:
-                    # Вводим код магазина в поле поиска
-                    try:
-                        selectors = [
-                            "input[placeholder*='Адрес']",
-                            "input[placeholder*='адрес']",
-                            "input[placeholder*='Код']",
-                            ".address-input",
-                            "#address-input",
-                        ]
-                        for sel in selectors:
-                            try:
-                                input_field = selector.page.locator(sel).first
-                                if input_field.is_visible(timeout=2000):
-                                    input_field.fill(code)
-                                    input_field.press("Enter")
-                                    import time
-                                    time.sleep(2)
-                                    break
-                            except:
-                                continue
-                    except Exception as e:
-                        print(f"Ошибка ввода кода {code}: {e}")
-                        failed += 1
-                        continue
-
-                    # Пытаемся получить данные магазина
-                    store_items = selector.get_all_stores_from_list()
-
-                    if store_items:
-                        for store_data in store_items:
-                            store_data["store_code"] = code
-                            if store_type:
-                                store_data["store_type"] = store_type
-
-                            if not store_data.get("full_address"):
-                                continue
-
-                            # Ищем по store_code
-                            existing = db.query(Store).filter(
-                                Store.store_code == code
-                            ).first()
-
-                            if existing and force_update:
-                                for key, value in store_data.items():
-                                    if hasattr(existing, key) and value is not None:
-                                        setattr(existing, key, value)
-                                updated += 1
-                            elif not existing:
-                                new_store = Store(
-                                    store_code=code,
-                                    store_type=store_data.get("store_type", store_type or "Неизвестно"),
-                                    city=store_data.get("city", "Неизвестно"),
-                                    address=store_data.get("address", ""),
-                                    full_address=store_data.get("full_address", ""),
-                                    name=store_data.get("name", f"Магазин {code}"),
-                                )
-                                db.add(new_store)
-                                added += 1
-
-                            db.commit()
-                    else:
-                        # Если не нашли через список, создаём заглушку
-                        existing = db.query(Store).filter(Store.store_code == code).first()
-                        if not existing:
-                            new_store = Store(
-                                store_code=code,
-                                store_type=store_type or "Неизвестно",
-                                city="",
-                                address="",
-                                full_address="",
-                                name=f"Магазин {code}",
-                            )
-                            db.add(new_store)
-                            added += 1
-                            db.commit()
-
-                except Exception as e:
-                    print(f"Ошибка сканирования магазина {code}: {e}")
-                    failed += 1
-                    continue
-
-            update_progress(95, "Сохранение результатов...")
-            db.commit()
-
-            job_db.status = "completed"
-            job_db.finished_at = datetime.utcnow()
-            job_db.items_scanned = total
-            job_db.items_added = added
-            job_db.items_updated = updated
-            job_db.progress = 100
-            job_db.progress_message = f"Завершено: добавлено {added}, обновлено {updated}, ошибок {failed}"
-            db.commit()
-
-        except Exception as e:
-            print(f"Ошибка сканирования: {e}")
-            job_db.status = "failed"
-            job_db.error_message = str(e)
-            job_db.finished_at = datetime.utcnow()
-            db.commit()
-        finally:
-            if selector:
-                try:
-                    selector.close()
-                except:
-                    pass
-
-    background_tasks.add_task(run_scan)
-
-    return {"job_id": job.id, "status": "pending", "codes_count": len(code_list)}

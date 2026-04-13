@@ -3,16 +3,23 @@ from sqlalchemy import (
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
+import hashlib
 
 from src.server.database import Base
+
+
+def store_hash_id(store_code: str, store_type: str, full_address: str) -> str:
+    """Генерирует хэш-идентификатор магазина."""
+    raw = f"{store_code}|{store_type}|{full_address}"
+    return hashlib.md5(raw.encode("utf-8")).hexdigest()[:12]
 
 
 class Store(Base):
     """Магазин Магнит."""
     __tablename__ = "stores"
 
-    id = Column(Integer, primary_key=True, index=True)
-    store_code = Column(String, unique=True, nullable=False, index=True)
+    id = Column(String(12), primary_key=True)  # хэш из store_code + store_type + full_address
+    store_code = Column(String, nullable=False, index=True)
     store_type = Column(String, nullable=False, index=True)
     city = Column(String, nullable=False, index=True)
     address = Column(String, nullable=False)
@@ -20,6 +27,11 @@ class Store(Base):
     name = Column(String, nullable=True)
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        if not kwargs.get('id') and self.store_code and self.store_type and self.full_address:
+            self.id = store_hash_id(self.store_code, self.store_type, self.full_address)
 
 
 class Category(Base):

@@ -2,53 +2,6 @@
 {% block title %}Магазины — Магнит Goods{% endblock %}
 
 {% block content %}
-<!-- Форма добавления с автозаполнением -->
-<div class="card">
-    <h2>Добавить магазин</h2>
-    <form hx-post="/api/stores" hx-target="#stores-table" hx-swap="innerHTML" id="add-store-form">
-        <div class="form-row">
-            <div class="form-group">
-                <label>Код магазина (store_code) <span style="color:#999;font-size:12px;">— введите код, данные подтянутся автоматически</span></label>
-                <input type="text" name="store_code" id="input-store-code" placeholder="12345" required style="width:120px" onblur="autoFillStore()">
-            </div>
-            <div class="form-group">
-                <label>Тип</label>
-                <select name="store_type" id="input-store-type" required>
-                    <option value="Магнит">Магнит</option>
-                    <option value="Экстра">Экстра</option>
-                    <option value="М.Косметик">М.Косметик</option>
-                    <option value="Гипермаркет">Гипермаркет</option>
-                    <option value="Опт">Опт</option>
-                    <option value="Моя цена">Моя цена</option>
-                    <option value="Заряд">Заряд</option>
-                </select>
-            </div>
-            <div class="form-group">
-                <label>Город</label>
-                <input type="text" name="city" id="input-city" placeholder="Новочебоксарск" required style="width:180px">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group" style="flex:1">
-                <label>Адрес (краткий)</label>
-                <input type="text" name="address" id="input-address" placeholder="ул. Строителей, зд 21" required style="width:100%">
-            </div>
-            <div class="form-group" style="flex:2">
-                <label>Полный адрес</label>
-                <input type="text" name="full_address" id="input-full-address" placeholder="Чувашская Республика - Чувашия, г Новочебоксарск, ул Строителей, зд 21" required style="width:100%">
-            </div>
-        </div>
-        <div class="form-row">
-            <div class="form-group">
-                <label>Название</label>
-                <input type="text" name="name" id="input-name" placeholder="Магнит Экстра" style="width:200px">
-            </div>
-            <div id="autofill-status" style="align-self:end;padding-bottom:8px;"></div>
-        </div>
-        <button type="submit" class="btn btn-primary">Добавить магазин</button>
-    </form>
-</div>
-
 <!-- Сканирование по адресу -->
 <div class="card">
     <h2>Сканировать магазины по адресу</h2>
@@ -69,19 +22,16 @@
                     <input type="checkbox" class="scan-type-cb" value="Магнит" checked> Магнит
                 </label>
                 <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Мини" checked> Мини
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Семейный" checked> Семейный
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
                     <input type="checkbox" class="scan-type-cb" value="Экстра" checked> Экстра
                 </label>
                 <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="М.Косметик" checked> М.Косметик
-                </label>
-                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="Гипермаркет"> Гипермаркет
-                </label>
-                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="Моя цена"> Моя цена
-                </label>
-                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
-                    <input type="checkbox" class="scan-type-cb" value="Заряд"> Заряд
+                    <input type="checkbox" class="scan-type-cb" value="Моя цена" checked> Моя цена
                 </label>
             </div>
         </div>
@@ -92,54 +42,6 @@
     <div id="scan-address-status" style="margin-top:12px;"></div>
 </div>
 
-<!-- Сканирование по кодам -->
-<div class="card">
-    <h2>Сканировать магазины по кодам</h2>
-    <p style="color:#666;margin-bottom:12px;">Введите коды магазинов через запятую. Сервер найдёт и добавит их в базу данных.</p>
-    <div class="form-row">
-        <div class="form-group" style="flex:2">
-            <label>Коды магазинов</label>
-            <input type="text" id="scan-codes" placeholder="12345, 12346, 12347" style="width:100%">
-        </div>
-        <div class="form-group">
-            <label>Тип (опционально)</label>
-            <select id="scan-type">
-                <option value="">Авто</option>
-                <option value="Магнит">Магнит</option>
-                <option value="Экстра">Экстра</option>
-                <option value="М.Косметик">М.Косметик</option>
-                <option value="Гипермаркет">Гипермаркет</option>
-            </select>
-        </div>
-        <div class="form-group" style="align-self:end;">
-            <button class="btn btn-success" onclick="scanByCodes()">Сканировать</button>
-        </div>
-    </div>
-    <div id="scan-codes-status" style="margin-top:12px;"></div>
-</div>
-
-<!-- Поиск -->
-<div class="card">
-    <h2>Поиск магазинов</h2>
-    <div class="form-row">
-        <div class="form-group">
-            <label>Город</label>
-            <input type="text" id="search-city" placeholder="Город" style="width:180px">
-        </div>
-        <div class="form-group">
-            <label>Тип</label>
-            <select id="search-type" style="width:140px">
-                <option value="">Все типы</option>
-                <option value="Магнит">Магнит</option>
-                <option value="Экстра">Экстра</option>
-                <option value="М.Косметик">М.Косметик</option>
-                <option value="Гипермаркет">Гипермаркет</option>
-            </select>
-        </div>
-        <button class="btn btn-primary" onclick="filterStores()">Найти</button>
-    </div>
-</div>
-
 <!-- Список магазинов -->
 <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
@@ -148,56 +50,12 @@
             Удалить выбранные (<span id="selected-count">0</span>)
         </button>
     </div>
-    <div id="stores-table">
+    <div id="stores-table" style="max-height:480px;overflow-y:auto;">
         {% include "stores_table.html" %}
     </div>
 </div>
 
 <script>
-// === Автозаполнение формы при вводе store_code ===
-async function autoFillStore() {
-    const code = document.getElementById('input-store-code').value.trim();
-    const statusDiv = document.getElementById('autofill-status');
-
-    if (!code || code.length < 2) {
-        statusDiv.innerHTML = '';
-        return;
-    }
-
-    statusDiv.innerHTML = '<span class="badge badge-info">Поиск в базе...</span>';
-
-    try {
-        const resp = await fetch(`/api/stores/by-code/${encodeURIComponent(code)}`);
-
-        if (resp.ok) {
-            const store = await resp.json();
-
-            // Заполняем поля
-            document.getElementById('input-store-code').value = store.store_code;
-            document.getElementById('input-store-type').value = store.store_type;
-            document.getElementById('input-city').value = store.city || '';
-            document.getElementById('input-address').value = store.address || '';
-            document.getElementById('input-full-address').value = store.full_address || '';
-            document.getElementById('input-name').value = store.name || '';
-
-            statusDiv.innerHTML = '<span class="badge badge-success">✓ Найден в базе — данные заполнены</span>';
-
-            // Подсвечиваем поля
-            ['input-store-type', 'input-city', 'input-address', 'input-full-address', 'input-name'].forEach(id => {
-                document.getElementById(id).style.background = '#e8f5e9';
-            });
-        } else {
-            statusDiv.innerHTML = '<span class="badge badge-warning">Не найден в базе — заполните вручную</span>';
-            // Сбрасываем подсветку
-            ['input-store-type', 'input-city', 'input-address', 'input-full-address', 'input-name'].forEach(id => {
-                document.getElementById(id).style.background = '';
-            });
-        }
-    } catch (e) {
-        statusDiv.innerHTML = '<span class="badge badge-danger">Ошибка поиска</span>';
-    }
-}
-
 // === Чекбоксы и массовое удаление ===
 function toggleAllStores(checked) {
     document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = checked);
@@ -219,7 +77,7 @@ function updateDeleteButton() {
 
 async function deleteSelectedStores() {
     const checked = document.querySelectorAll('.store-checkbox:checked');
-    const ids = Array.from(checked).map(cb => parseInt(cb.value));
+    const ids = Array.from(checked).map(cb => cb.value);
     
     if (ids.length === 0) return;
     if (!confirm(`Удалить ${ids.length} магазин(ов)?`)) return;
@@ -290,40 +148,7 @@ async function scanByAddress() {
     }
 }
 
-// === Сканирование по кодам ===
-async function scanByCodes() {
-    const codes = document.getElementById('scan-codes').value.trim();
-    const storeType = document.getElementById('scan-type').value;
-    const statusDiv = document.getElementById('scan-codes-status');
-
-    if (!codes) {
-        alert('Введите коды магазинов');
-        return;
-    }
-
-    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования...</div>';
-
-    try {
-        let url = `/api/stores/scan-by-codes?codes=${encodeURIComponent(codes)}`;
-        if (storeType) url += `&store_type=${encodeURIComponent(storeType)}`;
-
-        const resp = await fetch(url, { method: 'POST' });
-        const data = await resp.json();
-
-        if (data.job_id) {
-            statusDiv.innerHTML = `
-                <div class="badge badge-info">Задание #${data.job_id} запущено (${data.codes_count} магазинов)</div>
-                <div id="scan-codes-progress" style="margin-top:8px;"></div>
-            `;
-            pollJobStatus(data.job_id, 'scan-codes-progress', true);
-        } else if (data.detail) {
-            statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${data.detail}</div>`;
-        }
-    } catch (e) {
-        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
-    }
-}
-
+// === Проверка статуса заданий ===
 async function pollJobStatus(jobId, progressDivId, refreshTable) {
     const progressDiv = document.getElementById(progressDivId);
 
@@ -364,43 +189,43 @@ async function pollJobStatus(jobId, progressDivId, refreshTable) {
     checkStatus();
 }
 
-// === Поиск и отображение ===
+// === Загрузка и отображение ===
 async function filterStores() {
-    const city = document.getElementById('search-city').value;
-    const type = document.getElementById('search-type').value;
-    let url = '/api/stores?';
-    if (city) url += `city=${encodeURIComponent(city)}&`;
-    if (type) url += `store_type=${encodeURIComponent(type)}`;
-
-    const resp = await fetch(url);
+    const resp = await fetch('/api/stores');
     const stores = await resp.json();
     renderTable(stores);
 }
 
 function renderTable(stores) {
+    // Сортировка по адресу
+    stores.sort((a, b) => (a.full_address || '').localeCompare(b.full_address || '', 'ru'));
+
     const container = document.getElementById('stores-table');
     if (stores.length === 0) {
         container.innerHTML = '<p>Магазины не найдены</p>';
+        document.getElementById('delete-selected-btn').style.display = 'none';
         return;
     }
     let html = `<table>
         <thead><tr>
-            <th>ID</th><th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th><th>Действия</th>
+            <th style="width:40px;"><input type="checkbox" id="select-all-stores" onchange="toggleAllStores(this.checked)"></th>
+            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th><th>Действия</th>
         </tr></thead><tbody>`;
     for (const s of stores) {
         html += `<tr>
-            <td>${s.id}</td>
+            <td><input type="checkbox" class="store-checkbox" value="${s.id}" onchange="updateDeleteButton()"></td>
             <td><span class="badge badge-info">${s.store_type}</span></td>
             <td>${s.city}</td>
             <td>${s.full_address}</td>
             <td><code>${s.store_code}</code></td>
             <td>
-                <button class="btn btn-danger btn-sm" onclick="deleteStore(${s.id})">Удалить</button>
+                <button class="btn btn-danger btn-sm" onclick="deleteStore('${s.id}')">Удалить</button>
             </td>
         </tr>`;
     }
     html += '</tbody></table>';
     container.innerHTML = html;
+    updateDeleteButton();
 }
 
 async function deleteStore(id) {
@@ -408,18 +233,5 @@ async function deleteStore(id) {
     await fetch(`/api/stores/${id}`, { method: 'DELETE' });
     filterStores();
 }
-
-// Обработка HTMX ответа для формы добавления
-document.body.addEventListener('htmx:afterRequest', function(e) {
-    if (e.detail.pathInfo.requestPath === '/api/stores') {
-        document.getElementById('add-store-form').reset();
-        // Сбрасываем подсветку
-        ['input-store-type', 'input-city', 'input-address', 'input-full-address', 'input-name'].forEach(id => {
-            document.getElementById(id).style.background = '';
-        });
-        document.getElementById('autofill-status').innerHTML = '';
-        filterStores();
-    }
-});
 </script>
 {% endblock %}

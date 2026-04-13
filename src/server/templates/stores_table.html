@@ -3,7 +3,6 @@
     <thead>
         <tr>
             <th style="width:40px;"><input type="checkbox" id="select-all-stores" onchange="toggleAllStores(this.checked)"></th>
-            <th>ID</th>
             <th>Тип</th>
             <th>Город</th>
             <th>Адрес</th>
@@ -14,7 +13,6 @@
         {% for store in stores %}
         <tr>
             <td><input type="checkbox" class="store-checkbox" value="{{ store.id }}" onchange="updateDeleteButton()"></td>
-            <td>{{ store.id }}</td>
             <td><span class="badge badge-info">{{ store.store_type }}</span></td>
             <td>{{ store.city }}</td>
             <td>{{ store.full_address }}</td>

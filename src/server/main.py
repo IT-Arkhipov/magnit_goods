@@ -12,11 +12,71 @@ from src.server.models import Store
 from src.server.schemas import StoreCreate
 from src.server.routes import stores, jobs, catalog, prices
 from src.server.scheduler import init_scheduler, shutdown_scheduler
+from sqlalchemy import text
 import os
 
 
 # === Инициализация БД ===
 init_db()
+
+# === Миграция: конвертация integer ID в хэш-идентификаторы ===
+from src.server.database import SessionLocal, engine
+from src.server.models import Store, store_hash_id
+from sqlalchemy import inspect
+
+def migrate_store_ids():
+    """Конвертация integer ID в хэш-идентификаторы (однократно)."""
+    inspector = inspect(engine)
+    cols = [c["name"] for c in inspector.get_columns("stores")]
+    if "id" not in cols:
+        return  # таблица ещё не создана
+
+    col_info = next((c for c in inspector.get_columns("stores") if c["name"] == "id"), None)
+    col_type = str(col_info["type"]).upper() if col_info else ""
+    if "INT" not in col_type:
+        return  # уже строка — миграция выполнена
+
+    print("Миграция: конвертация ID магазинов в хэш-формат...", flush=True)
+
+    # Чтение данных
+    s1 = SessionLocal()
+    try:
+        rows = s1.query(Store).all()
+        data = [(s.store_code, s.store_type, s.city, s.address, s.full_address, s.name) for s in rows]
+    finally:
+        s1.close()
+
+    # Пересоздание таблицы
+    Store.__table__.drop(engine, checkfirst=True)
+    Store.__table__.create(engine)
+
+    # Вставка
+    s2 = SessionLocal()
+    try:
+        from datetime import datetime as dt
+        now = dt.utcnow()
+        for sc, st, city, addr, fa, name in data:
+            new_id = store_hash_id(sc, st, fa)
+            s2.add(Store(
+                id=new_id, store_code=sc, store_type=st,
+                city=city, address=addr, full_address=fa, name=name,
+                created_at=now,
+            ))
+        s2.commit()
+        print(f"Миграция завершена: {len(data)} магазинов", flush=True)
+    finally:
+        s2.close()
+
+migrate_store_ids()
+
+# === Очистка зависших заданий от предыдущего запуска ===
+from src.server.routes.stores import _mark_all_running_failed_on_startup
+
+db_session = SessionLocal()
+try:
+    _mark_all_running_failed_on_startup(db_session)
+finally:
+    db_session.close()
 
 # === Инициализация планировщика ===
 store_code = os.getenv("STORE_CODE")
@@ -69,7 +129,7 @@ app.include_router(prices.router)
 @app.get("/", response_class=HTMLResponse)
 async def page_stores(request: Request, db: Session = Depends(get_db)):
     """Главная — управление магазинами."""
-    stores_list = db.query(Store).order_by(Store.city, Store.name).all()
+    stores_list = db.query(Store).order_by(text("full_address COLLATE NOCASE")).all()
     return render_template(
         "stores.html",
         {"request": request, "page": "stores", "stores": stores_list},
@@ -136,7 +196,7 @@ async def create_store_htmx(
     db.commit()
     db.refresh(db_store)
     # Вернуть обновлённую таблицу
-    stores_list = db.query(Store).order_by(Store.city, Store.name).all()
+    stores_list = db.query(Store).order_by(text("full_address COLLATE NOCASE")).all()
     return templates.TemplateResponse(
         name="stores_table.html",
         context={"request": request, "stores": stores_list},

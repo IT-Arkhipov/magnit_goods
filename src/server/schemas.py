@@ -1,6 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
+from .services.magnit_api import STORE_TYPE_MAP
 
 
 # ===== Store =====
@@ -29,7 +30,7 @@ class StoreUpdate(BaseModel):
 
 
 class StoreResponse(StoreBase):
-    id: int
+    id: str
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -37,20 +38,8 @@ class StoreResponse(StoreBase):
 
 # ===== Scan Request =====
 
-# Маппинг типов магазинов: API код → UI-лейбл
-# Проверено через API Магнита: UI фильтр "Экстра" → storeTypeV2: ME
-STORE_CODE_TO_TYPE = {
-    "MM": "Магнит",
-    "ME": "Экстра",
-    "DG": "М.Косметик",
-    "GM": "Гипермаркет",
-    "MO": "Опт",
-    "MC": "Моя цена",
-    "ZARYAD": "Заряд",
-}
-
-# Обратный маппинг
-STORE_TYPE_TO_CODE = {v: k for k, v in STORE_CODE_TO_TYPE.items()}
+# Обратный маппинг: UI-лейбл → API код
+STORE_TYPE_TO_CODE = {v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Мини")}
 
 
 class ScanStoresRequest(BaseModel):
@@ -77,7 +66,7 @@ class SelectStoreRequest(BaseModel):
 
 
 class DeleteStoresRequest(BaseModel):
-    ids: list[int]
+    ids: list[str]
 
 
 # ===== ScanJob =====
