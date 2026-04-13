@@ -5,15 +5,18 @@
 <!-- Сканирование по адресу -->
 <div class="card">
     <h2>Добавление магазинов</h2>
-    <p style="color:#666;margin-bottom:12px;">Введите город и улицу. Сервер найдёт все магазины через API Магнита и покажет список для выбора.</p>
+    <p style="color:#666;margin-bottom:12px;">Укажите город, улицу (опционально) и нужные типы магазинов для поиска</p>
     <div class="form-row">
         <div class="form-group">
-            <label>Город</label>
-            <input type="text" id="scan-city" placeholder="Новочебоксарск" style="width:180px">
+            <!-- <label>Город</label> -->
+            <div style="position:relative;display:inline-block;">
+                <input type="text" id="scan-city" placeholder="Город" style="width:180px" oninput="clearScanCityError()">
+                <div id="scan-city-error" style="position:absolute;left:0;right:0;top:100%;color:#e74c3c;font-size:12px;display:none;margin-top:2px;"></div>
+            </div>
         </div>
         <div class="form-group">
-            <label>Улица (опционально)</label>
-            <input type="text" id="scan-street" placeholder="ул. Строителей" style="width:180px">
+            <!-- <label>Улица (опционально)</label> -->
+            <input type="text" id="scan-street" placeholder="Улица (опционально)" style="width:180px">
         </div>
         <div class="form-group">
             <label>Типы магазинов</label>
@@ -71,13 +74,20 @@
 function toggleAllStores(checked) {
     document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = checked);
     updateDeleteButton();
+    document.getElementById('select-all-stores').indeterminate = false;
 }
 
 function updateDeleteButton() {
+    const allCheckboxes = document.querySelectorAll('.store-checkbox');
     const checked = document.querySelectorAll('.store-checkbox:checked');
+    const selectAll = document.getElementById('select-all-stores');
     const btn = document.getElementById('delete-selected-btn');
     const count = document.getElementById('selected-count');
-    
+
+    if (selectAll) {
+        selectAll.checked = allCheckboxes.length > 0 && checked.length === allCheckboxes.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < allCheckboxes.length;
+    }
     if (checked.length > 0) {
         btn.style.display = 'inline-block';
         count.textContent = checked.length;
@@ -89,10 +99,10 @@ function updateDeleteButton() {
 async function deleteSelectedStores() {
     const checked = document.querySelectorAll('.store-checkbox:checked');
     const ids = Array.from(checked).map(cb => cb.value);
-    
+
     if (ids.length === 0) return;
     if (!confirm(`Удалить ${ids.length} магазин(ов)?`)) return;
-    
+
     try {
         const resp = await fetch('/api/stores/delete-batch', {
             method: 'POST',
@@ -100,7 +110,10 @@ async function deleteSelectedStores() {
             body: JSON.stringify({ ids }),
         });
         if (resp.ok) {
+            // Собираем коды удалённых магазинов (по хэшу id = store_code+store_type+full_address)
+            // Просто обновляем оба списка
             filterStores();
+            await refreshPreviewStatuses();
         } else {
             const data = await resp.json();
             alert('Ошибка: ' + (data.detail || 'Не удалось удалить'));
@@ -110,15 +123,57 @@ async function deleteSelectedStores() {
     }
 }
 
+// === Обновить статусы в preview по текущим данным БД ===
+async function refreshPreviewStatuses() {
+    if (!previewStores || previewStores.length === 0) return;
+    const previewDiv = document.getElementById('scan-preview');
+    if (previewDiv.style.display === 'none') return;
+
+    try {
+        const resp = await fetch('/api/stores');
+        const dbStores = await resp.json();
+        const dbCodes = new Set(dbStores.map(s => s.store_code));
+
+        let changed = false;
+        for (const s of previewStores) {
+            const nowInDb = dbCodes.has(s.store_code);
+            if (s.exists_in_db !== nowInDb) {
+                s.exists_in_db = nowInDb;
+                changed = true;
+            }
+        }
+        if (changed) {
+            renderPreview(previewStores);
+        }
+    } catch (e) {
+        console.error('Ошибка обновления статусов preview:', e);
+    }
+}
+
+function clearScanCityError() {
+    const errorDiv = document.getElementById('scan-city-error');
+    const cityInput = document.getElementById('scan-city');
+    errorDiv.style.display = 'none';
+    cityInput.style.borderColor = '';
+}
+
 // === Сканирование по адресу — preview ===
 async function scanByAddress() {
-    const city = document.getElementById('scan-city').value.trim();
+    const cityInput = document.getElementById('scan-city');
+    const city = cityInput.value.trim();
     const street = document.getElementById('scan-street').value.trim();
     const statusDiv = document.getElementById('scan-address-status');
     const previewDiv = document.getElementById('scan-preview');
+    const errorDiv = document.getElementById('scan-city-error');
+
+    // Сброс ошибки
+    errorDiv.style.display = 'none';
+    cityInput.style.borderColor = '';
 
     if (!city) {
-        alert('Введите город');
+        errorDiv.textContent = 'Введите город';
+        errorDiv.style.display = 'block';
+        cityInput.style.borderColor = '#e74c3c';
         return;
     }
 
@@ -165,10 +220,20 @@ function renderPreview(stores) {
     const container = document.getElementById('preview-table');
     const countSpan = document.getElementById('preview-count');
 
+    // Сначала новые (не в БД), сортировка по типу → адресу
+    const newStores = stores.filter(s => !s.exists_in_db)
+        .sort((a, b) => a.store_type.localeCompare(b.store_type, 'ru') || a.full_address.localeCompare(b.full_address, 'ru'));
+    // Затем существующие, тоже по типу → адресу
+    const existingStores = stores.filter(s => s.exists_in_db)
+        .sort((a, b) => a.store_type.localeCompare(b.store_type, 'ru') || a.full_address.localeCompare(b.full_address, 'ru'));
+
+    const sortedStores = [...newStores, ...existingStores];
+    previewStores = sortedStores;
+
     countSpan.textContent = stores.length;
     previewDiv.style.display = 'block';
 
-    if (stores.length === 0) {
+    if (sortedStores.length === 0) {
         container.innerHTML = '<p>Магазины не найдены</p>';
         document.getElementById('add-selected-btn').style.display = 'none';
         return;
@@ -180,15 +245,15 @@ function renderPreview(stores) {
             <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th>
         </tr></thead><tbody>`;
 
-    for (let i = 0; i < stores.length; i++) {
-        const s = stores[i];
+    for (let i = 0; i < sortedStores.length; i++) {
+        const s = sortedStores[i];
         const rowClass = s.exists_in_db ? 'style="background:#f0f0f0;color:#999;"' : '';
         const badge = s.exists_in_db ? `<br><span style="color:#e67e22;font-size:11px;">(уже в базе)</span>` : '';
         html += `<tr ${rowClass}>
             <td><input type="checkbox" class="preview-checkbox" data-index="${i}" ${s.exists_in_db ? 'disabled' : ''} onchange="updatePreviewSelection()"></td>
             <td><span class="badge badge-info">${s.store_type}</span>${badge}</td>
             <td>${s.city}</td>
-            <td>${s.full_address}</td>
+            <td><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
             <td><code>${s.store_code}</code></td>
         </tr>`;
     }
@@ -200,12 +265,20 @@ function renderPreview(stores) {
 function toggleAllPreview(checked) {
     document.querySelectorAll('.preview-checkbox:not(:disabled)').forEach(cb => cb.checked = checked);
     updatePreviewSelection();
+    document.getElementById('select-all-preview').indeterminate = false;
 }
 
 function updatePreviewSelection() {
+    const allCheckboxes = document.querySelectorAll('.preview-checkbox:not(:disabled)');
     const checked = document.querySelectorAll('.preview-checkbox:checked');
+    const selectAll = document.getElementById('select-all-preview');
     const btn = document.getElementById('add-selected-btn');
     const count = document.getElementById('selected-preview-count');
+
+    if (selectAll) {
+        selectAll.checked = allCheckboxes.length > 0 && checked.length === allCheckboxes.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < allCheckboxes.length;
+    }
     if (checked.length > 0) {
         btn.style.display = 'inline-block';
         count.textContent = checked.length;
@@ -225,7 +298,7 @@ async function addSelectedStores() {
 
     const btn = document.getElementById('add-selected-btn');
     btn.disabled = true;
-    btn.textContent = 'Добавление...';
+    btn.textContent = 'Добавить в базу';
 
     try {
         const resp = await fetch('/api/stores/add-selected', {
@@ -238,8 +311,17 @@ async function addSelectedStores() {
         const statusDiv = document.getElementById('scan-address-status');
         statusDiv.innerHTML = `<div class="badge badge-success">✓ Добавлено: ${data.added}, пропущено: ${data.skipped}</div>`;
 
-        // Скрываем preview
-        document.getElementById('scan-preview').style.display = 'none';
+        // Обновляем статус в preview — добавленные становятся «уже в базе»
+        for (const idx of indices) {
+            const s = previewStores[idx];
+            if (s.store_code && data.added > 0) {
+                // Проверяем, что этот конкретный магазин был добавлен (не пропущен)
+                s.exists_in_db = true;
+            }
+        }
+        // Более точно: проходим по всем preview и обновляем по store_code
+        // Перерендерим preview с новыми статусами
+        renderPreview(previewStores);
 
         // Обновляем основной список
         filterStores();
@@ -299,8 +381,8 @@ async function filterStores() {
 }
 
 function renderTable(stores) {
-    // Сортировка по адресу
-    stores.sort((a, b) => (a.full_address || '').localeCompare(b.full_address || '', 'ru'));
+    // Сортировка по типу, затем по адресу
+    stores.sort((a, b) => (a.store_type || '').localeCompare(b.store_type || '', 'ru') || (a.full_address || '').localeCompare(b.full_address || '', 'ru'));
 
     const container = document.getElementById('stores-table');
     if (stores.length === 0) {
@@ -311,18 +393,15 @@ function renderTable(stores) {
     let html = `<table>
         <thead><tr>
             <th style="width:40px;"><input type="checkbox" id="select-all-stores" onchange="toggleAllStores(this.checked)"></th>
-            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th><th>Действия</th>
+            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th>
         </tr></thead><tbody>`;
     for (const s of stores) {
         html += `<tr>
             <td><input type="checkbox" class="store-checkbox" value="${s.id}" onchange="updateDeleteButton()"></td>
             <td><span class="badge badge-info">${s.store_type}</span></td>
             <td>${s.city}</td>
-            <td>${s.full_address}</td>
+            <td><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
             <td><code>${s.store_code}</code></td>
-            <td>
-                <button class="btn btn-danger btn-sm" onclick="deleteStore('${s.id}')">Удалить</button>
-            </td>
         </tr>`;
     }
     html += '</tbody></table>';
@@ -330,10 +409,5 @@ function renderTable(stores) {
     updateDeleteButton();
 }
 
-async function deleteStore(id) {
-    if (!confirm('Удалить магазин?')) return;
-    await fetch(`/api/stores/${id}`, { method: 'DELETE' });
-    filterStores();
-}
 </script>
 {% endblock %}

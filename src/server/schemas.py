@@ -39,7 +39,7 @@ class StoreResponse(StoreBase):
 # ===== Scan Request =====
 
 # Обратный маппинг: UI-лейбл → API код
-STORE_TYPE_TO_CODE = {v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Мини")}
+STORE_TYPE_TO_CODE = {v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Заряд", "Опт")}
 
 
 class ScanStoresRequest(BaseModel):

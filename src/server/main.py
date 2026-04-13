@@ -129,7 +129,7 @@ app.include_router(prices.router)
 @app.get("/", response_class=HTMLResponse)
 async def page_stores(request: Request, db: Session = Depends(get_db)):
     """Главная — управление магазинами."""
-    stores_list = db.query(Store).order_by(text("full_address COLLATE NOCASE")).all()
+    stores_list = db.query(Store).order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE")).all()
     return render_template(
         "stores.html",
         {"request": request, "page": "stores", "stores": stores_list},
@@ -196,7 +196,7 @@ async def create_store_htmx(
     db.commit()
     db.refresh(db_store)
     # Вернуть обновлённую таблицу
-    stores_list = db.query(Store).order_by(text("full_address COLLATE NOCASE")).all()
+    stores_list = db.query(Store).order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE")).all()
     return templates.TemplateResponse(
         name="stores_table.html",
         context={"request": request, "stores": stores_list},
