@@ -1,11 +1,11 @@
 {% extends "base.html" %}
-{% block title %}Магазины — Магнит Goods{% endblock %}
+{% block title %}Магинт манИт{% endblock %}
 
 {% block content %}
 <!-- Сканирование по адресу -->
 <div class="card">
-    <h2>Сканировать магазины по адресу</h2>
-    <p style="color:#666;margin-bottom:12px;">Введите город и улицу. Сервер найдёт все магазины через API Магнита и добавит в базу.</p>
+    <h2>Добавление магазинов</h2>
+    <p style="color:#666;margin-bottom:12px;">Введите город и улицу. Сервер найдёт все магазины через API Магнита и покажет список для выбора.</p>
     <div class="form-row">
         <div class="form-group">
             <label>Город</label>
@@ -40,12 +40,23 @@
         </div>
     </div>
     <div id="scan-address-status" style="margin-top:12px;"></div>
+
+    <!-- Результаты preview -->
+    <div id="scan-preview" style="display:none;margin-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0;">Найдено: <span id="preview-count">0</span> магазинов</h3>
+            <button id="add-selected-btn" class="btn btn-primary" style="display:none;" onclick="addSelectedStores()">
+                Добавить выбранные (<span id="selected-preview-count">0</span>)
+            </button>
+        </div>
+        <div id="preview-table" style="max-height:480px;overflow-y:auto;"></div>
+    </div>
 </div>
 
-<!-- Список магазинов -->
+<!-- Список магазинов в базе -->
 <div class="card">
     <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
-        <h2 style="margin:0;">Список магазинов</h2>
+        <h2 style="margin:0;">Список магазинов в базе</h2>
         <button id="delete-selected-btn" class="btn btn-danger" style="display:none;" onclick="deleteSelectedStores()">
             Удалить выбранные (<span id="selected-count">0</span>)
         </button>
@@ -99,18 +110,18 @@ async function deleteSelectedStores() {
     }
 }
 
-// === Сканирование по адресу ===
+// === Сканирование по адресу — preview ===
 async function scanByAddress() {
     const city = document.getElementById('scan-city').value.trim();
     const street = document.getElementById('scan-street').value.trim();
     const statusDiv = document.getElementById('scan-address-status');
+    const previewDiv = document.getElementById('scan-preview');
 
     if (!city) {
         alert('Введите город');
         return;
     }
 
-    // Собираем выбранные типы
     const typeCheckboxes = document.querySelectorAll('.scan-type-cb:checked');
     const storeTypes = Array.from(typeCheckboxes).map(cb => cb.value);
 
@@ -119,32 +130,123 @@ async function scanByAddress() {
         return;
     }
 
-    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования...</div>';
+    statusDiv.innerHTML = '<div class="badge badge-info">Поиск магазинов...</div>';
+    previewDiv.style.display = 'none';
 
     try {
-        const resp = await fetch('/api/stores/scan', {
+        const resp = await fetch('/api/stores/preview', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 city: city,
                 street: street || null,
                 store_types: storeTypes,
-                force_update: false,
             }),
         });
         const data = await resp.json();
 
-        if (data.job_id) {
-            statusDiv.innerHTML = `
-                <div class="badge badge-info">Задание #${data.job_id} запущено</div>
-                <div id="scan-address-progress" style="margin-top:8px;"></div>
-            `;
-            pollJobStatus(data.job_id, 'scan-address-progress', true);
+        if (data.stores) {
+            statusDiv.innerHTML = `<div class="badge badge-success">Найдено ${data.total_found} магазинов — выберите нужные</div>`;
+            renderPreview(data.stores);
         } else if (data.detail) {
             statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${data.detail}</div>`;
         }
     } catch (e) {
         statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+// === Рендер таблицы preview ===
+let previewStores = [];
+
+function renderPreview(stores) {
+    previewStores = stores;
+    const previewDiv = document.getElementById('scan-preview');
+    const container = document.getElementById('preview-table');
+    const countSpan = document.getElementById('preview-count');
+
+    countSpan.textContent = stores.length;
+    previewDiv.style.display = 'block';
+
+    if (stores.length === 0) {
+        container.innerHTML = '<p>Магазины не найдены</p>';
+        document.getElementById('add-selected-btn').style.display = 'none';
+        return;
+    }
+
+    let html = `<table>
+        <thead><tr>
+            <th style="width:40px;"><input type="checkbox" id="select-all-preview" onchange="toggleAllPreview(this.checked)"></th>
+            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th>
+        </tr></thead><tbody>`;
+
+    for (let i = 0; i < stores.length; i++) {
+        const s = stores[i];
+        const rowClass = s.exists_in_db ? 'style="background:#f0f0f0;color:#999;"' : '';
+        const badge = s.exists_in_db ? `<br><span style="color:#e67e22;font-size:11px;">(уже в базе)</span>` : '';
+        html += `<tr ${rowClass}>
+            <td><input type="checkbox" class="preview-checkbox" data-index="${i}" ${s.exists_in_db ? 'disabled' : ''} onchange="updatePreviewSelection()"></td>
+            <td><span class="badge badge-info">${s.store_type}</span>${badge}</td>
+            <td>${s.city}</td>
+            <td>${s.full_address}</td>
+            <td><code>${s.store_code}</code></td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    updatePreviewSelection();
+}
+
+function toggleAllPreview(checked) {
+    document.querySelectorAll('.preview-checkbox:not(:disabled)').forEach(cb => cb.checked = checked);
+    updatePreviewSelection();
+}
+
+function updatePreviewSelection() {
+    const checked = document.querySelectorAll('.preview-checkbox:checked');
+    const btn = document.getElementById('add-selected-btn');
+    const count = document.getElementById('selected-preview-count');
+    if (checked.length > 0) {
+        btn.style.display = 'inline-block';
+        count.textContent = checked.length;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+// === Добавление выбранных магазинов ===
+async function addSelectedStores() {
+    const checked = document.querySelectorAll('.preview-checkbox:checked');
+    const indices = Array.from(checked).map(cb => parseInt(cb.dataset.index));
+    const selected = indices.map(i => previewStores[i]);
+
+    if (selected.length === 0) return;
+    if (!confirm(`Добавить ${selected.length} магазин(ов) в базу?`)) return;
+
+    const btn = document.getElementById('add-selected-btn');
+    btn.disabled = true;
+    btn.textContent = 'Добавление...';
+
+    try {
+        const resp = await fetch('/api/stores/add-selected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stores: selected }),
+        });
+        const data = await resp.json();
+
+        const statusDiv = document.getElementById('scan-address-status');
+        statusDiv.innerHTML = `<div class="badge badge-success">✓ Добавлено: ${data.added}, пропущено: ${data.skipped}</div>`;
+
+        // Скрываем preview
+        document.getElementById('scan-preview').style.display = 'none';
+
+        // Обновляем основной список
+        filterStores();
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    } finally {
+        btn.disabled = false;
     }
 }
 

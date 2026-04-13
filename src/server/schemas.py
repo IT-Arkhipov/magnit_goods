@@ -58,6 +58,22 @@ class ScanStoresRequest(BaseModel):
         return codes if codes else list(STORE_TYPE_TO_CODE.values())
 
 
+class StorePreviewItem(BaseModel):
+    """Один магазин из результатов preview (ещё не в БД)."""
+    store_code: str
+    store_type: str
+    city: str
+    address: str
+    full_address: str
+    name: Optional[str] = None
+    exists_in_db: bool = False  # подсветка существующих
+
+
+class AddSelectedStoresRequest(BaseModel):
+    """Добавить выбранные магазины из preview."""
+    stores: list[StorePreviewItem]
+
+
 class SelectStoreRequest(BaseModel):
     city: str
     street: Optional[str] = None
