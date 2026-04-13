@@ -21,8 +21,9 @@ init_db()
 
 # === Миграция: конвертация integer ID в хэш-идентификаторы ===
 from src.server.database import SessionLocal, engine
-from src.server.models import Store, store_hash_id
+from src.server.models import Store, Category, store_hash_id
 from sqlalchemy import inspect
+
 
 def migrate_store_ids():
     """Конвертация integer ID в хэш-идентификаторы (однократно)."""
@@ -31,7 +32,9 @@ def migrate_store_ids():
     if "id" not in cols:
         return  # таблица ещё не создана
 
-    col_info = next((c for c in inspector.get_columns("stores") if c["name"] == "id"), None)
+    col_info = next(
+        (c for c in inspector.get_columns("stores") if c["name"] == "id"), None
+    )
     col_type = str(col_info["type"]).upper() if col_info else ""
     if "INT" not in col_type:
         return  # уже строка — миграция выполнена
@@ -42,7 +45,10 @@ def migrate_store_ids():
     s1 = SessionLocal()
     try:
         rows = s1.query(Store).all()
-        data = [(s.store_code, s.store_type, s.city, s.address, s.full_address, s.name) for s in rows]
+        data = [
+            (s.store_code, s.store_type, s.city, s.address, s.full_address, s.name)
+            for s in rows
+        ]
     finally:
         s1.close()
 
@@ -54,20 +60,65 @@ def migrate_store_ids():
     s2 = SessionLocal()
     try:
         from datetime import datetime as dt
+
         now = dt.utcnow()
         for sc, st, city, addr, fa, name in data:
             new_id = store_hash_id(sc, st, fa)
-            s2.add(Store(
-                id=new_id, store_code=sc, store_type=st,
-                city=city, address=addr, full_address=fa, name=name,
-                created_at=now,
-            ))
+            s2.add(
+                Store(
+                    id=new_id,
+                    store_code=sc,
+                    store_type=st,
+                    city=city,
+                    address=addr,
+                    full_address=fa,
+                    name=name,
+                    created_at=now,
+                )
+            )
         s2.commit()
         print(f"Миграция завершена: {len(data)} магазинов", flush=True)
     finally:
         s2.close()
 
+
 migrate_store_ids()
+
+
+def migrate_categories():
+    """Обновить структуру таблицы категорий (добавить code, url, убрать category_id)."""
+    inspector = inspect(engine)
+
+    # Проверяем, есть ли таблица
+    if "categories" not in inspector.get_table_names():
+        return  # таблица ещё не создана
+
+    cols = [c["name"] for c in inspector.get_columns("categories")]
+
+    # Если структура уже правильная, ничего не делаем
+    if "code" in cols and "url" in cols and "parent_id" in cols:
+        return  # структура уже обновлена
+
+    # Если есть старое поле category_id, нужна миграция
+    if "category_id" in cols and "code" not in cols:
+        print("Миграция: обновление структуры категорий...", flush=True)
+
+        # Удаляем старую таблицу
+        Category.__table__.drop(engine, checkfirst=True)
+        Category.__table__.create(engine)
+
+        print("Структура категорий обновлена. Загрузите каталог из JSON.", flush=True)
+        return
+
+    # Если есть store_code, убираем его
+    if "store_code" in cols:
+        print("Миграция: удаление store_code из категорий...", flush=True)
+        Category.__table__.drop(engine, checkfirst=True)
+        Category.__table__.create(engine)
+        print("Миграция категорий завершена", flush=True)
+
+
+migrate_categories()
 
 # === Очистка зависших заданий от предыдущего запуска ===
 from src.server.routes.stores import _mark_all_running_failed_on_startup
@@ -111,11 +162,13 @@ app.add_middleware(
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 templates = Jinja2Templates(directory=os.path.join(BASE_DIR, "templates"))
 
+
 # Функция для рендеринга шаблонов
 def render_template(template_name: str, context: dict):
     """Рендер шаблона с правильным контекстом."""
     template = templates.env.get_template(template_name)
     return HTMLResponse(content=template.render(**context))
+
 
 # === Роуты API ===
 app.include_router(stores.router)
@@ -126,10 +179,15 @@ app.include_router(prices.router)
 
 # === Веб-страницы ===
 
+
 @app.get("/", response_class=HTMLResponse)
 async def page_stores(request: Request, db: Session = Depends(get_db)):
     """Главная — управление магазинами."""
-    stores_list = db.query(Store).order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE")).all()
+    stores_list = (
+        db.query(Store)
+        .order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE"))
+        .all()
+    )
     return render_template(
         "stores.html",
         {"request": request, "page": "stores", "stores": stores_list},
@@ -196,7 +254,11 @@ async def create_store_htmx(
     db.commit()
     db.refresh(db_store)
     # Вернуть обновлённую таблицу
-    stores_list = db.query(Store).order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE")).all()
+    stores_list = (
+        db.query(Store)
+        .order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE"))
+        .all()
+    )
     return templates.TemplateResponse(
         name="stores_table.html",
         context={"request": request, "stores": stores_list},
@@ -205,4 +267,5 @@ async def create_store_htmx(
 
 if __name__ == "__main__":
     import uvicorn
+
     uvicorn.run("src.server.main:app", host="0.0.0.0", port=8000, reload=True)

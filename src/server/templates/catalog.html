@@ -3,165 +3,519 @@
 {% block title %}Каталог - Магнит Goods{% endblock %}
 
 {% block content %}
-<div class="card">
-    <h2>Каталог категорий</h2>
+<style>
+.category-tree {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
 
-    <div class="form-row">
-        <div class="form-group">
-            <label>Код магазина</label>
-            <input type="text" id="storeCode" placeholder="Например: 12345" value="{{ store_code or '' }}">
+.category-tree ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    border-left: 2px solid #e0e0e0;
+    margin-left: 12px;
+}
+
+.category-tree li {
+    margin: 0;
+    padding: 0;
+}
+
+.category-item {
+    padding: 10px 12px;
+    margin: 0;
+    border-radius: 4px;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s;
+}
+
+.category-item:hover {
+    background: #f0f0f0;
+}
+
+.category-item.has-children {
+    font-weight: 500;
+}
+
+.category-item.checked {
+    background: #e8f5e9;
+}
+
+.category-item.partial {
+    background: #fff3e0;
+}
+
+.category-checkbox {
+    width: 18px;
+    height: 18px;
+    cursor: pointer;
+    margin: 0;
+    flex-shrink: 0;
+    accent-color: #e31e25;
+}
+
+.category-checkbox:indeterminate {
+    accent-color: #ff9800;
+}
+
+.category-toggle {
+    cursor: pointer;
+    user-select: none;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #666;
+    border-radius: 3px;
+    flex-shrink: 0;
+    transition: transform 0.2s;
+}
+
+.category-toggle:hover {
+    background: #e0e0e0;
+}
+
+.category-toggle.collapsed {
+    transform: rotate(-90deg);
+}
+
+.category-toggle.expanded {
+    transform: rotate(0deg);
+}
+
+.category-toggle::before {
+    content: '▼';
+    font-size: 10px;
+}
+
+.category-name {
+    flex: 1;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.category-count {
+    font-size: 12px;
+    color: #999;
+    padding: 2px 8px;
+    background: #f5f5f5;
+    border-radius: 12px;
+    border: 1px solid #e0e0e0;
+    flex-shrink: 0;
+}
+
+.category-state-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-left: 4px;
+}
+
+.category-state-indicator.full {
+    background: #4caf50;
+}
+
+.category-state-indicator.partial {
+    background: #ff9800;
+}
+
+.children-hidden {
+    display: none;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.category-depth-0 > .category-item {
+    font-weight: 600;
+    background: #fafafa;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.category-depth-0 > .category-item:hover {
+    background: #f5f5f5;
+}
+</style>
+
+<div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+         <h2 style="margin: 0;">Каталог категорий</h2>
+         <div style="display: flex; gap: 8px;">
+             <button class="btn btn-success" onclick="saveSelectedCategories()">Сохранить выбор</button>
+         </div>
+     </div>
+
+    <div id="load-status" style="margin-bottom: 12px;"></div>
+
+    <div style="margin-bottom: 12px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #e0e0e0;">
+        <div style="display: flex; gap: 16px; align-items: center;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)" style="accent-color: #e31e25;">
+                <strong>Выбрать все</strong>
+            </label>
+            <span id="selected-count" style="color: #666; font-size: 14px; margin-left: auto;">Выбрано: 0 из 0</span>
         </div>
-        <button class="btn btn-primary" onclick="scanCategories()">Обновить категории</button>
-        <button class="btn btn-success" onclick="scanProducts()">Сканировать товары</button>
     </div>
 
-    <div id="scan-status"></div>
-</div>
-
-<div class="card">
-    <h2>Дерево категорий</h2>
-    <div id="categories-list">
-        <p style="color: #666;">Нажмите "Обновить категории" для загрузки</p>
-    </div>
+    <div id="categories-tree" style="max-height: 600px; overflow-y: auto;">
+         <p style="color: #666; text-align: center; padding: 20px;">Загрузка каталога...</p>
+     </div>
 </div>
 
 <script>
-async function scanCategories() {
-    const storeCode = document.getElementById('storeCode').value;
-    if (!storeCode) {
-        alert('Укажите код магазина');
-        return;
-    }
+let categoriesData = [];
+let selectedCategories = new Set();
 
-    const statusDiv = document.getElementById('scan-status');
-    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования...</div>';
-
+async function loadCategoriesTree() {
     try {
-        const response = await fetch(`/api/categories/scan?store_code=${encodeURIComponent(storeCode)}`, {
-            method: 'POST'
+        const response = await fetch('/api/categories/tree');
+        categoriesData = await response.json();
+        
+        // Загружаем отслеживаемые категории из базы
+        const trackedResponse = await fetch('/api/categories?tracked=true');
+        const trackedCategories = await trackedResponse.json();
+        
+        console.log('Loaded tracked categories:', trackedCategories.length);
+        console.log('Tracked IDs:', trackedCategories.map(c => c.id));
+        
+        selectedCategories.clear();
+        trackedCategories.forEach(cat => {
+            selectedCategories.add(cat.id);
         });
-        const data = await response.json();
-
-        if (data.job_id) {
-            statusDiv.innerHTML = `<div class="badge badge-info">Задание #${data.job_id} запущено</div>`;
-            pollJobStatus(data.job_id);
+        
+        console.log('selectedCategories after load:', Array.from(selectedCategories));
+        
+        renderTree();
+        
+        // Ждём, пока DOM обновится, затем обновляем состояние
+        await new Promise(resolve => setTimeout(resolve, 100));
+        updateIndeterminateStates();
+        updateSelectedCount();
+        
+        // Показываем статус загрузки
+        const statusDiv = document.getElementById('load-status');
+        if (categoriesData.length > 0) {
+            statusDiv.innerHTML = `<div class="badge badge-success">Каталог загружен. Отслеживается: ${trackedCategories.length}</div>`;
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 3000);
         }
     } catch (e) {
-        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+        console.error('Ошибка загрузки дерева:', e);
     }
 }
 
-async function scanProducts() {
-    const storeCode = document.getElementById('storeCode').value;
-    if (!storeCode) {
-        alert('Укажите код магазина');
-        return;
+function renderTree() {
+    const container = document.getElementById('categories-tree');
+    container.innerHTML = '<ul class="category-tree">' + categoriesData.map(cat => renderCategory(cat)).join('') + '</ul>';
+    
+    // После отрисовки обновляем состояние indeterminate чекбоксов
+    setTimeout(() => {
+        updateIndeterminateStates();
+    }, 0);
+}
+
+function renderCategory(category, level = 0) {
+    const hasChildren = category.children && category.children.length > 0;
+    const isChecked = selectedCategories.has(category.id);
+    const childrenState = hasChildren ? getChildrenState(category) : null;
+    const isIndeterminate = childrenState === 'partial';
+    const isFullyChecked = childrenState === 'all';
+    
+    const depthClass = `category-depth-${level}`;
+    const stateClass = isIndeterminate ? 'partial' : (isChecked || isFullyChecked ? 'checked' : '');
+    const itemClass = hasChildren ? 'has-children' : '';
+    
+    let html = `
+        <li data-category-id="${category.id}" class="${depthClass}">
+            <div class="category-item ${stateClass} ${itemClass}">
+                ${hasChildren ? `<span class="category-toggle expanded" onclick="toggleChildren(${category.id})" title="Развернуть/свернуть"></span>` : '<span style="width:20px;"></span>'}
+                <input 
+                    type="checkbox" 
+                    class="category-checkbox" 
+                    id="cat-${category.id}"
+                    data-category-id="${category.id}"
+                    ${isChecked || isFullyChecked ? 'checked' : ''}
+                    ${isIndeterminate ? 'data-indeterminate="true"' : ''}
+                    onchange="toggleCategory(${category.id}, this.checked)"
+                    title="${category.name}"
+                >
+                <label for="cat-${category.id}" class="category-name">
+                    ${category.name}
+                </label>
+                ${category.product_count > 0 ? `<span class="category-count">${category.product_count}</span>` : ''}
+                ${hasChildren && (isIndeterminate || isFullyChecked) ? `<span class="category-state-indicator ${isIndeterminate ? 'partial' : 'full'}"></span>` : ''}
+            </div>
+    `;
+
+    if (hasChildren) {
+        html += '<ul class="category-tree">' + category.children.map(child => renderCategory(child, level + 1)).join('') + '</ul>';
     }
 
-    const statusDiv = document.getElementById('scan-status');
-    statusDiv.innerHTML = '<div class="badge badge-info">Запуск сканирования товаров...</div>';
+    html += '</li>';
+    return html;
+}
 
-    try {
-        const response = await fetch(`/api/catalog/scan?store_code=${encodeURIComponent(storeCode)}&tracked_only=true`, {
-            method: 'POST'
-        });
-        const data = await response.json();
-
-        if (data.job_id) {
-            statusDiv.innerHTML = `<div class="badge badge-info">Задание #${data.job_id} запущено</div>`;
-            pollJobStatus(data.job_id);
+function getChildrenState(category) {
+    if (!category.children || category.children.length === 0) return null;
+    
+    let checkedCount = 0;
+    let totalCount = 0;
+    
+    function countChildren(cat) {
+        totalCount++;
+        if (selectedCategories.has(cat.id)) {
+            checkedCount++;
         }
-    } catch (e) {
-        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
-    }
-}
-
-async function loadCategories() {
-    const storeCode = document.getElementById('storeCode').value;
-    if (!storeCode) return;
-
-    try {
-        const response = await fetch(`/api/categories?store_code=${encodeURIComponent(storeCode)}`);
-        const categories = await response.json();
-
-        const listDiv = document.getElementById('categories-list');
-        if (categories.length === 0) {
-            listDiv.innerHTML = '<p style="color: #666;">Категории не найдены</p>';
-            return;
+        if (cat.children) {
+            cat.children.forEach(countChildren);
         }
-
-        let html = '<ul class="category-tree">';
-        categories.forEach(cat => {
-            html += `
-                <li>
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <div>
-                            <strong>${cat.name}</strong>
-                            <span class="badge badge-info">${cat.product_count || 0} товаров</span>
-                            ${cat.last_scanned ? `<span class="badge badge-success">Обновлено: ${new Date(cat.last_scanned).toLocaleDateString()}</span>` : ''}
-                        </div>
-                        <label class="toggle-switch">
-                            <input type="checkbox" ${cat.is_tracked ? 'checked' : ''} onchange="toggleTrack(${cat.id}, this.checked)">
-                            <span class="toggle-slider"></span>
-                        </label>
-                    </div>
-                </li>
-            `;
-        });
-        html += '</ul>';
-        listDiv.innerHTML = html;
-    } catch (e) {
-        console.error('Ошибка загрузки категорий:', e);
     }
+    
+    category.children.forEach(countChildren);
+    
+    if (checkedCount === 0) return 'none';
+    if (checkedCount === totalCount) return 'all';
+    return 'partial';
 }
 
-async function toggleTrack(categoryId, track) {
-    try {
-        await fetch(`/api/categories/${categoryId}/track?track=${track}`, {
-            method: 'PUT'
-        });
-    } catch (e) {
-        console.error('Ошибка обновления:', e);
+function toggleCategory(categoryId, checked) {
+    const category = findCategory(categoriesData, categoryId);
+    if (!category) return;
+    
+    if (checked) {
+        selectedCategories.add(categoryId);
+        // Выбираем все дочерние
+        selectAllChildren(categoryId, true);
+    } else {
+        selectedCategories.delete(categoryId);
+        // Снимаем выбор со всех дочерних
+        selectAllChildren(categoryId, false);
     }
+    
+    // Обновляем состояние родителей
+    updateParentStates(categoryId);
+    updateSelectedCount();
+    updateIndeterminateStates();
+    renderTree();
 }
 
-async function pollJobStatus(jobId) {
-    const statusDiv = document.getElementById('scan-status');
+function selectAllChildren(categoryId, select) {
+    const category = findCategory(categoriesData, categoryId);
+    if (!category || !category.children) return;
+    
+    function selectRecursive(cat) {
+        if (select) {
+            selectedCategories.add(cat.id);
+        } else {
+            selectedCategories.delete(cat.id);
+        }
+        
+        if (cat.children) {
+            cat.children.forEach(selectRecursive);
+        }
+    }
+    
+    category.children.forEach(selectRecursive);
+}
 
-    const checkStatus = async () => {
-        try {
-            const response = await fetch(`/api/jobs/${jobId}`);
-            const job = await response.json();
+function updateParentStates(categoryId) {
+    const parent = findParentCategory(categoriesData, categoryId);
+    if (!parent) return;
+    
+    const childrenState = getChildrenState(parent);
+    
+    if (childrenState === 'all') {
+        selectedCategories.add(parent.id);
+    } else if (childrenState === 'none') {
+        selectedCategories.delete(parent.id);
+    } else {
+        // partial - не добавляем в selectedCategories, но отмечаем как indeterminate
+        selectedCategories.delete(parent.id);
+    }
+    
+    // Рекурсивно обновляем родителей
+    updateParentStates(parent.id);
+}
 
-            if (job.status === 'running' || job.status === 'pending') {
-                statusDiv.innerHTML = `
-                    <div>
-                        <div class="progress-bar" style="margin: 8px 0;">
-                            <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
-                        </div>
-                        <small>${job.progress_message || 'Выполняется...'} (${job.progress}%)</small>
-                    </div>
-                `;
-                setTimeout(checkStatus, 2000);
-            } else if (job.status === 'completed') {
-                statusDiv.innerHTML = `
-                    <div class="badge badge-success">
-                        ✓ Завершено! Просканировано: ${job.items_scanned}, Добавлено: ${job.items_added}
-                    </div>
-                `;
-                loadCategories();
-            } else if (job.status === 'failed') {
-                statusDiv.innerHTML = `<div class="badge badge-danger">✗ Ошибка: ${job.error_message}</div>`;
+function updateIndeterminateStates() {
+    document.querySelectorAll('.category-checkbox').forEach(cb => {
+        const categoryId = parseInt(cb.dataset.categoryId);
+        const category = findCategory(categoriesData, categoryId);
+        
+        if (category && category.children && category.children.length > 0) {
+            const childrenState = getChildrenState(category);
+            if (childrenState === 'partial') {
+                cb.indeterminate = true;
+                cb.checked = false;
+            } else {
+                cb.indeterminate = false;
             }
-        } catch (e) {
-            console.error('Ошибка проверки статуса:', e);
+        } else {
+            cb.indeterminate = false;
         }
-    };
-
-    checkStatus();
+    });
 }
 
-// Загружаем категории при загрузке страницы
-document.getElementById('storeCode').addEventListener('change', loadCategories);
+function getChildrenState(category) {
+    if (!category.children || category.children.length === 0) return null;
+    
+    let checkedCount = 0;
+    let totalCount = 0;
+    
+    function countChildren(cat) {
+        totalCount++;
+        if (selectedCategories.has(cat.id)) {
+            checkedCount++;
+        }
+        if (cat.children) {
+            cat.children.forEach(countChildren);
+        }
+    }
+    
+    category.children.forEach(countChildren);
+    
+    if (checkedCount === 0) return 'none';
+    if (checkedCount === totalCount) return 'all';
+    return 'partial';
+}
+
+function findCategory(categories, id) {
+    for (const cat of categories) {
+        if (cat.id === id) return cat;
+        if (cat.children) {
+            const found = findCategory(cat.children, id);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+function findParentCategory(categories, childId, parent = null) {
+    for (const cat of categories) {
+        if (cat.children) {
+            for (const child of cat.children) {
+                if (child.id === childId) return cat;
+            }
+            const found = findParentCategory(cat.children, childId, cat);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+function toggleChildren(categoryId) {
+    const li = document.querySelector(`li[data-category-id="${categoryId}"]`);
+    const toggle = li.querySelector('.category-toggle');
+    const childrenUl = li.querySelector('ul');
+    
+    if (childrenUl) {
+        if (childrenUl.classList.contains('children-hidden')) {
+            childrenUl.classList.remove('children-hidden');
+            toggle.classList.remove('collapsed');
+            toggle.classList.add('expanded');
+        } else {
+            childrenUl.classList.add('children-hidden');
+            toggle.classList.remove('expanded');
+            toggle.classList.add('collapsed');
+        }
+    }
+}
+
+function toggleSelectAll(checked) {
+    selectedCategories.clear();
+    
+    if (checked) {
+        function addAll(categories) {
+            categories.forEach(cat => {
+                selectedCategories.add(cat.id);
+                if (cat.children) addAll(cat.children);
+            });
+        }
+        addAll(categoriesData);
+    }
+    
+    renderTree();
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const count = selectedCategories.size;
+    const total = countAllCategories();
+    document.getElementById('selected-count').textContent = `Выбрано: ${count} из ${total}`;
+    
+    const selectAllCheckbox = document.getElementById('select-all');
+    if (count === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    } else if (count === total) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+    }
+}
+
+function countAllCategories() {
+    let count = 0;
+    function countCats(categories) {
+        categories.forEach(cat => {
+            count++;
+            if (cat.children) countCats(cat.children);
+        });
+    }
+    countCats(categoriesData);
+    return count;
+}
+
+async function saveSelectedCategories() {
+    const statusDiv = document.getElementById('load-status');
+    statusDiv.innerHTML = '<div class="badge badge-info">Сохранение...</div>';
+
+    try {
+        // Отправляем все выбранные категории (включая родителей)
+        const response = await fetch('/api/categories/update-tracking', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                category_ids: Array.from(selectedCategories)
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            statusDiv.innerHTML = `<div class="badge badge-success">✓ Сохранено! Отслеживается категорий: ${data.tracked_count}</div>`;
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 3000);
+        } else {
+            statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка сохранения</div>`;
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+// Загружаем дерево при загрузке страницы
+window.addEventListener('DOMContentLoaded', async () => {
+    await loadCategoriesTree();
+});
 </script>
 {% endblock %}
