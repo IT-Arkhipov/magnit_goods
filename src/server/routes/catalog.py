@@ -9,7 +9,7 @@ from datetime import datetime
 import threading
 
 from src.server.database import get_db
-from src.server.models import Category, Product
+from src.server.models import Category, Product, Store
 
 router = APIRouter(prefix="/api", tags=["Каталог"])
 
@@ -518,25 +518,47 @@ _catalog_update_status = {
 
 def _fetch_and_update_categories_background():
     """Фоновая задача для получения и обновления ID категорий."""
+    from src.server.services.catalog_updater import update_catalog_from_api
+    from src.server.database import SessionLocal
+
     global _catalog_update_status
 
     try:
         _catalog_update_status["in_progress"] = True
         _catalog_update_status["errors"] = []
 
-        print("Начало обновления каталога...")
+        print("Начало обновления каталога из API Магнита...")
 
-        # Просто отмечаем как завершено, так как категории уже загружены
-        _catalog_update_status["total"] = 12
-        _catalog_update_status["processed"] = 12
-        _catalog_update_status["updated"] = 12
-        _catalog_update_status["not_found"] = 0
+        # Получаем первый активный магазин для запроса
+        db = SessionLocal()
+        store = db.query(Store).filter(Store.is_active == True).first()
+        db.close()
 
-        print(f"Обновлено: 12 категорий")
+        if store:
+            stats = update_catalog_from_api(
+                store_code=store.store_code, store_type=store.store_type
+            )
+        else:
+            stats = update_catalog_from_api()
+
+        _catalog_update_status["total"] = stats["total"]
+        _catalog_update_status["processed"] = stats["processed"]
+        _catalog_update_status["updated"] = stats["updated"]
+        _catalog_update_status["not_found"] = stats["deleted"]
+
+        if stats["errors"]:
+            _catalog_update_status["errors"] = stats["errors"]
+
+        print(
+            f"Обновлено: {stats['updated']}, Добавлено: {stats['added']}, Удалено: {stats['deleted']}"
+        )
 
     except Exception as e:
         _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
         print(f"Ошибка при обновлении каталога: {e}")
+        import traceback
+
+        traceback.print_exc()
     finally:
         _catalog_update_status["in_progress"] = False
 
