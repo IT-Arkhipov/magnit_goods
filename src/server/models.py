@@ -57,9 +57,6 @@ class Category(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     magnit_id = Column(Integer, nullable=True, index=True)  # ID из API Магнита
-    code = Column(
-        String, nullable=False, unique=True, index=True
-    )  # Код из каталога (например, "promo-catalog")
     name = Column(String, nullable=False)
     url = Column(String, nullable=False)
     parent_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
@@ -72,7 +69,7 @@ class Category(Base):
     children = relationship("Category", backref="parent", remote_side=[id])
 
     def __repr__(self):
-        return f"<Category id={self.id} code={self.code} name={self.name}>"
+        return f"<Category id={self.id} magnit_id={self.magnit_id} name={self.name}>"
 
 
 class Product(Base):

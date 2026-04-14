@@ -268,8 +268,10 @@ let expandedCategories = new Set();
 
 async function loadCategoriesTree() {
     try {
+        console.log('loadCategoriesTree: starting...');
         const response = await fetch('/api/categories/tree');
         categoriesData = await response.json();
+        console.log('loadCategoriesTree: received', categoriesData.length, 'root categories');
 
         // Загружаем отслеживаемые категории из базы
         const trackedResponse = await fetch('/api/categories?tracked=true');
@@ -287,15 +289,16 @@ async function loadCategoriesTree() {
 
         // Инициализируем expandedCategories — все категории с детьми развёрнуты по умолчанию
         expandedCategories.clear();
-        function collectParentIds(categories) {
+        function collectAllParentIds(categories) {
             categories.forEach(cat => {
                 if (cat.children && cat.children.length > 0) {
                     expandedCategories.add(cat.id);
-                    collectParentIds(cat.children);
+                    collectAllParentIds(cat.children);
                 }
             });
         }
-        collectParentIds(categoriesData);
+        collectAllParentIds(categoriesData);
+        console.log('expandedCategories:', Array.from(expandedCategories));
 
         renderTree();
 
@@ -314,12 +317,22 @@ async function loadCategoriesTree() {
         }
     } catch (e) {
         console.error('Ошибка загрузки дерева:', e);
+        const statusDiv = document.getElementById('load-status');
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка загрузки каталога: ${e.message}</div>`;
     }
 }
 
 function renderTree() {
     const container = document.getElementById('categories-tree');
+    console.log('renderTree called with categoriesData:', categoriesData.length, 'items');
+    
+    if (!categoriesData || categoriesData.length === 0) {
+        container.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">Нет категорий для отображения</p>';
+        return;
+    }
+    
     container.innerHTML = '<ul class="category-tree">' + categoriesData.map(cat => renderCategory(cat)).join('') + '</ul>';
+    console.log('renderTree: HTML rendered');
 
     // Восстанавливаем состояние развёрнутых категорий
     expandedCategories.forEach(id => {
@@ -375,7 +388,9 @@ function renderCategory(category, level = 0) {
     `;
 
     if (hasChildren) {
-        html += '<ul class="category-tree children-hidden">' + category.children.map(child => renderCategory(child, level + 1)).join('') + '</ul>';
+        const isExpanded = expandedCategories.has(category.id);
+        const hiddenClass = isExpanded ? '' : 'children-hidden';
+        html += '<ul class="category-tree ' + hiddenClass + '">' + category.children.map(child => renderCategory(child, level + 1)).join('') + '</ul>';
     }
 
     html += '</li>';
