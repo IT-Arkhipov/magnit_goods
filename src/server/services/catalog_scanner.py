@@ -45,16 +45,22 @@ class CatalogScanner:
 
     def scan_categories(self) -> dict:
         """
-        Сканировать категории из магазина-источника.
+        Сканировать подкатегории из API Магнита для всех корневых категорий.
+
+        Логика:
+        1. Получает все корневые категории из БД (parent_id=None)
+        2. Для каждой корневой категории запрашивает подкатегории из API
+        3. Добавляет новые подкатегории, обновляет существующие
+        4. Удаляет подкатегории, которых нет в API (полная синхронизация)
 
         Returns:
-            {"scanned": N, "added": N, "updated": N}
+            {"scanned": N, "added": N, "updated": N, "deleted": N}
         """
         if not self.api or not self.store_code:
             raise ValueError("store_code не указан")
 
         if self.job_id:
-            self._update_job_progress(5, "Получение списка категорий...")
+            self._update_job_progress(5, "Получение списка категорий из API...")
 
         try:
             categories_data = self.api.get_categories(store_code=self.store_code)
@@ -65,49 +71,88 @@ class CatalogScanner:
 
         added = 0
         updated = 0
+        deleted = 0
         total = len(categories_data)
 
         if self.job_id:
             self._update_job_progress(10, f"Получено {total} категорий, сохранение...")
 
+        # Собираем magnit_id всех категорий из API для отслеживания удалений
+        api_magnit_ids = set()
+
         for i, cat_data in enumerate(categories_data):
+            magnit_id = cat_data.get("magnit_id")
+            if not magnit_id:
+                continue
+
+            api_magnit_ids.add(magnit_id)
+
             # Ищем существующую категорию по magnit_id
             existing = (
                 self.db.query(Category)
                 .filter(
-                    Category.magnit_id == cat_data["magnit_id"],
+                    Category.magnit_id == magnit_id,
                 )
                 .first()
             )
 
             if existing:
+                # Обновляем существующую категорию
                 existing.name = cat_data.get("name", existing.name)
+                existing.url = cat_data.get("url", existing.url)
                 existing.product_count = cat_data.get(
                     "product_count", existing.product_count
                 )
+                # Обновляем parent_id если указан (для подкатегорий)
                 if cat_data.get("parent_id"):
                     existing.parent_id = cat_data["parent_id"]
+                print(
+                    f"DEBUG: Обновлена категория: {existing.name} (magnit_id={magnit_id})"
+                )
                 updated += 1
             else:
+                # Создаём новую категорию
                 new_cat = Category(
-                    magnit_id=cat_data["magnit_id"],
+                    magnit_id=magnit_id,
                     name=cat_data.get("name", "Без названия"),
                     url=cat_data.get("url", ""),
                     parent_id=cat_data.get("parent_id"),
                     product_count=cat_data.get("product_count", 0),
                 )
                 self.db.add(new_cat)
+                print(
+                    f"DEBUG: Добавлена категория: {new_cat.name} (magnit_id={magnit_id})"
+                )
                 added += 1
 
             if (i + 1) % 50 == 0:
                 self.db.commit()
 
+        # Полная синхронизация: удаляем категории, которых нет в API
+        # (кроме корневых категорий из JSON)
+        all_categories = self.db.query(Category).all()
+        for cat in all_categories:
+            if cat.magnit_id and cat.magnit_id not in api_magnit_ids:
+                # Проверяем, что это не корневая категория из JSON
+                # (корневые категории имеют parent_id=None и не должны удаляться)
+                if cat.parent_id is not None:
+                    print(
+                        f"DEBUG: Удалена подкатегория: {cat.name} (magnit_id={cat.magnit_id})"
+                    )
+                    self.db.delete(cat)
+                    deleted += 1
+
         self.db.commit()
 
-        result = {"scanned": total, "added": added, "updated": updated}
+        result = {
+            "scanned": total,
+            "added": added,
+            "updated": updated,
+            "deleted": deleted,
+        }
 
         if self.job_id:
-            self._update_job_progress(20, f"Категории сохранены: {total}")
+            self._update_job_progress(20, f"Категории синхронизированы: {total}")
 
         return result
 

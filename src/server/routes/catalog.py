@@ -56,8 +56,15 @@ def scan_categories(
     db: Session = Depends(get_db),
 ):
     """
-    Сканировать категории каталога (синхронно).
-    Категории извлекаются через API MagnitAPIClient.
+    Сканировать подкатегории из API Магнита (синхронно).
+
+    Логика:
+    1. Получает все категории из API
+    2. Добавляет новые подкатегории
+    3. Обновляет существующие
+    4. Удаляет подкатегории, которых нет в API (полная синхронизация)
+
+    Корневые категории из JSON не удаляются.
     """
     from src.server.services.catalog_scanner import CatalogScanner
 
@@ -68,6 +75,45 @@ def scan_categories(
         return {"status": "completed", **result}
     except Exception as e:
         scanner.close()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/categories/update-catalog")
+def update_catalog_from_api(
+    store_code: str = Query(..., description="Код магазина для получения подкатегорий"),
+    db: Session = Depends(get_db),
+):
+    """
+    Обновить каталог - сканировать подкатегории из API Магнита (синхронно).
+
+    Это основной endpoint для обновления каталога вручную.
+    Получает подкатегории из API и синхронизирует с БД.
+
+    Возвращает:
+    {
+        "status": "completed",
+        "scanned": количество категорий из API,
+        "added": добавлено новых подкатегорий,
+        "updated": обновлено существующих,
+        "deleted": удалено устаревших подкатегорий
+    }
+    """
+    from src.server.services.catalog_scanner import CatalogScanner
+
+    print(f"DEBUG: Обновление каталога для магазина {store_code}")
+
+    scanner = CatalogScanner(db, store_code=store_code)
+    try:
+        result = scanner.scan_categories()
+        scanner.close()
+        print(f"DEBUG: Обновление каталога завершено: {result}")
+        return {"status": "completed", **result}
+    except Exception as e:
+        scanner.close()
+        print(f"ERROR: Ошибка при обновлении каталога: {e}")
+        import traceback
+
+        traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
