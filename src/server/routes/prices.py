@@ -4,10 +4,10 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
+from datetime import datetime, date, timedelta
 
 from src.server.database import get_db
-from src.server.models import ScanJob
+from src.server.models import ScanJob, DailyPriceSnapshot, Product
 from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
@@ -195,3 +195,51 @@ def get_product_price_history(
         raise HTTPException(status_code=404, detail="Товар не найден")
 
     return history
+
+
+@router.get("/daily-history/{product_id}", response_model=list[dict])
+def get_daily_price_history(
+    product_id: int,
+    store_code: Optional[str] = Query(None),
+    days: int = Query(30, le=31, description="Кол-во дней истории (макс 31)"),
+    db: Session = Depends(get_db),
+):
+    """
+    Ежедневная история цен товара из таблицы daily_price_snapshot.
+    Возвращает массив снимков за последние N дней.
+    """
+    code = store_code
+    if not code:
+        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
+
+    # Проверяем что товар существует
+    product = (
+        db.query(Product)
+        .filter(Product.product_id == product_id, Product.store_code == code)
+        .first()
+    )
+    if not product:
+        raise HTTPException(status_code=404, detail="Товар не найден")
+
+    cutoff = date.today() - timedelta(days=days)
+
+    snapshots = (
+        db.query(DailyPriceSnapshot)
+        .filter(
+            DailyPriceSnapshot.product_id == product_id,
+            DailyPriceSnapshot.store_code == code,
+            DailyPriceSnapshot.snapshot_date >= cutoff,
+        )
+        .order_by(DailyPriceSnapshot.snapshot_date.asc())
+        .all()
+    )
+
+    return [
+        {
+            "date": s.snapshot_date.isoformat(),
+            "price": s.price,
+            "old_price": s.old_price,
+            "discount_percent": s.discount_percent,
+        }
+        for s in snapshots
+    ]

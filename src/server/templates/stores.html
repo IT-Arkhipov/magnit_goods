@@ -2,6 +2,49 @@
 {% block title %}Магинт манИт{% endblock %}
 
 {% block content %}
+<style>
+    /* Адаптивные таблицы для stores */
+    @media (max-width: 768px) {
+        #stores-table table, #preview-table table {
+            display: block;
+            overflow-x: auto;
+        }
+        
+        #stores-table table thead, #preview-table table thead {
+            display: none;
+        }
+        
+        #stores-table table tbody tr, #preview-table table tbody tr {
+            display: block;
+            margin-bottom: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            background: white;
+        }
+        
+        #stores-table table td, #preview-table table td {
+            display: block;
+            text-align: left;
+            padding: 6px 0;
+            border: none;
+        }
+        
+        #stores-table table td:before, #preview-table table td:before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: #666;
+            display: inline-block;
+            width: 80px;
+            margin-right: 8px;
+        }
+        
+        #stores-table table td:first-child, #preview-table table td:first-child {
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+    }
+</style>
 <!-- Сканирование по адресу -->
 <div class="card">
     <h2>Добавление магазинов</h2>
@@ -250,11 +293,11 @@ function renderPreview(stores) {
         const rowClass = s.exists_in_db ? 'style="background:#f0f0f0;color:#999;"' : '';
         const badge = s.exists_in_db ? `<br><span style="color:#e67e22;font-size:11px;">(уже в базе)</span>` : '';
         html += `<tr ${rowClass}>
-            <td><input type="checkbox" class="preview-checkbox" data-index="${i}" ${s.exists_in_db ? 'disabled' : ''} onchange="updatePreviewSelection()"></td>
-            <td><span class="badge badge-info">${s.store_type}</span>${badge}</td>
-            <td>${s.city}</td>
-            <td><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
-            <td><code>${s.store_code}</code></td>
+            <td data-label=""><input type="checkbox" class="preview-checkbox" data-index="${i}" ${s.exists_in_db ? 'disabled' : ''} onchange="updatePreviewSelection()"></td>
+            <td data-label="Тип:"><span class="badge badge-info">${s.store_type}</span>${badge}</td>
+            <td data-label="Город:">${s.city}</td>
+            <td data-label="Адрес:"><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
+            <td data-label="Код:"><code>${s.store_code}</code></td>
         </tr>`;
     }
     html += '</tbody></table>';
@@ -397,11 +440,11 @@ function renderTable(stores) {
         </tr></thead><tbody>`;
     for (const s of stores) {
         html += `<tr>
-            <td><input type="checkbox" class="store-checkbox" value="${s.id}" onchange="updateDeleteButton()"></td>
-            <td><span class="badge badge-info">${s.store_type}</span></td>
-            <td>${s.city}</td>
-            <td><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
-            <td><code>${s.store_code}</code></td>
+            <td data-label=""><input type="checkbox" class="store-checkbox" value="${s.id}" onchange="updateDeleteButton()"></td>
+            <td data-label="Тип:"><span class="badge badge-info">${s.store_type}</span></td>
+            <td data-label="Город:">${s.city}</td>
+            <td data-label="Адрес:"><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
+            <td data-label="Код:"><code>${s.store_code}</code></td>
         </tr>`;
     }
     html += '</tbody></table>';

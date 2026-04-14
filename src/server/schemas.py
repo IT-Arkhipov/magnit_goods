@@ -6,6 +6,7 @@ from .services.magnit_api import STORE_TYPE_MAP
 
 # ===== Store =====
 
+
 class StoreBase(BaseModel):
     store_code: str
     store_type: str
@@ -39,7 +40,9 @@ class StoreResponse(StoreBase):
 # ===== Scan Request =====
 
 # Обратный маппинг: UI-лейбл → API код
-STORE_TYPE_TO_CODE = {v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Заряд", "Опт")}
+STORE_TYPE_TO_CODE = {
+    v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Заряд", "Опт")
+}
 
 
 class ScanStoresRequest(BaseModel):
@@ -60,6 +63,7 @@ class ScanStoresRequest(BaseModel):
 
 class StorePreviewItem(BaseModel):
     """Один магазин из результатов preview (ещё не в БД)."""
+
     store_code: str
     store_type: str
     city: str
@@ -71,6 +75,7 @@ class StorePreviewItem(BaseModel):
 
 class AddSelectedStoresRequest(BaseModel):
     """Добавить выбранные магазины из preview."""
+
     stores: list[StorePreviewItem]
 
 
@@ -86,6 +91,7 @@ class DeleteStoresRequest(BaseModel):
 
 
 # ===== ScanJob =====
+
 
 class ScanJobResponse(BaseModel):
     id: int
@@ -103,3 +109,12 @@ class ScanJobResponse(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+# ===== Categories =====
+
+
+class UpdateCategoriesTrackingRequest(BaseModel):
+    """Запрос на обновление отслеживания категорий."""
+
+    category_ids: list[int]

@@ -1,6 +1,7 @@
 """
 Сервис генерации уведомлений об изменениях цен.
 """
+
 from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
@@ -31,16 +32,18 @@ class NotificationService:
         yesterday = today - timedelta(days=1)
 
         # Изменения за вчера
-        changes_query = (
-            self.db.query(PriceHistory)
-            .filter(
-                PriceHistory.recorded_at >= datetime.combine(yesterday, datetime.min.time()),
-                PriceHistory.recorded_at < datetime.combine(today, datetime.min.time()),
-            )
+        changes_query = self.db.query(PriceHistory).filter(
+            PriceHistory.recorded_at
+            >= datetime.combine(yesterday, datetime.min.time()),
+            PriceHistory.recorded_at < datetime.combine(today, datetime.min.time()),
         )
 
-        decreased = changes_query.filter(PriceHistory.change_type == "decreased").count()
-        increased = changes_query.filter(PriceHistory.change_type == "increased").count()
+        decreased = changes_query.filter(
+            PriceHistory.change_type == "decreased"
+        ).count()
+        increased = changes_query.filter(
+            PriceHistory.change_type == "increased"
+        ).count()
 
         # Новые товары за вчера
         new_products_count = (
@@ -53,9 +56,9 @@ class NotificationService:
         )
 
         # Топ-5 скидок
-        tracker = __import__("src.server.services.price_tracker", fromlist=["PriceTracker"]).PriceTracker(
-            self.db, self.store_code
-        )
+        tracker = __import__(
+            "src.server.services.price_tracker", fromlist=["PriceTracker"]
+        ).PriceTracker(self.db, self.store_code)
         top_deals = tracker.get_decreased_prices(min_discount_percent=10.0, limit=5)
 
         return {
@@ -86,7 +89,6 @@ class NotificationService:
             self.db.query(Category)
             .filter(
                 Category.is_tracked == True,  # noqa: E712
-                Category.store_code == self.store_code,
             )
             .all()
         )
@@ -158,13 +160,15 @@ class NotificationService:
 
             # Упрощённая логика — просто возвращаем товары в наличии
             if was_out or True:  # Показываем все для простоты
-                notifications.append({
-                    "product_id": product.product_id,
-                    "name": product.name,
-                    "price": product.price,
-                    "image_url": product.image_url,
-                    "last_seen": product.last_seen.isoformat(),
-                })
+                notifications.append(
+                    {
+                        "product_id": product.product_id,
+                        "name": product.name,
+                        "price": product.price,
+                        "image_url": product.image_url,
+                        "last_seen": product.last_seen.isoformat(),
+                    }
+                )
 
         return notifications[:20]  # Ограничиваем
 

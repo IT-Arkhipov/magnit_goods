@@ -2,6 +2,7 @@
 Планировщик фоновых задач через APScheduler.
 Автоматическое обновление цен, сканирование каталога.
 """
+
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from sqlalchemy.orm import Session
@@ -87,7 +88,9 @@ def scan_catalog_job(store_code: str):
     job_id = None
 
     try:
-        logger.info(f"[Scheduler] Запуск сканирования каталога для магазина {store_code}")
+        logger.info(
+            f"[Scheduler] Запуск сканирования каталога для магазина {store_code}"
+        )
 
         # Сканируем категории
         job_categories = ScanJob(
@@ -184,11 +187,12 @@ def init_scheduler(store_code: str):
             db.query(Category)
             .filter(
                 Category.is_tracked == True,  # noqa: E712
-                Category.store_code == store_code,
             )
             .all()
         )
-        category_ids = [cat.category_id for cat in tracked_categories] if tracked_categories else None
+        category_ids = (
+            [cat.code for cat in tracked_categories] if tracked_categories else None
+        )
     finally:
         db.close()
 

@@ -2,6 +2,7 @@
 Клиент для работы с API Магнита.
 Используется для сканирования каталога товаров и получения данных о ценах.
 """
+
 import requests
 from typing import Optional
 from datetime import datetime
@@ -24,18 +25,20 @@ class MagnitAPIClient:
         self.timeout = timeout
         self.rate_limit = rate_limit
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-            "Accept-Language": "ru-RU,ru;q=0.9",
-            "Content-Type": "application/json",
-            "Referer": "https://magnit.ru/",
-            "Origin": "https://magnit.ru",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+                "Accept-Language": "ru-RU,ru;q=0.9",
+                "Content-Type": "application/json",
+                "Referer": "https://magnit.ru/",
+                "Origin": "https://magnit.ru",
+            }
+        )
         self._last_request_time = 0
 
     def _rate_limit_wait(self):
@@ -80,10 +83,11 @@ class MagnitAPIClient:
 
             return [
                 {
-                    "category_id": cat.get("id") or cat.get("categoryId"),
+                    "code": str(cat.get("id") or cat.get("categoryId")),
                     "name": cat.get("name"),
                     "product_count": cat.get("productCount", 0),
                     "parent_id": cat.get("parentId"),
+                    "url": cat.get("url", ""),
                 }
                 for cat in categories
                 if cat.get("id") or cat.get("categoryId")
@@ -93,7 +97,7 @@ class MagnitAPIClient:
 
     def get_products(
         self,
-        category_ids: list[int],
+        category_ids: list,
         store_code: Optional[str] = None,
         limit: int = 50,
         offset: int = 0,
@@ -103,7 +107,7 @@ class MagnitAPIClient:
         Получить список товаров из указанных категорий.
 
         Args:
-            category_ids: ID категорий
+            category_ids: ID категорий (строки или числа)
             store_code: Код магазина
             limit: Кол-во товаров за запрос (макс ~50-100)
             offset: Смещение для пагинации
@@ -176,27 +180,84 @@ class MagnitAPIClient:
             if not product_id:
                 return None
 
-            # Цена
-            price_data = item.get("price", {})
-            current_price = price_data.get("value") or item.get("priceValue")
-            old_price = price_data.get("oldValue") or item.get("oldPrice")
-
-            # Если цена в копейках, конвертируем в рубли
+            # Цена — конвертируем из копеек в рубли
+            current_price = item.get("price")
             if current_price and current_price > 1000:
                 current_price = current_price / 100
-            if old_price and old_price > 1000:
-                old_price = old_price / 100
+
+            # Акция/скидка
+            promotion = item.get("promotion", {})
+            old_price_raw = promotion.get("oldPrice") or item.get("oldPrice")
+            is_promotion = promotion.get("isPromotion", False)
+            discount_percent = promotion.get("discountPercent")
+            promo_end_date = promotion.get("endDate")  # ISO строка
+
+            if old_price_raw and old_price_raw > 1000:
+                old_price_raw = old_price_raw / 100
+
+            # Рейтинги
+            ratings = item.get("ratings", {})
+            rating = ratings.get("rating")
+            scores_count = ratings.get("scoresCount", 0)
+            comments_count = ratings.get("commentsCount", 0)
+
+            # Параметры заказа
+            order_props = item.get("orderProperties", {})
+            min_order_qty = order_props.get("minOrderQuantity", 1)
+            order_step_qty = order_props.get("orderStepQuantity", 1)
+
+            # Весовые товары
+            weighted = item.get("weighted", {})
+            is_weighted = weighted.get("isWeighted", False)
+            unit_price = weighted.get("unitPrice")
+            if unit_price and unit_price > 1000:
+                unit_price = unit_price / 100
+
+            # Первая картинка из gallery
+            gallery = item.get("gallery", [])
+            image_url = None
+            if gallery and len(gallery) > 0:
+                image_url = gallery[0].get("url")
 
             return {
                 "product_id": int(product_id),
                 "name": item.get("name") or item.get("title", "Без названия"),
                 "sku": item.get("sku") or item.get("article"),
                 "price": float(current_price) if current_price else 0.0,
-                "old_price": float(old_price) if old_price else None,
+                "old_price": float(old_price_raw) if old_price_raw else None,
                 "currency": "₽",
                 "unit": item.get("unit") or item.get("measureUnit", "шт"),
-                "image_url": item.get("imageUrl") or item.get("image"),
+                "image_url": image_url,
                 "in_stock": item.get("inStock", item.get("available", True)),
+
+                # Остатки и доступность
+                "quantity": item.get("quantity", 0),
+                "is_low_stock": item.get("isLowStock"),
+                "pickup_only": item.get("pickupOnly", False),
+
+                # Акции
+                "is_promotion": is_promotion,
+                "discount_percent": discount_percent,
+                "promo_end_date": promo_end_date,
+
+                # Рейтинги
+                "rating": rating,
+                "scores_count": scores_count,
+                "comments_count": comments_count,
+
+                # SEO и каталог
+                "seo_code": item.get("seoCode"),
+                "service": item.get("service"),
+                "catalog_type": item.get("catalogType"),
+
+                # Параметры заказа
+                "min_order_qty": min_order_qty,
+                "order_step_qty": order_step_qty,
+
+                # Весовые
+                "is_weighted": is_weighted,
+                "unit_price": unit_price,
+
                 "category_id": item.get("categoryId"),
             }
         except Exception as e:
@@ -233,7 +294,7 @@ ALL_STORE_TYPES = list(STORE_TYPE_MAP.keys())
 class StoresAPI:
     """
     Клиент для поиска магазинов через API Магнита.
-    
+
     Использует endpoint: POST /webgate/v1/stores-facade/search/detail
     """
 
@@ -247,22 +308,24 @@ class StoresAPI:
         self.timeout = timeout
         self.rate_limit = rate_limit
         self.session = requests.Session()
-        self.session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/120.0.0.0 Safari/537.36"
-            ),
-            "Accept": "application/json",
-            "Accept-Language": "ru-RU,ru;q=0.9",
-            "Content-Type": "application/json",
-            "Referer": "https://magnit.ru/",
-            "Origin": "https://magnit.ru",
-            "X-Client-Name": "magnit",
-            "X-New-Magnit": "true",
-            "X-App-Version": "2026.4.10-19.26",
-            "X-Device-Platform": "Web",
-        })
+        self.session.headers.update(
+            {
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/120.0.0.0 Safari/537.36"
+                ),
+                "Accept": "application/json",
+                "Accept-Language": "ru-RU,ru;q=0.9",
+                "Content-Type": "application/json",
+                "Referer": "https://magnit.ru/",
+                "Origin": "https://magnit.ru",
+                "X-Client-Name": "magnit",
+                "X-New-Magnit": "true",
+                "X-App-Version": "2026.4.10-19.26",
+                "X-Device-Platform": "Web",
+            }
+        )
         self._last_request_time = 0
 
     def _rate_limit_wait(self):
@@ -335,7 +398,9 @@ class StoresAPI:
                 "stores": stores,
                 "total_count": total_count,
                 "has_more": (offset + len(stores)) < total_count,
-                "next_offset": offset + len(stores) if (offset + len(stores)) < total_count else None,
+                "next_offset": offset + len(stores)
+                if (offset + len(stores)) < total_count
+                else None,
             }
         except requests.RequestException as e:
             raise Exception(f"Ошибка поиска магазинов: {str(e)}")
@@ -370,7 +435,9 @@ class StoresAPI:
 
         while page_num < max_pages:
             page_num += 1
-            result = self.search_stores(query, store_types, limit=page_size, offset=offset)
+            result = self.search_stores(
+                query, store_types, limit=page_size, offset=offset
+            )
             new_stores = result["stores"]
             all_stores.extend(new_stores)
 
@@ -457,19 +524,27 @@ class StoresAPI:
 
         # Список известных городов Чувашии для fallback
         known_cities = [
-            "Новочебоксарск", "Чебоксары", "Шумерля", "Канаш", "Алатырь",
-            "Моргауши", "Козловка", "Цивильск", "Ядрин", "Мариинский Посад",
+            "Новочебоксарск",
+            "Чебоксары",
+            "Шумерля",
+            "Канаш",
+            "Алатырь",
+            "Моргауши",
+            "Козловка",
+            "Цивильск",
+            "Ядрин",
+            "Мариинский Посад",
         ]
 
         patterns = [
             # 'г Новочебоксарск' или 'г. Новочебоксарск'
-            r'г\.?\s+([\w\-]+)',
+            r"г\.?\s+([\w\-]+)",
             # 'город Новочебоксарск'
-            r'город\s+([\w\-]+)',
+            r"город\s+([\w\-]+)",
             # 'Новочебоксарск г' или 'Новочебоксарск г.'
-            r'([\w\-]+)\s+г\.?',
+            r"([\w\-]+)\s+г\.?",
             # 'Новочебоксарск,' — город перед запятой
-            r'([\w\-]+),',
+            r"([\w\-]+),",
         ]
 
         for pattern in patterns:
@@ -477,8 +552,24 @@ class StoresAPI:
             if match:
                 candidate = match.group(1)
                 # Проверяем что это не слово-артефакт
-                skip_words = ('ул', 'д', 'д.', 'з', 'зд', 'кв', 'к.', 'респ', 'республика',
-                              'чувашия', 'чувашская', 'р-ка', 'обл', 'область', 'край', 'авто')
+                skip_words = (
+                    "ул",
+                    "д",
+                    "д.",
+                    "з",
+                    "зд",
+                    "кв",
+                    "к.",
+                    "респ",
+                    "республика",
+                    "чувашия",
+                    "чувашская",
+                    "р-ка",
+                    "обл",
+                    "область",
+                    "край",
+                    "авто",
+                )
                 if candidate.lower() not in skip_words:
                     return candidate
 
@@ -494,12 +585,17 @@ class StoresAPI:
         if not city:
             return full_address
         # Убираем всё до города включительно
-        idx = full_address.find(f'г {city}')
+        idx = full_address.find(f"г {city}")
         if idx == -1:
-            idx = full_address.find(f'г. {city}')
+            idx = full_address.find(f"г. {city}")
         if idx != -1:
-            short = full_address[idx:].replace(f'г {city}', '').replace(f'г. {city}', '').strip()
-            return short.lstrip(',').strip()
+            short = (
+                full_address[idx:]
+                .replace(f"г {city}", "")
+                .replace(f"г. {city}", "")
+                .strip()
+            )
+            return short.lstrip(",").strip()
         return full_address
 
     def close(self):

@@ -2,9 +2,11 @@
 Маршруты для работы с категориями и товарами.
 """
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
+from datetime import datetime
+import threading
 
 from src.server.database import get_db
 from src.server.models import Category, Product
@@ -20,13 +22,18 @@ def list_categories(
 ):
     """Список универсальных категорий с фильтрацией."""
     query = db.query(Category)
+
+    # Приоритет: tracked > parent_id > default (корневые)
     if tracked is not None:
+        # Если tracked указан, возвращаем ВСЕ категории с этим статусом
         query = query.filter(Category.is_tracked == tracked)
-    if parent_id is not None:
+    elif parent_id is not None:
+        # Если parent_id указан, фильтруем по parent_id
         query = query.filter(Category.parent_id == parent_id)
-    elif parent_id is None and tracked is None:
-        # Только если не указаны оба параметра, фильтруем по корневым
+    else:
+        # По умолчанию возвращаем только корневые категории
         query = query.filter(Category.parent_id.is_(None))
+
     categories = query.order_by(Category.name).all()
     return [
         {
@@ -66,10 +73,10 @@ def scan_categories(
 
 @router.get("/categories/tree")
 def get_categories_tree(db: Session = Depends(get_db)):
-    """Получить дерево категорий с подкатегориями."""
+    """Получить дерево категорий с подкатегориями (только с magnit_id)."""
     root_categories = (
         db.query(Category)
-        .filter(Category.parent_id.is_(None))
+        .filter(Category.parent_id.is_(None), Category.magnit_id.isnot(None))
         .order_by(Category.name)
         .all()
     )
@@ -77,7 +84,7 @@ def get_categories_tree(db: Session = Depends(get_db)):
     def build_tree(category):
         children = (
             db.query(Category)
-            .filter(Category.parent_id == category.id)
+            .filter(Category.parent_id == category.id, Category.magnit_id.isnot(None))
             .order_by(Category.name)
             .all()
         )
@@ -86,6 +93,7 @@ def get_categories_tree(db: Session = Depends(get_db)):
             "code": category.code,
             "name": category.name,
             "url": category.url,
+            "magnit_id": category.magnit_id,
             "is_tracked": category.is_tracked,
             "product_count": category.product_count,
             "children": [build_tree(child) for child in children],
@@ -234,6 +242,22 @@ def list_products(
                 "in_stock": p.in_stock,
                 "category_id": p.category_id,
                 "store_code": p.store_code,
+                # Остатки
+                "quantity": p.quantity,
+                "is_low_stock": p.is_low_stock,
+                "pickup_only": p.pickup_only,
+                # Акции
+                "is_promotion": p.is_promotion,
+                "promo_discount": p.discount_percent,
+                # Рейтинги
+                "rating": p.rating,
+                "scores_count": p.scores_count,
+                "comments_count": p.comments_count,
+                # SEO
+                "seo_code": p.seo_code,
+                # Весовые
+                "is_weighted": p.is_weighted,
+                "unit_price": p.unit_price,
                 "last_seen": p.last_seen.isoformat() if p.last_seen else None,
             }
         )
@@ -291,6 +315,11 @@ def scan_products(
 ):
     """Сканировать товары из категорий (синхронно)."""
     from src.server.services.catalog_scanner import CatalogScanner
+    import traceback
+
+    print(
+        f"DEBUG: scan_products called with store_code={store_code}, tracked_only={tracked_only}"
+    )
 
     cat_ids = None
     if category_ids:
@@ -299,14 +328,146 @@ def scan_products(
         except ValueError:
             raise HTTPException(status_code=400, detail="Неверный формат category_ids")
 
+    print(f"DEBUG: Creating CatalogScanner...")
     scanner = CatalogScanner(db, store_code=store_code)
+    print(f"DEBUG: CatalogScanner created successfully")
+
     try:
+        print(
+            f"DEBUG: Calling scan_products with cat_ids={cat_ids}, tracked_only={tracked_only}"
+        )
         result = scanner.scan_products(category_ids=cat_ids, tracked_only=tracked_only)
+        print(f"DEBUG: scan_products returned: {result}")
         scanner.close()
         return {"status": "completed", **result}
     except Exception as e:
         scanner.close()
-        raise HTTPException(status_code=500, detail=str(e))
+        tb = traceback.format_exc()
+        print(f"ERROR in scan_products: {str(e)}")
+        print(f"TRACEBACK:\n{tb}")
+        raise HTTPException(status_code=500, detail=f"{str(e)}\n{tb}")
+
+
+@router.post("/catalog/scan-all-stores")
+def scan_all_stores(
+    tracked_only: bool = Query(True, description="Только отслеживаемые категории"),
+    background_tasks: BackgroundTasks = None,
+    db: Session = Depends(get_db),
+):
+    """
+    Сканировать товары из ВСЕХ магазинов в БД по отслеживаемым категориям.
+    Запускает фоновое задание, возвращает job_id для polling.
+    """
+    from src.server.services.catalog_scanner import CatalogScanner
+    from src.server.models import Store, ScanJob
+    import traceback
+    import json
+
+    # Получаем все магазины
+    stores = db.query(Store).filter(Store.is_active == True).all()  # noqa: E712
+    if not stores:
+        raise HTTPException(status_code=400, detail="Нет магазинов в БД")
+
+    # Получаем отслеживаемые категории
+    tracked_cats = db.query(Category).filter(Category.is_tracked == True).all()  # noqa: E712
+    if not tracked_cats:
+        raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий")
+
+    cat_codes = [cat.code for cat in tracked_cats]
+
+    # Сохраняем список магазинов и категорий для фоновой задачи
+    store_codes_list = [(s.store_code, s.store_type, s.address) for s in stores]
+
+    # Создаём задание
+    job = ScanJob(
+        job_type="scan_all_stores",
+        store_code=f"{len(stores)} stores",
+        category_ids=json.dumps(cat_codes),
+        status="pending",
+        created_at=datetime.utcnow(),
+    )
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+    job_id = job.id
+
+    def run_scan_all():
+        # Создаём новую сессию для фонового потока
+        from src.server.database import SessionLocal as NewSession
+
+        bg_db = NewSession()
+        try:
+            job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+            if not job_db:
+                return
+
+            job_db.status = "running"
+            job_db.started_at = datetime.utcnow()
+            job_db.progress = 0
+            job_db.progress_message = "Запуск..."
+            bg_db.commit()
+
+            total_scanned = 0
+            total_added = 0
+            total_updated = 0
+            total_stores = len(store_codes_list)
+
+            for idx, (store_code, store_type, address) in enumerate(store_codes_list):
+                # Обновляем прогресс
+                progress_pct = int((idx / total_stores) * 100)
+                job_db.progress = progress_pct
+                job_db.progress_message = f"Магазин {idx+1}/{total_stores}: {store_code} ({store_type})"
+                bg_db.commit()
+
+                try:
+                    scanner = CatalogScanner(bg_db, store_code=store_code, job_id=job_id)
+                    result = scanner.scan_products(
+                        category_ids=cat_codes, tracked_only=tracked_only
+                    )
+                    scanner.close()
+
+                    total_scanned += result.get("scanned", 0)
+                    total_added += result.get("added", 0)
+                    total_updated += result.get("updated", 0)
+
+                    job_db.items_scanned = total_scanned
+                    job_db.items_added = total_added
+                    job_db.items_updated = total_updated
+                    bg_db.commit()
+                except Exception as e:
+                    tb = traceback.format_exc()
+                    print(f"ERROR scanning store {store_code}: {str(e)}")
+                    print(f"TRACEBACK:\n{tb}")
+                    job_db.progress_message = f"Ошибка {store_code}: {str(e)}"
+                    bg_db.commit()
+
+            # Завершение
+            job_db.status = "completed"
+            job_db.finished_at = datetime.utcnow()
+            job_db.progress = 100
+            job_db.progress_message = "Завершено"
+            job_db.items_scanned = total_scanned
+            job_db.items_added = total_added
+            job_db.items_updated = total_updated
+            bg_db.commit()
+
+        except Exception as e:
+            job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+            if job_db:
+                job_db.status = "failed"
+                job_db.finished_at = datetime.utcnow()
+                job_db.error_message = str(e)
+                job_db.progress_message = f"Ошибка: {str(e)}"
+                bg_db.commit()
+        finally:
+            bg_db.close()
+
+    if background_tasks:
+        background_tasks.add_task(run_scan_all)
+        return {"job_id": job_id, "status": "pending", "stores_count": len(stores)}
+    else:
+        run_scan_all()
+        return {"job_id": job_id, "status": "completed"}
 
 
 @router.post("/catalog/scan-prices")
@@ -324,7 +485,7 @@ def scan_prices_in_store(
     if not tracked_cats:
         raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий")
 
-    cat_ids = [cat.category_id for cat in tracked_cats]
+    cat_ids = [cat.code for cat in tracked_cats]
 
     scanner = CatalogScanner(db, store_code=store_code)
     try:
@@ -334,3 +495,108 @@ def scan_prices_in_store(
     except Exception as e:
         scanner.close()
         raise HTTPException(status_code=500, detail=str(e))
+
+
+# Глобальная переменная для отслеживания статуса обновления каталога
+_catalog_update_status = {
+    "in_progress": False,
+    "total": 0,
+    "processed": 0,
+    "updated": 0,
+    "not_found": 0,
+    "errors": [],
+}
+
+
+def _fetch_and_update_categories_background():
+    """Фоновая задача для получения и обновления ID категорий."""
+    from src.server.services.fetch_magnit_category_ids import fetch_magnit_category_ids
+    from src.server.services.update_category_ids import (
+        update_categories_with_magnit_ids,
+    )
+    from src.server.database import SessionLocal
+
+    global _catalog_update_status
+
+    try:
+        _catalog_update_status["in_progress"] = True
+        _catalog_update_status["errors"] = []
+
+        print("Начало получения ID категорий из Магнита...")
+        mapping, errors = fetch_magnit_category_ids(headless=True)
+
+        _catalog_update_status["total"] = len(mapping)
+        _catalog_update_status["processed"] = len(mapping)
+
+        if errors:
+            _catalog_update_status["errors"] = errors
+
+        # Обновляем БД
+        db = SessionLocal()
+        try:
+            updated, not_found, not_found_names = update_categories_with_magnit_ids(
+                db, mapping
+            )
+            _catalog_update_status["updated"] = updated
+            _catalog_update_status["not_found"] = not_found
+
+            if not_found_names:
+                _catalog_update_status["errors"].extend(
+                    [f"Категория не найдена в БД: {name}" for name in not_found_names]
+                )
+
+            print(f"Обновлено: {updated}, Не найдено: {not_found}")
+        finally:
+            db.close()
+
+    except Exception as e:
+        _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
+        print(f"Ошибка при обновлении каталога: {e}")
+    finally:
+        _catalog_update_status["in_progress"] = False
+
+
+@router.post("/categories/fetch-magnit-ids")
+def fetch_magnit_category_ids_endpoint(db: Session = Depends(get_db)):
+    """
+    Запустить получение ID категорий из API Магнита.
+    Запускается в фоновом потоке.
+    """
+    global _catalog_update_status
+
+    if _catalog_update_status["in_progress"]:
+        return {
+            "status": "in_progress",
+            "message": "Обновление уже в процессе",
+            "progress": {
+                "processed": _catalog_update_status["processed"],
+                "total": _catalog_update_status["total"],
+            },
+        }
+
+    # Запускаем фоновую задачу в отдельном потоке
+    thread = threading.Thread(
+        target=_fetch_and_update_categories_background, daemon=True
+    )
+    thread.start()
+
+    return {
+        "status": "started",
+        "message": "Обновление каталога запущено. Это может занять несколько минут.",
+    }
+
+
+@router.get("/categories/fetch-magnit-ids/status")
+def get_fetch_status():
+    """Получить статус обновления каталога."""
+    global _catalog_update_status
+
+    return {
+        "in_progress": _catalog_update_status["in_progress"],
+        "total": _catalog_update_status["total"],
+        "processed": _catalog_update_status["processed"],
+        "updated": _catalog_update_status["updated"],
+        "not_found": _catalog_update_status["not_found"],
+        "error_count": len(_catalog_update_status["errors"]),
+        "errors": _catalog_update_status["errors"][:10],  # Первые 10 ошибок
+    }

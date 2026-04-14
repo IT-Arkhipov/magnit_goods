@@ -92,12 +92,16 @@ async function loadProducts() {
         `;
 
         products.forEach(p => {
+            const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция до ${p.promo_discount ? p.promo_discount + '%' : ''}">🔥 Акция</span> ` : '';
+            const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
+            const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+
             html += `
                 <tr>
-                    <td><strong>${p.name}</strong></td>
+                    <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
                     <td><span class="price-current">${p.price} ₽</span></td>
                     <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
-                    <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
+                    <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
                     <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
                     <td>
                         <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
@@ -141,40 +145,53 @@ async function showPriceHistory(productId) {
     content.innerHTML = '<p>Загрузка...</p>';
 
     try {
-        const response = await fetch(`/api/prices/history/${productId}?store_code=${encodeURIComponent(storeCode)}&days=30`);
-        const data = await response.json();
+        const response = await fetch(`/api/prices/daily-history/${productId}?store_code=${encodeURIComponent(storeCode)}&days=30`);
+        const snapshots = await response.json();
 
-        title.textContent = data.product || 'История цен';
+        if (snapshots.length === 0) {
+            title.textContent = 'История цен';
+            content.innerHTML = '<p style="color: #666;">Нет данных. Цены записываются при сканировании товаров.</p>';
+            return;
+        }
+
+        // Вычисляем статистику
+        const prices = snapshots.map(s => s.price);
+        const currentPrice = prices[prices.length - 1];
+        const minPrice = Math.min(...prices);
+        const maxPrice = Math.max(...prices);
+        const avgPrice = (prices.reduce((a, b) => a + b, 0) / prices.length).toFixed(2);
+
+        title.textContent = 'История цен';
 
         let html = `
-            <div style="margin-bottom: 16px;">
-                <span class="badge badge-info">Текущая цена: <strong>${data.current_price} ₽</strong></span>
-                <span class="badge badge-success">Мин: ${data.min_price} ₽</span>
-                <span class="badge badge-danger">Макс: ${data.max_price} ₽</span>
-                <span class="badge badge-warning">Средняя: ${data.avg_price} ₽</span>
+            <div style="margin-bottom: 16px; display: flex; gap: 8px; flex-wrap: wrap;">
+                <span class="badge badge-info">Текущая: <strong>${currentPrice} ₽</strong></span>
+                <span class="badge badge-success">Мин: ${minPrice} ₽</span>
+                <span class="badge badge-danger">Макс: ${maxPrice} ₽</span>
+                <span class="badge badge-warning">Средняя: ${avgPrice} ₽</span>
+                <span class="badge badge-secondary">Записей: ${snapshots.length}</span>
             </div>
             <table>
                 <thead>
                     <tr>
                         <th>Дата</th>
                         <th>Цена</th>
-                        <th>Изменение</th>
+                        <th>Старая цена</th>
+                        <th>Скидка</th>
                     </tr>
                 </thead>
                 <tbody>
         `;
 
-        data.history.forEach(h => {
-            const changeBadge = h.change_type === 'decreased' ? 'badge-success' :
-                               h.change_type === 'increased' ? 'badge-danger' : 'badge-info';
-            const changeText = h.change_type === 'decreased' ? '↓ Снижена' :
-                              h.change_type === 'increased' ? '↑ Повышена' : '→ Без изменений';
-
+        // Показываем в обратном порядке (сначала новые)
+        const reversed = [...snapshots].reverse();
+        reversed.forEach(s => {
             html += `
                 <tr>
-                    <td>${new Date(h.date).toLocaleDateString()}</td>
-                    <td><strong>${h.price} ₽</strong></td>
-                    <td><span class="badge ${changeBadge}">${changeText}</span></td>
+                    <td>${s.date}</td>
+                    <td><strong>${s.price} ₽</strong></td>
+                    <td>${s.old_price ? s.old_price + ' ₽' : '-'}</td>
+                    <td>${s.discount_percent ? `<span class="discount-badge">-${s.discount_percent}%</span>` : '-'}</td>
                 </tr>
             `;
         });
