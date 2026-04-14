@@ -1,20 +1,21 @@
 """
 Сервис сканирования каталога товаров.
-Сканирует категории через Playwright (универсальные), товары через API Магнита.
+Сканирует товары через API Магнита по категориям.
 """
 
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
 from typing import Optional
+import time
 
-from src.server.models import Category, Product, PriceHistory, ScanJob, DailyPriceSnapshot
-from src.server.services.magnit_api import MagnitAPIClient
-
-print("DEBUG: catalog_scanner imported successfully")
-print(f"DEBUG: Category model: {Category}")
-print(
-    f"DEBUG: Category attributes: {[attr for attr in dir(Category) if not attr.startswith('_')]}"
+from src.server.models import (
+    Category,
+    Product,
+    PriceHistory,
+    ScanJob,
+    DailyPriceSnapshot,
 )
+from src.server.services.magnit_api import MagnitAPIClient
 
 
 class CatalogScanner:
@@ -70,11 +71,11 @@ class CatalogScanner:
             self._update_job_progress(10, f"Получено {total} категорий, сохранение...")
 
         for i, cat_data in enumerate(categories_data):
-            # Ищем существующую категорию по code (универсальный)
+            # Ищем существующую категорию по magnit_id
             existing = (
                 self.db.query(Category)
                 .filter(
-                    Category.code == cat_data["code"],
+                    Category.magnit_id == cat_data["magnit_id"],
                 )
                 .first()
             )
@@ -89,7 +90,7 @@ class CatalogScanner:
                 updated += 1
             else:
                 new_cat = Category(
-                    code=cat_data["code"],
+                    magnit_id=cat_data["magnit_id"],
                     name=cat_data.get("name", "Без названия"),
                     url=cat_data.get("url", ""),
                     parent_id=cat_data.get("parent_id"),
@@ -137,18 +138,10 @@ class CatalogScanner:
                 categories = query.all()
                 print(f"DEBUG: Found {len(categories)} tracked categories")
                 if categories:
-                    print(f"DEBUG: First category type: {type(categories[0])}")
                     print(
-                        f"DEBUG: First category dir: {[attr for attr in dir(categories[0]) if not attr.startswith('_')]}"
+                        f"DEBUG: First category: id={categories[0].id}, magnit_id={categories[0].magnit_id}, name={categories[0].name}"
                     )
-                    try:
-                        print(
-                            f"DEBUG: First category: id={categories[0].id}, code={categories[0].code}, name={categories[0].name}"
-                        )
-                    except AttributeError as e:
-                        print(f"DEBUG: AttributeError accessing category: {e}")
-                        raise
-                category_ids = [cat.code for cat in categories]
+                category_ids = [cat.magnit_id for cat in categories]
                 print(f"DEBUG: category_ids (first 5): {category_ids[:5]}")
             except Exception as e:
                 print(f"ERROR in category_ids extraction: {e}")
@@ -175,40 +168,69 @@ class CatalogScanner:
         total_scanned = 0
 
         # Сканируем по одной категории за раз
-        for cat_idx, cat_code in enumerate(category_ids):
+        for cat_idx, cat_magnit_id in enumerate(category_ids):
             progress_base = 25 + int((cat_idx / len(category_ids)) * 70)
             if self.job_id:
                 cat = (
                     self.db.query(Category)
                     .filter(
-                        Category.code == cat_code,
+                        Category.magnit_id == cat_magnit_id,
                     )
                     .first()
                 )
-                cat_name = cat.name if cat else f"Code:{cat_code}"
+                cat_name = cat.name if cat else f"ID:{cat_magnit_id}"
                 self._update_job_progress(progress_base, f"Категория: {cat_name}...")
 
             offset = 0
             has_more = True
             while has_more:
-                try:
-                    print(
-                        f"DEBUG: Calling get_products with category_ids={[cat_code]}, store_code={self.store_code}"
-                    )
-                    result = self.api.get_products(
-                        category_ids=[cat_code],
-                        store_code=self.store_code,
-                        limit=50,
-                        offset=offset,
-                    )
-                    print(
-                        f"DEBUG: get_products returned {len(result.get('products', []))} products"
-                    )
-                except Exception as e:
-                    print(f"Ошибка получения товаров (категория {cat_code}): {e}")
-                    import traceback
+                # Retry logic: попытаемся 3 раза с задержкой
+                max_retries = 3
+                retry_count = 0
+                last_error = None
 
-                    print(traceback.format_exc())
+                while retry_count < max_retries:
+                    try:
+                        print(
+                            f"DEBUG: Calling get_products with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
+                        )
+                        result = self.api.get_products(
+                            category_ids=[cat_magnit_id],
+                            store_code=self.store_code,
+                            limit=50,
+                            offset=offset,
+                        )
+                        print(
+                            f"DEBUG: get_products returned {len(result.get('products', []))} products"
+                        )
+                        break  # Успешно, выходим из retry цикла
+                    except Exception as e:
+                        last_error = e
+                        retry_count += 1
+                        if retry_count < max_retries:
+                            wait_time = (
+                                2**retry_count
+                            )  # Exponential backoff: 2, 4, 8 секунд
+                            print(
+                                f"WARN: Ошибка получения товаров (попытка {retry_count}/{max_retries}): {e}"
+                            )
+                            print(
+                                f"DEBUG: Ожидание {wait_time} секунд перед повтором..."
+                            )
+                            time.sleep(wait_time)
+                        else:
+                            print(
+                                f"ERROR: Ошибка получения товаров после {max_retries} попыток (категория {cat_magnit_id}): {e}"
+                            )
+                            import traceback
+
+                            print(traceback.format_exc())
+
+                # Если все попытки исчерпаны, пропускаем эту категорию
+                if retry_count >= max_retries and last_error:
+                    print(
+                        f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
+                    )
                     break
 
                 products = result.get("products", [])
@@ -218,7 +240,9 @@ class CatalogScanner:
                 if not products:
                     break
 
-                added, updated, price_changes = self._save_products(products, cat_code)
+                added, updated, price_changes = self._save_products(
+                    products, cat_magnit_id
+                )
                 total_added += added
                 total_updated += updated
                 total_price_changes += price_changes
@@ -227,11 +251,11 @@ class CatalogScanner:
                 self.db.commit()
 
         # Обновляем дату сканирования категорий
-        for cat_code in category_ids:
+        for cat_magnit_id in category_ids:
             cat = (
                 self.db.query(Category)
                 .filter(
-                    Category.code == cat_code,
+                    Category.magnit_id == cat_magnit_id,
                 )
                 .first()
             )
@@ -253,7 +277,7 @@ class CatalogScanner:
         return result
 
     def _save_products(
-        self, products: list[dict], category_code: str
+        self, products: list[dict], category_magnit_id: int
     ) -> tuple[int, int, int]:
         """
         Сохранить товары в БД.
@@ -266,17 +290,17 @@ class CatalogScanner:
         price_changes = 0
 
         try:
-            # Находим category_code в БД (универсальная категория)
+            # Находим категорию по magnit_id в БД (универсальная категория)
             cat = (
                 self.db.query(Category)
                 .filter(
-                    Category.code == category_code,
+                    Category.magnit_id == category_magnit_id,
                 )
                 .first()
             )
             db_category_id = cat.id if cat else None
             print(
-                f"DEBUG _save_products: category_code={category_code}, cat={cat}, db_category_id={db_category_id}"
+                f"DEBUG _save_products: category_magnit_id={category_magnit_id}, cat={cat}, db_category_id={db_category_id}"
             )
         except Exception as e:
             print(f"ERROR in _save_products finding category: {e}")
@@ -361,7 +385,9 @@ class CatalogScanner:
                     existing.unit_price = product_data["unit_price"]
 
                 if abs(old_price_val - new_price_val) > 0.01:
-                    change_type = "decreased" if new_price_val < old_price_val else "increased"
+                    change_type = (
+                        "decreased" if new_price_val < old_price_val else "increased"
+                    )
                     price_changes += 1
                     existing.last_price_change = datetime.utcnow()
 
@@ -449,7 +475,9 @@ class CatalogScanner:
 
         return added, updated, price_changes
 
-    def _save_price_snapshot(self, product_id: int, price: float, old_price: float = None):
+    def _save_price_snapshot(
+        self, product_id: int, price: float, old_price: float = None
+    ):
         """
         Записать ежедневный снимок цены товара.
         Если снимок за сегодня уже есть — обновить его.

@@ -126,8 +126,10 @@ class MagnitAPIClient:
             raise ValueError("store_code не указан")
 
         url = f"{self.base_url}/webgate/v1/goods"
+        # Конвертируем category_ids в строки для API
+        category_ids_str = [str(cat_id) for cat_id in category_ids]
         payload = {
-            "categories": category_ids,
+            "categories": category_ids_str,
             "storeCode": code,
             "pagination": {
                 "limit": limit,
@@ -229,35 +231,28 @@ class MagnitAPIClient:
                 "unit": item.get("unit") or item.get("measureUnit", "шт"),
                 "image_url": image_url,
                 "in_stock": item.get("inStock", item.get("available", True)),
-
                 # Остатки и доступность
                 "quantity": item.get("quantity", 0),
                 "is_low_stock": item.get("isLowStock"),
                 "pickup_only": item.get("pickupOnly", False),
-
                 # Акции
                 "is_promotion": is_promotion,
                 "discount_percent": discount_percent,
                 "promo_end_date": promo_end_date,
-
                 # Рейтинги
                 "rating": rating,
                 "scores_count": scores_count,
                 "comments_count": comments_count,
-
                 # SEO и каталог
                 "seo_code": item.get("seoCode"),
                 "service": item.get("service"),
                 "catalog_type": item.get("catalogType"),
-
                 # Параметры заказа
                 "min_order_qty": min_order_qty,
                 "order_step_qty": order_step_qty,
-
                 # Весовые
                 "is_weighted": is_weighted,
                 "unit_price": unit_price,
-
                 "category_id": item.get("categoryId"),
             }
         except Exception as e:
