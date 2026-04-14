@@ -1,0 +1,107 @@
+[
+  {
+    "code": "81",
+    "name": "Алкоголь",
+    "url": "/catalog/47161-alkogol_core_mm_gm",
+    "magnit_id": 81,
+    "subcategories": []
+  },
+  {
+    "code": "22",
+    "name": "Молоко, сыр, яйца",
+    "url": "/catalog/22-moloko-syir-yajtsa",
+    "magnit_id": 22,
+    "subcategories": []
+  },
+  {
+    "code": "25",
+    "name": "Мясо, птица, колбасы",
+    "url": "/catalog/25-myaso-ptitsa-kolbasyi",
+    "magnit_id": 25,
+    "subcategories": []
+  },
+  {
+    "code": "27",
+    "name": "Овощи и фрукты",
+    "url": "/catalog/27-ovoschi-i-fruktyi",
+    "magnit_id": 27,
+    "subcategories": []
+  },
+  {
+    "code": "21",
+    "name": "Напитки",
+    "url": "/catalog/21-napitki",
+    "magnit_id": 21,
+    "subcategories": []
+  },
+  {
+    "code": "101",
+    "name": "Чай, кофе, какао",
+    "url": "/catalog/101-chaj-kofe-kakao",
+    "magnit_id": 101,
+    "subcategories": []
+  },
+  {
+    "code": "24",
+    "name": "Хлеб и выпечка",
+    "url": "/catalog/24-hleb-i-vyipechka",
+    "magnit_id": 24,
+    "subcategories": []
+  },
+  {
+    "code": "26",
+    "name": "Замороженные продукты",
+    "url": "/catalog/26-polufabrikatyi",
+    "magnit_id": 26,
+    "subcategories": []
+  },
+  {
+    "code": "28",
+    "name": "Снеки, орехи",
+    "url": "/catalog/28-sneki-orehi",
+    "magnit_id": 28,
+    "subcategories": []
+  },
+  {
+    "code": "30",
+    "name": "Кондитерские изделия",
+    "url": "/catalog/30-konditerskie-izdeliya",
+    "magnit_id": 30,
+    "subcategories": []
+  },
+  {
+    "code": "33",
+    "name": "Бытовая химия",
+    "url": "/catalog/33-byitovaya-himiya",
+    "magnit_id": 33,
+    "subcategories": []
+  },
+  {
+    "code": "34",
+    "name": "Детям",
+    "url": "/catalog/34-detyam",
+    "magnit_id": 34,
+    "subcategories": []
+  },
+  {
+    "code": "35",
+    "name": "Зоотовары",
+    "url": "/catalog/35-zootovaryi",
+    "magnit_id": 35,
+    "subcategories": []
+  },
+  {
+    "code": "41",
+    "name": "Разные категории",
+    "url": "/catalog/41-raznyie-kategorii",
+    "magnit_id": 41,
+    "subcategories": []
+  },
+  {
+    "code": "122",
+    "name": "Гигиена",
+    "url": "/catalog/122-gigiena",
+    "magnit_id": 122,
+    "subcategories": []
+  }
+]
