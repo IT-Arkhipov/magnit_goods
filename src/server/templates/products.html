@@ -265,7 +265,18 @@ async function compareInStores(productId, currentStoreCode, productName) {
     
     try {
         const storesResponse = await fetch('/api/stores?limit=1000');
-        const stores = await storesResponse.json();
+        let stores = await storesResponse.json();
+        
+        // Сортировка по Типу, затем по Адресу
+        stores.sort((a, b) => {
+            const typeA = (a.store_type || a.type || '').toLowerCase();
+            const typeB = (b.store_type || b.type || '').toLowerCase();
+            if (typeA < typeB) return -1;
+            if (typeA > typeB) return 1;
+            const addrA = (a.address || '').toLowerCase();
+            const addrB = (b.address || '').toLowerCase();
+            return addrA.localeCompare(addrB);
+        });
         
         const storePromises = stores.map(async store => {
             try {
@@ -358,6 +369,17 @@ async function loadStoresForComparison() {
     try {
         const response = await fetch('/api/stores?limit=100');
         allStores = await response.json();
+        
+        // Сортировка по Типу, затем по Адресу
+        allStores.sort((a, b) => {
+            const typeA = (a.store_type || a.type || '').toLowerCase();
+            const typeB = (b.store_type || b.type || '').toLowerCase();
+            if (typeA < typeB) return -1;
+            if (typeA > typeB) return 1;
+            const addrA = (a.address || '').toLowerCase();
+            const addrB = (b.address || '').toLowerCase();
+            return addrA.localeCompare(addrB);
+        });
         
         if (allStores.length === 0) {
             tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Магазины не найдены</td></tr>';
