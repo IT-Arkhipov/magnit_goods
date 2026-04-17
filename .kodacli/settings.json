@@ -13,7 +13,9 @@
       "Bash(findstr *)",
       "Bash(dir *)",
       "Bash(python *)",
-      "Shell(python *)"
+      "Shell(python *)",
+      "Shell(cd *)",
+      "WriteFile"
     ]
   },
   "$version": 3  
