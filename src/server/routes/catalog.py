@@ -568,8 +568,8 @@ _catalog_update_status = {
 
 
 def _fetch_and_update_categories_background():
-    """Фоновая задача для получения и обновления ID категорий."""
-    from src.server.services.catalog_updater import update_catalog_from_api
+    """Фоновая задача для полной замены каталога категорий."""
+    from src.server.services.catalog_updater import replace_catalog_from_api
     from src.server.database import SessionLocal
 
     global _catalog_update_status
@@ -578,43 +578,66 @@ def _fetch_and_update_categories_background():
         _catalog_update_status["in_progress"] = True
         _catalog_update_status["errors"] = []
 
-        print("Начало обновления каталога из API Магнита...")
+        print("Начало полной замены каталога из API Магнита...")
 
         # Используем код магазина из .env
         store_code = os.getenv("STORE_CODE")
         store_type = os.getenv("STORE_TYPE")
 
+        print(f"DEBUG: STORE_CODE={store_code}, STORE_TYPE={store_type}")
+
         if store_code and store_type:
-            stats = update_catalog_from_api(
+            print(f"DEBUG: Using store_code={store_code}, store_type={store_type}")
+            stats = replace_catalog_from_api(
                 store_code=store_code, store_type=store_type
             )
         else:
+            print("DEBUG: No STORE_CODE/STORE_TYPE in env, trying to get from DB")
             # Получаем первый активный магазин для запроса
             db = SessionLocal()
             store = db.query(Store).filter(Store.is_active == True).first()
             db.close()
             if store:
-                stats = update_catalog_from_api(
+                print(
+                    f"DEBUG: Found active store: {store.store_code}, type: {store.store_type}"
+                )
+                stats = replace_catalog_from_api(
                     store_code=store.store_code, store_type=os.getenv("STORE_TYPE", "6")
                 )
             else:
-                stats = update_catalog_from_api()
+                print("DEBUG: No active stores found, using defaults")
+                stats = replace_catalog_from_api()
 
-        _catalog_update_status["total"] = stats["total"]
-        _catalog_update_status["processed"] = stats["processed"]
-        _catalog_update_status["updated"] = stats["updated"]
-        _catalog_update_status["not_found"] = stats["deleted"]
+        print(f"DEBUG: replace_catalog_from_api returned: {stats}")
 
-        if stats["errors"]:
+        # Проверяем статус ответа
+        if stats.get("status") == "error":
+            # Ошибка при получении данных из API
+            _catalog_update_status["errors"] = stats.get("errors", ["Unknown error"])
+            print(
+                f"Ошибка при получении данных из API: {_catalog_update_status['errors']}"
+            )
+            return
+
+        # Успешная замена
+        _catalog_update_status["total"] = stats.get("total", 0)
+        _catalog_update_status["processed"] = stats.get("total", 0)  # все обработаны
+        _catalog_update_status["updated"] = stats.get("updated", 0)
+        _catalog_update_status["not_found"] = (
+            0  # при полной замене не удаляем по-старому
+        )
+
+        if stats.get("errors"):
             _catalog_update_status["errors"] = stats["errors"]
 
         print(
-            f"Обновлено: {stats['updated']}, Добавлено: {stats['added']}, Удалено: {stats['deleted']}"
+            f"Каталог заменён: Всего {stats.get('total', 0)} категорий, "
+            f"Добавлено: {stats.get('added', 0)}, Восстановлено is_tracked: {stats.get('updated', 0)}"
         )
 
     except Exception as e:
         _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
-        print(f"Ошибка при обновлении каталога: {e}")
+        print(f"Ошибка при замене каталога: {e}")
         import traceback
 
         traceback.print_exc()
