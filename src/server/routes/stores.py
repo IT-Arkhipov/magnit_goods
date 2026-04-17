@@ -10,6 +10,7 @@ from sqlalchemy import or_
 from src.server.database import get_db
 from src.server.models import Store, ScanJob
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest, StorePreviewItem, AddSelectedStoresRequest
+from src.server.services.magnit_api import STORE_TYPE_MAP
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
 
@@ -203,46 +204,93 @@ def preview_stores(
 
     stores_api = None
     try:
-        from src.server.services.magnit_api import StoresAPI
+        from src.server.services.magnit_api import StoresAPI, STORE_TYPE_MAP
         stores_api = StoresAPI()
 
+        # Формируем запрос: город + улица (если есть)
         query = req.city
         if req.street:
-            query += f" {req.street}"
+            query += f", {req.street}"
 
         type_codes = req.get_store_type_codes()
 
         # Ищем через API (без сохранения)
-        stores_data = stores_api.search_all_stores(
-            query=query,
-            store_types=type_codes,
-            page_size=50,
-        )
+        try:
+            result = stores_api.search_stores(
+                query=query,
+                store_types=type_codes,
+                limit=50,
+                offset=0,
+            )
+            stores_data = result.get("stores", [])
+            print(f"DEBUG preview_stores: Получено {len(stores_data)} магазинов из API")
+        except Exception as api_error:
+            print(f"ERROR preview_stores: {api_error}")
+            raise HTTPException(
+                status_code=502,
+                detail=f"Ошибка API Магнита: {str(api_error)}"
+            )
 
-        # Дедупликация по store_code
+        # Дедупликация по store_code и преобразование формата
         seen = {}
         for sd in stores_data:
-            code = sd.get("store_code")
-            if code and code not in seen:
-                seen[code] = sd
+            # API возвращает: externalId.storeCode, storeTypeV2, address, cityFiasId
+            external_id = sd.get("externalId", {})
+            code = external_id.get("storeCode") or sd.get("store_code")
+            if not code:
+                print(f"DEBUG: Пропущен магазин без кода: {sd.get('address')}")
+                continue
+            
+            # Преобразуем формат API в наш формат
+            # storeTypeV2: "GM" -> STORE_TYPE_MAP.get("GM") = "Семейный"
+            store_type_api = sd.get("storeTypeV2") or sd.get("storeType", "")
+            # Удаляем префикс "STORE_TYPE_" если есть
+            if store_type_api.startswith("STORE_TYPE_"):
+                store_type_api = store_type_api[11:]
+            
+            store_type_name = STORE_TYPE_MAP.get(store_type_api, store_type_api)
+            print(f"DEBUG: Магазин {code}, тип API: {store_type_api}, тип UI: {store_type_name}")
+            
+            store_info = {
+                "store_code": code,
+                "store_type": store_type_name,
+                "city": sd.get("city", ""),  # Может потребоваться извлечение из cityFiasId
+                "address": sd.get("address", ""),
+                "full_address": sd.get("address", ""),
+                "name": sd.get("name"),
+            }
+            
+            if code not in seen:
+                seen[code] = store_info
+
+        print(f"DEBUG: Всего уникальных магазинов: {len(seen)}")
 
         # Формируем превью
         preview = []
         for sd in seen.values():
             if not sd.get("full_address"):
+                print(f"DEBUG: Пропущен магазин без адреса: {sd}")
                 continue
             preview.append(StorePreviewItem(
                 store_code=sd["store_code"],
-                store_type=sd.get("store_type", "Неизвестно"),
-                city=sd.get("city", ""),
-                address=sd.get("address", ""),
-                full_address=sd.get("full_address", ""),
+                store_type=sd["store_type"],
+                city=sd["city"],
+                address=sd["address"],
+                full_address=sd["full_address"],
                 name=sd.get("name"),
                 exists_in_db=sd["store_code"] in existing_codes,
             ))
 
+        print(f"DEBUG preview_stores: Сформировано {len(preview)} магазинов для превью")
         return {"total_found": len(preview), "stores": preview}
 
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=500,
+            detail=f"Внутренняя ошибка сервера: {str(e)}"
+        )
     finally:
         if stores_api:
             try:

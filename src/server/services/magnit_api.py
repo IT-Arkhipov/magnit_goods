@@ -314,26 +314,27 @@ class StoresAPI:
         timeout: int = 15,
         rate_limit: float = 0.3,
     ):
+        import uuid
         self.base_url = base_url.rstrip("/")
         self.timeout = timeout
         self.rate_limit = rate_limit
         self.session = requests.Session()
+        self.device_id = str(uuid.uuid4())
         self.session.headers.update(
             {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/120.0.0.0 Safari/537.36"
-                ),
-                "Accept": "application/json",
-                "Accept-Language": "ru-RU,ru;q=0.9",
-                "Content-Type": "application/json",
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36",
+                "Accept": "application/json, text/plain, */*",
+                "Accept-Language": "en-US,en;q=0.9,ru-RU;q=0.8,ru;q=0.7",
                 "Referer": "https://magnit.ru/",
                 "Origin": "https://magnit.ru",
+                "Content-Type": "application/json",
                 "X-Client-Name": "magnit",
                 "X-New-Magnit": "true",
-                "X-App-Version": "2026.4.10-19.26",
+                "X-App-Version": "2026.4.16-18.51",
                 "X-Device-Platform": "Web",
+                "X-Device-Id": self.device_id,
+                "X-Device-Tag": "disabled",
+                "X-Platform-Version": f"Windows Chrome {self.device_id[:3]}",
             }
         )
         self._last_request_time = 0
@@ -355,6 +356,7 @@ class StoresAPI:
     ) -> dict:
         """
         Поиск магазинов по адресу.
+        Выполняет отдельный запрос для каждого типа магазина и объединяет результаты.
 
         Args:
             query: Поисковый запрос (адрес, город, улица)
@@ -372,29 +374,76 @@ class StoresAPI:
         self._rate_limit_wait()
 
         url = f"{self.base_url}/webgate/v1/stores-facade/search/detail"
-        payload = {
-            "query": query,
-            "storeTypeListV2": store_types or ALL_STORE_TYPES,
-            "limit": limit,
-            "offset": offset,
-        }
-
+        
+        # Сначала получаем cookies с главной страницы
         try:
-            response = self.session.post(url, json=payload, timeout=self.timeout)
-            response.raise_for_status()
-            data = response.json()
-
-            stores = data.get("stores", [])
-            total = data.get("total", len(stores))
-            has_more = data.get("hasMore", False)
-
-            return {
-                "stores": stores,
-                "total": total,
-                "hasMore": has_more,
+            self.session.get(f"{self.base_url}/shops", timeout=10)
+        except Exception as e:
+            print(f"Warning: Could not get cookies: {e}")
+        
+        # Список типов для запроса
+        types_to_search = store_types if store_types else ALL_STORE_TYPES
+        
+        all_stores = []
+        
+        # Выполняем отдельный запрос для каждого типа магазина
+        for store_type in types_to_search:
+            payload = {
+                "filters": {
+                    "query": query,
+                    "storeTypeListV2": [store_type],  # Только один тип за запрос
+                },
+                "pagination": {
+                    "offset": offset,
+                    "size": limit,
+                },
+                "sorting": {
+                    "sortBy": "SORT_BY_CITY",
+                    "sortType": "SORT_TYPE_ASC",
+                }
             }
-        except requests.RequestException as e:
-            raise Exception(f"Ошибка поиска магазинов: {str(e)}")
+
+            try:
+                print(f"DEBUG StoresAPI: POST {url} (type={store_type})")
+                print(f"DEBUG StoresAPI: Payload: {json.dumps(payload, ensure_ascii=False)}")
+                print(f"DEBUG StoresAPI: Cookies: {self.session.cookies.get_dict()}")
+                
+                response = self.session.post(url, json=payload, timeout=self.timeout)
+                
+                print(f"DEBUG StoresAPI: Response status: {response.status_code}")
+                print(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    # Ответ API имеет структуру: {"data": [...], "totalCount": N}
+                    stores = data.get("data", [])
+                    print(f"DEBUG StoresAPI: Found {len(stores)} stores for type {store_type}")
+                    all_stores.extend(stores)
+                else:
+                    print(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
+                    
+            except requests.RequestException as e:
+                print(f"ERROR StoresAPI for type {store_type}: {e}")
+                # Продолжаем поиск для остальных типов
+
+        # Дедупликация по code
+        seen_codes = {}
+        for store in all_stores:
+            # API возвращает code в externalId.storeCode
+            external_id = store.get("externalId", {})
+            code = external_id.get("storeCode") or store.get("code") or store.get("store_code")
+            if code and code not in seen_codes:
+                seen_codes[code] = store
+        
+        unique_stores = list(seen_codes.values())
+        
+        print(f"DEBUG StoresAPI: Total unique stores: {len(unique_stores)}")
+
+        return {
+            "stores": unique_stores,
+            "total": len(unique_stores),
+            "hasMore": False,
+        }
 
     def close(self):
         """Закрыть сессию."""
