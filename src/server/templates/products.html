@@ -3,6 +3,35 @@
 {% block title %}Товары - Магнит Goods{% endblock %}
 
 {% block content %}
+<!-- Панель выбора магазинов для сравнения (Фаза 1) -->
+<div class="card">
+    <h3>🛒 Сравнение товаров по магазинам</h3>
+    <p style="color: #666; font-size: 14px; margin-bottom: 12px;">Выберите от 2 до 5 магазинов для сравнения цен на товары</p>
+    
+    <div style="overflow-x: auto; margin-bottom: 12px;">
+        <table id="storesTable" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8f9fa;">
+                    <th style="padding: 10px; border: 1px solid #ddd;"><input type="checkbox" id="selectAllStores" onchange="toggleAllStores()"></th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Тип</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Город</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Адрес</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Код</th>
+                </tr>
+            </thead>
+            <tbody id="storesTableBody">
+                <tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Загрузка списка магазинов...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <button class="btn btn-primary" onclick="applyStoreComparison()">Применить выбор</button>
+        <button class="btn btn-secondary" onclick="clearStoreSelection()">Очистить</button>
+        <span id="selectedStoresCount" class="badge badge-info" style="font-size: 14px;">Выбрано: 0 / 5</span>
+    </div>
+</div>
+
 <div class="card">
     <h2>Товары</h2>
 
@@ -45,6 +74,15 @@
         <h2 id="modalTitle">История цен</h2>
         <div id="modalContent"></div>
         <button class="btn btn-danger" onclick="closeModal()" style="margin-top: 16px;">Закрыть</button>
+    </div>
+</div>
+
+<!-- Модальное окно для сравнения товаров по магазинам -->
+<div id="compareModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 800px; width: 90%; max-height: 80vh; overflow-y: auto;">
+        <h2 id="compareModalTitle">Сравнение товара</h2>
+        <div id="compareModalContent"></div>
+        <button class="btn btn-danger" onclick="closeCompareModal()" style="margin-top: 16px;">Закрыть</button>
     </div>
 </div>
 
@@ -103,9 +141,10 @@ async function loadProducts() {
                     <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
                     <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
                     <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-                    <td>
-                        <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
-                    </td>
+        <td>
+            <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
+            <button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>
+        </td>
                 </tr>
             `;
         });
@@ -207,6 +246,250 @@ function closeModal() {
     document.getElementById('priceHistoryModal').style.display = 'none';
 }
 
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+async function compareInStores(productId, currentStoreCode, productName) {
+    const modal = document.getElementById('compareModal');
+    const modalContent = document.getElementById('compareModalContent');
+    const modalTitle = document.getElementById('compareModalTitle');
+    
+    modalTitle.textContent = `Сравнение товара: ${escapeHtml(productName)}`;
+    modalContent.innerHTML = '<p>Загрузка данных о товаре во всех магазинах...</p>';
+    modal.style.display = 'flex';
+    
+    try {
+        const storesResponse = await fetch('/api/stores?limit=1000');
+        const stores = await storesResponse.json();
+        
+        const storePromises = stores.map(async store => {
+            try {
+                const response = await fetch(`/api/products/${productId}?store_code=${encodeURIComponent(store.store_code)}`);
+                if (response.ok) {
+                    const productData = await response.json();
+                    return {
+                        store_code: store.store_code,
+                        name: store.name || store.store_code || 'Неизвестно',
+                        price: productData.price !== null ? productData.price : 'N/A',
+                        old_price: productData.old_price !== null ? productData.old_price : 'N/A',
+                        in_stock: productData.in_stock ? 'В наличии' : 'Нет в наличии',
+                        discount_percent: productData.discount_percent !== null ? `${productData.discount_percent}%` : '0%',
+                        promo_discount: productData.promo_discount !== null ? `${productData.promo_discount}%` : '0%',
+                        isCurrent: store.store_code === currentStoreCode
+                    };
+                } else {
+                    return {
+                        store_code: store.store_code,
+                        name: store.name || store.store_code || 'Неизвестно',
+                        price: 'Ошибка',
+                        old_price: 'N/A',
+                        in_stock: 'N/A',
+                        discount_percent: 'N/A',
+                        promo_discount: 'N/A',
+                        isCurrent: store.store_code === currentStoreCode
+                    };
+                }
+            } catch (error) {
+                return {
+                    store_code: store.store_code,
+                    name: store.name || store.store_code || 'Неизвестно',
+                    price: 'Ошибка',
+                    old_price: 'N/A',
+                    in_stock: 'N/A',
+                    discount_percent: 'N/A',
+                    promo_discount: 'N/A',
+                    isCurrent: store.store_code === currentStoreCode
+                };
+            }
+        });
+        
+        const storeData = await Promise.all(storePromises);
+        
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<thead><tr>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Магазин</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Цена</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Старая цена</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Скидка</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Наличие</th>';
+        html += '</tr></thead><tbody>';
+        
+        storeData.forEach(item => {
+            const rowClass = item.isCurrent ? 'background-color: #f0f8ff;' : '';
+            html += `<tr style="${rowClass}">`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.name}</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.price} ₽</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.old_price} ₽</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.discount_percent}</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.in_stock}</td>`;
+            html += '</tr>';
+        });
+        
+        html += '</tbody></table>';
+        modalContent.innerHTML = html;
+        
+    } catch (e) {
+        console.error('Error in compareInStores:', e);
+        modalContent.innerHTML = `<p style="color: #dc3545; padding: 20px;">Ошибка при загрузке данных: ${e.message}</p>`;
+    }
+}
+
+function closeCompareModal() {
+    document.getElementById('compareModal').style.display = 'none';
+}
+
+// ============================================
+// Фаза 1: Панель выбора магазинов для сравнения
+// ============================================
+
+let allStores = [];
+const MAX_COMPARE_STORES = 5;
+
+// Загрузка списка магазинов
+async function loadStoresForComparison() {
+    const tbody = document.getElementById('storesTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Загрузка списка магазинов...</td></tr>';
+    
+    try {
+        const response = await fetch('/api/stores?limit=100');
+        allStores = await response.json();
+        
+        if (allStores.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Магазины не найдены</td></tr>';
+            return;
+        }
+        
+        // Получаем сохранённый выбор из localStorage
+        const savedStores = JSON.parse(localStorage.getItem('compareStores') || '[]');
+        
+        // Генерируем строки таблицы
+        let html = '';
+        allStores.forEach(store => {
+            const isChecked = savedStores.includes(store.store_code) ? 'checked' : '';
+            const storeType = store.store_type || store.type || '-';
+            const city = store.city || '-';
+            const address = store.address || '-';
+            
+            html += `
+                <tr style="background: ${isChecked ? '#e8f5e9' : 'transparent'};">
+                    <td style="padding: 8px; border: 1px solid #ddd;">
+                        <input type="checkbox" 
+                               value="${store.store_code}" 
+                               data-store-type="${escapeHtml(storeType)}"
+                               onchange="updateStoreRowStyle(this)">
+                    </td>
+                    <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(storeType)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(city)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd;">${escapeHtml(address)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd;"><code>${store.store_code}</code></td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+        
+        updateSelectedStoresCount();
+    } catch (e) {
+        console.error('Ошибка загрузки магазинов:', e);
+        tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #dc3545;">Ошибка: ${e.message}</td></tr>`;
+    }
+}
+
+// Обновление стиля строки при выборе чекбокса
+function updateStoreRowStyle(checkbox) {
+    const row = checkbox.closest('tr');
+    if (checkbox.checked) {
+        row.style.background = '#e8f5e9';
+    } else {
+        row.style.background = 'transparent';
+    }
+    updateSelectedStoresCount();
+}
+
+// Выбрать/снять все чекбоксы
+function toggleAllStores() {
+    const selectAll = document.getElementById('selectAllStores');
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+    
+    checkboxes.forEach(cb => {
+        cb.checked = selectAll.checked;
+        updateStoreRowStyle(cb);
+    });
+    
+    updateSelectedStoresCount();
+}
+
+// Обновление счётчика выбранных магазинов
+function updateSelectedStoresCount() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]:checked');
+    const count = checkboxes.length;
+    const badge = document.getElementById('selectedStoresCount');
+    const selectAll = document.getElementById('selectAllStores');
+    
+    badge.textContent = `Выбрано: ${count} / ${MAX_COMPARE_STORES}`;
+    
+    // Снимаем выделение с "выбрать все", если не все выбраны
+    if (selectAll) {
+        const total = checkboxes.length;
+        const allCheckboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+        selectAll.checked = total === allCheckboxes.length && total > 0;
+        
+        // Блокируем выбор больше 5 магазинов
+        allCheckboxes.forEach(cb => {
+            if (!cb.checked && count >= MAX_COMPARE_STORES) {
+                cb.disabled = true;
+            } else {
+                cb.disabled = false;
+            }
+        });
+    }
+}
+
+// Применение выбора магазинов
+function applyStoreComparison() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]:checked');
+    const selected = Array.from(checkboxes).map(cb => cb.value);
+    
+    if (selected.length < 2) {
+        alert('Выберите минимум 2 магазина для сравнения');
+        return;
+    }
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('compareStores', JSON.stringify(selected));
+    
+    // Показываем сообщение
+    alert(`Выбрано магазинов: ${selected.join(', ')}. Загрузка товаров...`);
+    
+    // Можно добавить автоматическую загрузку товаров
+    // loadProductsByStores(selected);
+}
+
+// Очистка выбора
+function clearStoreSelection() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = false;
+        updateStoreRowStyle(cb);
+    });
+    document.getElementById('selectAllStores').checked = false;
+    localStorage.removeItem('compareStores');
+    updateSelectedStoresCount();
+}
+
+// Получение выбранных магазинов
+function getSelectedStores() {
+    return JSON.parse(localStorage.getItem('compareStores') || '[]');
+}
+
+// Загрузка при загрузке страницы
 document.getElementById('storeCode').addEventListener('change', loadCategories);
+
+// Загружаем магазины при загрузке страницы
+document.addEventListener('DOMContentLoaded', () => {
+    loadStoresForComparison();
+});
 </script>
 {% endblock %}

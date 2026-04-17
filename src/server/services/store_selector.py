@@ -211,8 +211,12 @@ class MagnitStoreSelector:
         # Извлекаем город
         city = None
         city_patterns = [
-            r'г\s+([\w\-]+)',
-            r'г\.\s+([\w\-]+)',
+            r',\s*г\s+([\w\-]+)',      # ', г Новочебоксарск'
+            r',\s*г\.\s+([\w\-]+)',    # ', г. Новочебоксарск'
+            r'\s+г\s+([\w\-]+)',       # ' г Новочебоксарск' (с пробелом перед)
+            r'\s+г\.\s+([\w\-]+)',     # ' г. Новочебоксарск'
+            r'г\s+([\w\-]+)',          # 'г Новочебоксарск'
+            r'г\.\s+([\w\-]+)',        # 'г. Новочебоксарск'
         ]
         for pattern in city_patterns:
             match = re.search(pattern, full_address)
@@ -221,8 +225,24 @@ class MagnitStoreSelector:
                 break
 
         if not city:
-            # Пробуем извлечь из названия
-            city = "Неизвестно"
+            # Если город не найден с предлогом "г", пробуем взять первую часть адреса до запятой
+            parts = full_address.split(',')
+            if len(parts) >= 1:
+                first_part = parts[0].strip()
+                # Если первая часть короткая (до 30 символов) и не содержит "республика", "область" - это город
+                if len(first_part) < 30 and 'республика' not in first_part.lower() and 'область' not in first_part.lower():
+                    city = first_part
+                elif len(parts) > 1:
+                    # Ищем в середине адреса (обычно город идёт после региона)
+                    for part in parts:
+                        part = part.strip()
+                        if re.match(r'^[гГ]\.?\s*', part) or 'г ' in part or 'г. ' in part:
+                            city_match = re.search(r'[гГ]\.?\s*([\w\-]+)', part)
+                            if city_match:
+                                city = city_match.group(1)
+                                break
+            if not city:
+                city = "Неизвестно"
 
         return {
             "name": name,

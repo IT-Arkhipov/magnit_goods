@@ -11,6 +11,7 @@ from src.server.database import get_db
 from src.server.models import Store, ScanJob
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest, StorePreviewItem, AddSelectedStoresRequest
 from src.server.services.magnit_api import STORE_TYPE_MAP
+from src.server.utils.city_extractor import extract_city_from_address
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
 
@@ -251,12 +252,25 @@ def preview_stores(
             store_type_name = STORE_TYPE_MAP.get(store_type_api, store_type_api)
             print(f"DEBUG: Магазин {code}, тип API: {store_type_api}, тип UI: {store_type_name}")
             
+            # Получаем полный адрес
+            full_address = sd.get("full_address") or sd.get("address", "")
+            
+            # Извлекаем город/населённый пункт: сначала пробуем из API, если пусто или некорректно - из адреса
+            city = sd.get("city", "")
+            if not city or city.startswith("00000000-") or len(city) < 2:
+                city = extract_city_from_address(full_address)
+            
+            # Если город не извлечён (например, для сёл без явного указания) - пропускаем магазин
+            if not city:
+                print(f"DEBUG: Пропущен магазин без города: {full_address}")
+                continue
+            
             store_info = {
                 "store_code": code,
                 "store_type": store_type_name,
-                "city": sd.get("city", ""),  # Может потребоваться извлечение из cityFiasId
+                "city": city,
                 "address": sd.get("address", ""),
-                "full_address": sd.get("address", ""),
+                "full_address": full_address,
                 "name": sd.get("name"),
             }
             

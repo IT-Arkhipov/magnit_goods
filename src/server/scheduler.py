@@ -191,7 +191,7 @@ def init_scheduler(store_code: str):
             .all()
         )
         category_ids = (
-            [cat.code for cat in tracked_categories] if tracked_categories else None
+            [cat.id for cat in tracked_categories] if tracked_categories else None
         )
     finally:
         db.close()
