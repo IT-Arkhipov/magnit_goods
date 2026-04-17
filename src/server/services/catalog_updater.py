@@ -62,7 +62,7 @@ class CatalogUpdater:
         subcats_from_api = api_data.get("fastCategoriesExtended", [])
 
         # Обновляем название корневой категории если изменилось
-        if category.name != cat_info["title"]:
+        if category.name != cat_info.get("title", category.name):
             category.name = cat_info["title"]
             db.commit()
             updated += 1

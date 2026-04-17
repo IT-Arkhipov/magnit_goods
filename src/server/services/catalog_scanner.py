@@ -5,8 +5,9 @@
 
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
-from typing import Optional
+from typing import Optional, Dict
 import time
+import os
 
 from src.server.models import (
     Category,
@@ -25,12 +26,18 @@ class CatalogScanner:
         self,
         db: Session,
         store_code: Optional[str] = None,
+        store_type: Optional[str] = None,
         job_id: Optional[int] = None,
     ):
         self.db = db
         self.store_code = store_code
+        self.store_type = store_type or os.getenv("STORE_TYPE", "MM")
         self.job_id = job_id
-        self.api = MagnitAPIClient(store_code=store_code) if store_code else None
+        self.api = (
+            MagnitAPIClient(store_code=store_code, store_type=self.store_type)
+            if store_code
+            else None
+        )
 
     def _update_job_progress(self, progress: int, message: str):
         """Обновить прогресс задания."""
@@ -48,10 +55,11 @@ class CatalogScanner:
         Сканировать подкатегории из API Магнита для всех корневых категорий.
 
         Логика:
-        1. Получает все корневые категории из БД (parent_id=None)
-        2. Для каждой корневой категории запрашивает подкатегории из API
-        3. Добавляет новые подкатегории, обновляет существующие
-        4. Удаляет подкатегории, которых нет в API (полная синхронизация)
+        1. Получает все корневые категории из БД
+        2. Для каждой корневой категории вызывает API с её magnit_id
+        3. Получает category.title + fastCategoriesExtended (подкатегории)
+        4. Обновляет название корневой категории
+        5. Добавляет/обновляет/удаляет подкатегории (полная синхронизация)
 
         Returns:
             {"scanned": N, "added": N, "updated": N, "deleted": N}
@@ -60,101 +68,143 @@ class CatalogScanner:
             raise ValueError("store_code не указан")
 
         if self.job_id:
-            self._update_job_progress(5, "Получение списка категорий из API...")
+            self._update_job_progress(5, "Получение списка корневых категорий из БД...")
 
-        try:
-            categories_data = self.api.get_categories(store_code=self.store_code)
-        except Exception as e:
-            if self.job_id:
-                self._update_job_progress(-1, f"Ошибка получения категорий: {str(e)}")
-            raise
+        # Получаем все корневые категории из БД
+        root_categories = (
+            self.db.query(Category).filter(Category.parent_id.is_(None)).all()
+        )
+
+        if self.job_id:
+            self._update_job_progress(
+                10, f"Найдено {len(root_categories)} корневых категорий, обновление..."
+            )
 
         added = 0
         updated = 0
         deleted = 0
-        total = len(categories_data)
+        total_processed = 0
 
-        if self.job_id:
-            self._update_job_progress(10, f"Получено {total} категорий, сохранение...")
-
-        # Собираем magnit_id всех категорий из API для отслеживания удалений
-        api_magnit_ids = set()
-
-        for i, cat_data in enumerate(categories_data):
-            magnit_id = cat_data.get("magnit_id")
-            if not magnit_id:
+        for i, root_cat in enumerate(root_categories):
+            if not root_cat.magnit_id:
+                print(f"DEBUG: Пропуск корневой категории без magnit_id: {root_cat.name}")
                 continue
 
-            api_magnit_ids.add(magnit_id)
+            try:
+                # Вызываем API с magnit_id корневой категории
+                result = self.api.search(
+                    store_code=self.store_code,
+                    category_ids=[root_cat.magnit_id],
+                    limit=32,
+                    offset=0,
+                )
 
-            # Ищем существующую категорию по magnit_id
-            existing = (
-                self.db.query(Category)
-                .filter(
-                    Category.magnit_id == magnit_id,
-                )
-                .first()
-            )
+                # API возвращает товары в items, но нам нужны fastCategoriesExtended
+                # Поэтому делаем отдельный запрос для получения подкатегорий
+                # (search() с category_ids возвращает товары, а не категории)
+                # Нужно напрямую вызвать API для получения подкатегорий
+                api_data = self._fetch_category_data(root_cat.magnit_id)
 
-            if existing:
-                # Обновляем существующую категорию
-                existing.name = cat_data.get("name", existing.name)
-                existing.url = cat_data.get("url", existing.url)
-                existing.product_count = cat_data.get(
-                    "product_count", existing.product_count
-                )
-                # Обновляем parent_id если указан (для подкатегорий)
-                if cat_data.get("parent_id"):
-                    existing.parent_id = cat_data["parent_id"]
-                print(
-                    f"DEBUG: Обновлена категория: {existing.name} (magnit_id={magnit_id})"
-                )
-                updated += 1
-            else:
-                # Создаём новую категорию
-                new_cat = Category(
-                    magnit_id=magnit_id,
-                    name=cat_data.get("name", "Без названия"),
-                    url=cat_data.get("url", ""),
-                    parent_id=cat_data.get("parent_id"),
-                    product_count=cat_data.get("product_count", 0),
-                )
-                self.db.add(new_cat)
-                print(
-                    f"DEBUG: Добавлена категория: {new_cat.name} (magnit_id={magnit_id})"
-                )
-                added += 1
+                if not api_data or "category" not in api_data:
+                    print(f"WARN: Нет данных для категории {root_cat.name}")
+                    continue
 
-            if (i + 1) % 50 == 0:
+                cat_info = api_data["category"]
+                subcats_from_api = api_data.get("fastCategoriesExtended", [])
+
+                # Обновляем название корневой категории если изменилось
+                if root_cat.name != cat_info.get("title", root_cat.name):
+                    root_cat.name = cat_info["title"]
+                    self.db.commit()
+                    updated += 1
+
+                # Получаем текущие подкатегории из БД
+                current_children = (
+                    self.db.query(Category)
+                    .filter(Category.parent_id == root_cat.id)
+                    .all()
+                )
+                current_ids = {child.magnit_id: child for child in current_children}
+                api_ids = {sub["id"] for sub in subcats_from_api}
+
+                # Удаляем подкатегории, которых нет в API
+                for magnit_id, child in current_ids.items():
+                    if magnit_id not in api_ids:
+                        print(f"DEBUG: Удалена подкатегория: {child.name} (magnit_id={magnit_id})")
+                        self.db.delete(child)
+                        deleted += 1
+
                 self.db.commit()
 
-        # Полная синхронизация: удаляем категории, которых нет в API
-        # (кроме корневых категорий из JSON)
-        all_categories = self.db.query(Category).all()
-        for cat in all_categories:
-            if cat.magnit_id and cat.magnit_id not in api_magnit_ids:
-                # Проверяем, что это не корневая категория из JSON
-                # (корневые категории имеют parent_id=None и не должны удаляться)
-                if cat.parent_id is not None:
-                    print(
-                        f"DEBUG: Удалена подкатегория: {cat.name} (magnit_id={cat.magnit_id})"
-                    )
-                    self.db.delete(cat)
-                    deleted += 1
+                # Добавляем или обновляем подкатегории из API
+                for sub in subcats_from_api:
+                    sub_id = sub["id"]
+                    sub_name = sub["title"]
 
-        self.db.commit()
+                    if sub_id in current_ids:
+                        # Обновляем существующую подкатегорию
+                        child = current_ids[sub_id]
+                        if child.name != sub_name:
+                            child.name = sub_name
+                            self.db.commit()
+                            updated += 1
+                    else:
+                        # Добавляем новую подкатегорию
+                        new_child = Category(
+                            name=sub_name,
+                            url="",
+                            magnit_id=sub_id,
+                            parent_id=root_cat.id,
+                        )
+                        self.db.add(new_child)
+                        added += 1
+                        print(f"DEBUG: Добавлена подкатегория: {sub_name} (magnit_id={sub_id})")
+
+                self.db.commit()
+                total_processed += 1
+
+                if self.job_id:
+                    progress = 10 + int(((i + 1) / len(root_categories)) * 10)
+                    self._update_job_progress(
+                        progress,
+                        f"Обновлено {root_cat.name}: +{added} ~{updated} -{deleted}",
+                    )
+
+            except Exception as e:
+                print(f"ERROR: Ошибка обновления категории {root_cat.name}: {e}")
 
         result = {
-            "scanned": total,
+            "scanned": total_processed,
             "added": added,
             "updated": updated,
             "deleted": deleted,
         }
 
         if self.job_id:
-            self._update_job_progress(20, f"Категории синхронизированы: {total}")
+            self._update_job_progress(20, f"Категории синхронизированы: {total_processed}")
 
         return result
+
+    def _fetch_category_data(self, category_id: int) -> Dict:
+        """Получить данные категории (включая fastCategoriesExtended) из API."""
+        payload = {
+            "sort": {"order": "desc", "type": "popularity"},
+            "pagination": {"limit": 32, "offset": 0},
+            "categories": [category_id],
+            "includeAdultGoods": True,
+            "storeCode": self.store_code,
+            "storeType": self.store_type,
+            "catalogType": "1",
+        }
+
+        try:
+            url = f"{self.api.base_url}/webgate/v2/goods/search"
+            response = self.api.session.post(url, json=payload, timeout=15)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            print(f"Error fetching category {category_id}: {e}")
+            return None
 
     def scan_products(
         self,
@@ -165,7 +215,7 @@ class CatalogScanner:
         Сканировать товары из указанных категорий для магазина.
 
         Args:
-            category_ids: Коды категорий (строки или числа, если None — все отслеживаемые)
+            category_ids: magnit_id категорий (если None — все отслеживаемые)
             tracked_only: Если True, сканировать только отслеживаемые категории
 
         Returns:
@@ -174,7 +224,7 @@ class CatalogScanner:
         if not self.api or not self.store_code:
             raise ValueError("store_code не указан")
 
-        # Определяем категории (универсальные, без store_code)
+        # Определяем категории
         if category_ids is None:
             try:
                 query = self.db.query(Category)
@@ -237,16 +287,16 @@ class CatalogScanner:
                 while retry_count < max_retries:
                     try:
                         print(
-                            f"DEBUG: Calling get_products with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
+                            f"DEBUG: Calling search with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
                         )
-                        result = self.api.get_products(
-                            category_ids=[cat_magnit_id],
+                        result = self.api.search(
                             store_code=self.store_code,
-                            limit=50,
+                            category_ids=[cat_magnit_id],
+                            limit=32,
                             offset=offset,
                         )
                         print(
-                            f"DEBUG: get_products returned {len(result.get('products', []))} products"
+                            f"DEBUG: search returned {len(result.get('items', []))} products"
                         )
                         break  # Успешно, выходим из retry цикла
                     except Exception as e:
@@ -278,7 +328,7 @@ class CatalogScanner:
                     )
                     break
 
-                products = result.get("products", [])
+                products = result.get("items", [])
                 has_more = result.get("hasMore", False)
                 offset = result.get("next_offset", offset + 50)
 

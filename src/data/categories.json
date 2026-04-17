@@ -1,287 +1,510 @@
-{
-  "root_categories": [
-    {
+[
+  {
+    "category": {
+      "fullMatch": false,
       "id": 47161,
       "title": "Алкоголь",
-      "fastCategoriesExtended": [
-        {
-          "id": 41179,
-          "title": "Вино"
-        },
-        {
-          "id": 41181,
-          "title": "Крепкий алкоголь"
-        },
-        {
-          "id": 41183,
-          "title": "Пиво, коктейли"
-        }
-      ]
+      "wasPredicted": false
     },
-    {
+    "fastCategoriesExtended": [
+      {
+        "id": 41179,
+        "title": "Вино"
+      },
+      {
+        "id": 41181,
+        "title": "Крепкий алкоголь"
+      },
+      {
+        "id": 41183,
+        "title": "Пиво, коктейли"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 65055,
+      "title": "Готовая еда",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 65247,
+        "title": "Кофейня"
+      },
+      {
+        "id": 65057,
+        "title": "Завтраки"
+      },
+      {
+        "id": 107955,
+        "title": "Стритфуд"
+      },
+      {
+        "id": 65061,
+        "title": "Вторые блюда и сэндвичи"
+      },
+      {
+        "id": 65059,
+        "title": "Салаты и супы"
+      },
+      {
+        "id": 65089,
+        "title": "Торты и пирожные"
+      },
+      {
+        "id": 65063,
+        "title": "Смузи"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
       "id": 63963,
       "title": "Молочный прилавок",
-      "fastCategoriesExtended": [
-        {
-          "id": 63987,
-          "title": "Кефир, сметана, творог"
-        },
-        {
-          "id": 63985,
-          "title": "Йогурты и десерты"
-        },
-        {
-          "id": 63991,
-          "title": "Сыры"
-        },
-        {
-          "id": 63983,
-          "title": "Молоко, масло, яйца"
-        },
-        {
-          "id": 63981,
-          "title": "Детские молочные продукты"
-        },
-        {
-          "id": 112257,
-          "title": "Душевная Пасха"
-        },
-        {
-          "id": 112305,
-          "title": "Монстриксы от Агуши"
-        }
-      ]
+      "wasPredicted": false
     },
-    {
-      "id": 64121,
-      "title": "Бакалея",
-      "fastCategoriesExtended": [
-        {
-          "id": 64129,
-          "title": "Сахар, соль и специи"
-        },
-        {
-          "id": 64123,
-          "title": "Крупы и сухие завтраки"
-        },
-        {
-          "id": 64125,
-          "title": "Макароны"
-        },
-        {
-          "id": 64131,
-          "title": "Соусы"
-        },
-        {
-          "id": 64127,
-          "title": "Растительные масла"
-        },
-        {
-          "id": 64133,
-          "title": "Всё для выпечки"
-        }
-      ]
+    "fastCategoriesExtended": [
+      {
+        "id": 63991,
+        "title": "Сыры"
+      },
+      {
+        "id": 63985,
+        "title": "Йогурты и десерты"
+      },
+      {
+        "id": 63983,
+        "title": "Молоко, масло, яйца"
+      },
+      {
+        "id": 63987,
+        "title": "Кефир, сметана, творог"
+      },
+      {
+        "id": 63981,
+        "title": "Детские молочные продукты"
+      },
+      {
+        "id": 112305,
+        "title": "Монстриксы от Агуши"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
     },
-    {
-      "id": 64201,
-      "title": "Мясо, птица, колбасы",
-      "fastCategoriesExtended": [
-        {
-          "id": 64209,
-          "title": "Тушенка"
-        },
-        {
-          "id": 64211,
-          "title": "Паштеты"
-        },
-        {
-          "id": 64213,
-          "title": "Вторые блюда"
-        }
-      ]
-    },
-    {
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
       "id": 63905,
       "title": "Овощи и фрукты",
-      "fastCategoriesExtended": [
-        {
-          "id": 63921,
-          "title": "Овощи, грибы, зелень"
-        },
-        {
-          "id": 63929,
-          "title": "Фрукты и ягоды"
-        },
-        {
-          "id": 63931,
-          "title": "Самый сезон"
-        }
-      ]
+      "wasPredicted": false
     },
-    {
-      "id": 63791,
-      "title": "Вода и напитки",
-      "fastCategoriesExtended": [
-        {
-          "id": 63797,
-          "title": "Соки и морсы"
-        },
-        {
-          "id": 63801,
-          "title": "Энергетики и пиво"
-        },
-        {
-          "id": 63793,
-          "title": "Вода"
-        },
-        {
-          "id": 63795,
-          "title": "Газировка"
-        },
-        {
-          "id": 63799,
-          "title": "Холодный чай и квас"
-        }
-      ]
+    "fastCategoriesExtended": [
+      {
+        "id": 63921,
+        "title": "Овощи, грибы, зелень"
+      },
+      {
+        "id": 63929,
+        "title": "Фрукты и ягоды"
+      },
+      {
+        "id": 63931,
+        "title": "Самый сезон"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
     },
-    {
-      "id": 63873,
-      "title": "Чай, кофе, какао",
-      "fastCategoriesExtended": [
-        {
-          "id": 63877,
-          "title": "Кофе"
-        },
-        {
-          "id": 63875,
-          "title": "Чай"
-        },
-        {
-          "id": 63879,
-          "title": "Какао и цикорий"
-        }
-      ]
-    },
-    {
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
       "id": 65001,
       "title": "Хлеб и выпечка",
-      "fastCategoriesExtended": [
-        {
-          "id": 65003,
-          "title": "Хлеб"
-        },
-        {
-          "id": 65005,
-          "title": "Выпечка"
-        }
-      ]
+      "wasPredicted": false
     },
-    {
-      "id": 64471,
-      "title": "Замороженные продукты",
-      "fastCategoriesExtended": [
-        {
-          "id": 64483,
-          "title": "Готовые блюда"
-        },
-        {
-          "id": 64485,
-          "title": "Блинчики и оладьи"
-        },
-        {
-          "id": 64487,
-          "title": "Из мяса"
-        },
-        {
-          "id": 64489,
-          "title": "Из птицы"
-        },
-        {
-          "id": 64491,
-          "title": "Пицца, тесто, выпечка"
-        },
-        {
-          "id": 64493,
-          "title": "Закуски"
-        }
-      ]
+    "fastCategoriesExtended": [
+      {
+        "id": 65003,
+        "title": "Хлеб"
+      },
+      {
+        "id": 65005,
+        "title": "Выпечка"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
     },
-    {
-      "id": 63829,
-      "title": "Снеки, орехи",
-      "fastCategoriesExtended": [
-        {
-          "id": 63831,
-          "title": "Чипсы, сухарики"
-        },
-        {
-          "id": 63833,
-          "title": "Снеки и семечки"
-        },
-        {
-          "id": 112248,
-          "title": "Космический хруст"
-        }
-      ]
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 64121,
+      "title": "Бакалея",
+      "wasPredicted": false
     },
-    {
+    "fastCategoriesExtended": [
+      {
+        "id": 64129,
+        "title": "Сахар, соль и специи"
+      },
+      {
+        "id": 64123,
+        "title": "Крупы и сухие завтраки"
+      },
+      {
+        "id": 64125,
+        "title": "Макароны"
+      },
+      {
+        "id": 64131,
+        "title": "Соусы"
+      },
+      {
+        "id": 64127,
+        "title": "Растительные масла"
+      },
+      {
+        "id": 64133,
+        "title": "Всё для выпечки"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 64199,
+      "title": "Консервы",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 64207,
+        "title": "Фрукты и ягоды"
+      },
+      {
+        "id": 64203,
+        "title": "Рыба"
+      },
+      {
+        "id": 64205,
+        "title": "Овощи и грибы"
+      },
+      {
+        "id": 64201,
+        "title": "Мясо и птица"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 64243,
+      "title": "Птица, мясо",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 64247,
+        "title": "Мясо"
+      },
+      {
+        "id": 64245,
+        "title": "Птица"
+      },
+      {
+        "id": 64249,
+        "title": "Колбасы и сосиски"
+      },
+      {
+        "id": 112437,
+        "title": "Готовьте, что любите"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 4998,
+      "title": "Рыба, морепродукты",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 38559,
+        "title": "Дары моря"
+      },
+      {
+        "id": 5003,
+        "title": "Крабовые палочки"
+      },
+      {
+        "id": 26739,
+        "title": "Рыба"
+      },
+      {
+        "id": 38287,
+        "title": "Икра, пасты, закуски"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 64467,
+      "title": "Заморозка",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 64473,
+        "title": "Овощи и ягоды"
+      },
+      {
+        "id": 64477,
+        "title": "Мороженое"
+      },
+      {
+        "id": 64469,
+        "title": "Пельмени и вареники"
+      },
+      {
+        "id": 64471,
+        "title": "Почти готово"
+      },
+      {
+        "id": 64475,
+        "title": "Рыба и морепродукты"
+      },
+      {
+        "id": 111823,
+        "title": "Новинки Магнат"
+      },
+      {
+        "id": 107230,
+        "title": "Мясо и птица"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
       "id": 64697,
       "title": "Сладости",
-      "fastCategoriesExtended": [
-        {
-          "id": 64721,
-          "title": "Мармелад, леденцы, жвачка"
-        },
-        {
-          "id": 64715,
-          "title": "Печенье, вафли, пряники"
-        },
-        {
-          "id": 64717,
-          "title": "Варенье и мёд"
-        },
-        {
-          "id": 64713,
-          "title": "Конфеты и шоколад"
-        },
-        {
-          "id": 64723,
-          "title": "Батончики"
-        },
-        {
-          "id": 64725,
-          "title": "Торты и пирожные"
-        },
-        {
-          "id": 64719,
-          "title": "Сухофрукты и орехи"
-        },
-        {
-          "id": 112259,
-          "title": "Возьмите шоколадку"
-        }
-      ]
+      "wasPredicted": false
     },
-    {
-      "id": 64427,
-      "title": "Гигиена и уход",
-      "fastCategoriesExtended": [
-        {
-          "id": 64459,
-          "title": "Уход, косметика"
-        },
-        {
-          "id": 64461,
-          "title": "Зубная паста и щетки"
-        },
-        {
-          "id": 64457,
-          "title": "Для купания"
-        }
-      ]
-    }
-  ],
-  "total": 12,
-  "successful": 12,
-  "timestamp": "2026-04-14"
-}
+    "fastCategoriesExtended": [
+      {
+        "id": 64721,
+        "title": "Мармелад, леденцы, жвачка"
+      },
+      {
+        "id": 64715,
+        "title": "Печенье, вафли, пряники"
+      },
+      {
+        "id": 64717,
+        "title": "Варенье и мёд"
+      },
+      {
+        "id": 64713,
+        "title": "Конфеты и шоколад"
+      },
+      {
+        "id": 64723,
+        "title": "Батончики"
+      },
+      {
+        "id": 64725,
+        "title": "Торты и пирожные"
+      },
+      {
+        "id": 64719,
+        "title": "Сухофрукты и орехи"
+      },
+      {
+        "id": 112259,
+        "title": "Возьмите шоколадку"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 63829,
+      "title": "Снеки",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 63831,
+        "title": "Чипсы, сухарики"
+      },
+      {
+        "id": 63833,
+        "title": "Снеки и семечки"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 63873,
+      "title": "Чай, кофе, какао",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 63877,
+        "title": "Кофе"
+      },
+      {
+        "id": 63875,
+        "title": "Чай"
+      },
+      {
+        "id": 63879,
+        "title": "Какао и цикорий"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  },
+  {
+    "category": {
+      "fullMatch": false,
+      "id": 63791,
+      "title": "Вода и напитки",
+      "wasPredicted": false
+    },
+    "fastCategoriesExtended": [
+      {
+        "id": 63797,
+        "title": "Соки и морсы"
+      },
+      {
+        "id": 63801,
+        "title": "Энергетики и пиво"
+      },
+      {
+        "id": 63793,
+        "title": "Вода"
+      },
+      {
+        "id": 63795,
+        "title": "Газировка"
+      },
+      {
+        "id": 63799,
+        "title": "Холодный чай и квас"
+      }
+    ],
+    "containerConfig": {
+      "media": {
+        "backgroundColor": "#FFF5F5F5",
+        "cornerRadius": 12
+      }
+    },
+    "correctedTerm": null,
+    "fastCategories": []
+  }
+]

@@ -66,9 +66,11 @@ def scan_categories(
 
     Корневые категории из JSON не удаляются.
     """
+    import os
     from src.server.services.catalog_scanner import CatalogScanner
 
-    scanner = CatalogScanner(db, store_code=store_code)
+    store_type = os.getenv("STORE_TYPE", "MM")
+    scanner = CatalogScanner(db, store_code=store_code, store_type=store_type)
     try:
         result = scanner.scan_categories()
         scanner.close()
@@ -98,11 +100,13 @@ def update_catalog_from_api(
         "deleted": удалено устаревших подкатегорий
     }
     """
+    import os
     from src.server.services.catalog_scanner import CatalogScanner
 
     print(f"DEBUG: Обновление каталога для магазина {store_code}")
 
-    scanner = CatalogScanner(db, store_code=store_code)
+    store_type = os.getenv("STORE_TYPE", "MM")
+    scanner = CatalogScanner(db, store_code=store_code, store_type=store_type)
     try:
         result = scanner.scan_categories()
         scanner.close()
