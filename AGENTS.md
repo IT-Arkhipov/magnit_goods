@@ -41,17 +41,19 @@ src/
 │   ├── scheduler.py         # APScheduler for price updates
 │   ├── routes/              # API endpoints
 │   │   ├── stores.py        # Store CRUD, scan, select
-│   │   ├── catalog.py       # Categories, products
+│   │   ├── catalog.py       # Categories, products (full replacement update)
 │   │   ├── prices.py        # Price history, alerts
 │   │   └── jobs.py          # Background job status
 │   ├── services/
 │   │   ├── magnit_api.py    # MagnitAPIClient (rate limit: 0.5s)
 │   │   ├── catalog_scanner.py
+│   │   ├── catalog_updater.py  # Catalog update service (replace_all_categories)
 │   │   ├── price_tracker.py
 │   │   └── notifications.py
 │   └── templates/           # Jinja2 HTML
 └── data/
-    └── magnit.db            # SQLite database
+    ├── magnit.db            # SQLite database
+    └── categories.json      # Root categories definition (14 items)
 ```
 
 ## API rate limiting
@@ -68,12 +70,18 @@ Deduplication by `store_code`. Existing stores shown as "(уже в базе)" i
 
 ## Category tracking
 
-78 categories in DB (14 root + 64 subcategories). Hierarchical tree with parent-child sync:
+80 categories in DB (14 root + 66 subcategories). Hierarchical tree with parent-child sync:
 - Selecting parent → auto-selects all children
 - Partial selection → parent shows indeterminate state
 - State persists in `categories.is_tracked` column
 
 Load categories: run `src/server/services/load_catalog_from_json.py` (one-time setup).
+
+**Catalog update logic:**
+- Button "Обновить каталог" performs complete category replacement
+- First fetches all categories from Magnit API, then clears DB and repopulates
+- Preserves `is_tracked` settings for categories with matching `magnit_id`
+- If API fails, DB remains unchanged (error displayed to user)
 
 ## Background jobs
 
@@ -89,11 +97,11 @@ No test framework configured. Use manual testing via:
 
 Root test files (`test_*.py`) are ad-hoc scripts, not pytest suites.
 
-## Development status (2026-04-13)
+## Development status (2026-04-17)
 
 **Completed:**
 - Module 1: Stores (CRUD, scan, select) — 100%
-- Module 2: Catalog (categories, UI) — 60%
+- Module 2: Catalog (categories, UI) — 100%
 
 **In progress:**
 - Product scanning by category
@@ -109,6 +117,7 @@ See `IMPLEMENTATION_PLAN.md` and `NEXT_STEPS.md` for roadmap.
 - Migrations run automatically on startup — don't manually alter tables
 - `.env` is auto-updated by `/api/stores/select` — don't edit manually during runtime
 - Server must run from project root (`D:\pythonProjects\magnit_goods`) for correct paths
+- Catalog update uses complete replacement logic — don't interrupt the process during update
 
 ## Language
 
