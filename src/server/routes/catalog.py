@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime
 import threading
+import os
 
 from src.server.database import get_db
 from src.server.models import Category, Product, Store
@@ -579,17 +580,25 @@ def _fetch_and_update_categories_background():
 
         print("Начало обновления каталога из API Магнита...")
 
-        # Получаем первый активный магазин для запроса
-        db = SessionLocal()
-        store = db.query(Store).filter(Store.is_active == True).first()
-        db.close()
+        # Используем код магазина из .env
+        store_code = os.getenv("STORE_CODE")
+        store_type = os.getenv("STORE_TYPE")
 
-        if store:
+        if store_code and store_type:
             stats = update_catalog_from_api(
-                store_code=store.store_code, store_type=store.store_type
+                store_code=store_code, store_type=store_type
             )
         else:
-            stats = update_catalog_from_api()
+            # Получаем первый активный магазин для запроса
+            db = SessionLocal()
+            store = db.query(Store).filter(Store.is_active == True).first()
+            db.close()
+            if store:
+                stats = update_catalog_from_api(
+                    store_code=store.store_code, store_type=os.getenv("STORE_TYPE", "6")
+                )
+            else:
+                stats = update_catalog_from_api()
 
         _catalog_update_status["total"] = stats["total"]
         _catalog_update_status["processed"] = stats["processed"]

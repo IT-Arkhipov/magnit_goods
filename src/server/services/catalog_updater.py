@@ -2,9 +2,12 @@
 Сервис для обновления каталога категорий из API Магнита.
 """
 
-import requests
+import os
 import json
+import time
+from pathlib import Path
 from typing import Dict, List, Tuple
+import requests
 from src.server.database import SessionLocal
 from src.server.models import Category, Store
 
@@ -16,6 +19,11 @@ class CatalogUpdater:
         self.base_url = "https://magnit.ru/webgate/v2/goods/search"
         self.store_code = store_code or "210117"
         self.store_type = store_type or "9"
+        self.rate_limit = 0.5  # seconds between requests
+        self._last_request_time = 0
+        self.categories_file = (
+            Path(__file__).parent.parent.parent / "data" / "categories.json"
+        )
         self.headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Accept": "application/json",
@@ -23,6 +31,14 @@ class CatalogUpdater:
         }
         self.session = requests.Session()
         self.session.headers.update(self.headers)
+
+    def _rate_limit_wait(self):
+        """Пауза между запросами для соблюдения rate limiting."""
+        if self._last_request_time > 0:
+            elapsed = time.time() - self._last_request_time
+            if elapsed < self.rate_limit:
+                time.sleep(self.rate_limit - elapsed)
+        self._last_request_time = time.time()
 
     def fetch_category_data(self, category_id: int) -> Dict:
         """Получить данные категории из API Магнита."""
@@ -37,12 +53,26 @@ class CatalogUpdater:
         }
 
         try:
+            self._rate_limit_wait()
             response = self.session.post(self.base_url, json=payload, timeout=15)
             response.raise_for_status()
             return response.json()
         except Exception as e:
             print(f"Error fetching category {category_id}: {e}")
             return None
+
+    def load_root_categories_from_file(self) -> List[Dict]:
+        """Загрузить корневые категории из JSON файла."""
+        if not self.categories_file.exists():
+            print(f"Categories file not found: {self.categories_file}")
+            return []
+        try:
+            with open(self.categories_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return [{"id": cat["id"], "title": cat["title"]} for cat in data]
+        except Exception as e:
+            print(f"Error loading categories from file: {e}")
+            return []
 
     def update_category_from_api(
         self, db, category: Category, api_data: Dict
@@ -107,19 +137,25 @@ class CatalogUpdater:
 
     def update_all_categories(self) -> Dict:
         """
-        Обновить все корневые категории из API Магнита.
+        Обновить все корневые категории из JSON файла через API Магнита.
         Возвращает статистику обновления.
         """
         db = SessionLocal()
 
         try:
-            # Получаем все корневые категории
-            root_categories = (
-                db.query(Category).filter(Category.parent_id.is_(None)).all()
-            )
+            root_categories_from_file = self.load_root_categories_from_file()
+            if not root_categories_from_file:
+                return {
+                    "total": 0,
+                    "processed": 0,
+                    "updated": 0,
+                    "added": 0,
+                    "deleted": 0,
+                    "errors": ["Categories file not found or empty"],
+                }
 
             stats = {
-                "total": len(root_categories),
+                "total": len(root_categories_from_file),
                 "processed": 0,
                 "updated": 0,
                 "added": 0,
@@ -127,30 +163,60 @@ class CatalogUpdater:
                 "errors": [],
             }
 
-            for category in root_categories:
+            for cat_data in root_categories_from_file:
                 try:
-                    print(f"Updating category: {category.name} ({category.magnit_id})")
+                    magnit_id = cat_data["id"]
+                    expected_title = cat_data["title"]
 
-                    # Получаем данные из API
-                    api_data = self.fetch_category_data(category.magnit_id)
+                    print(f"Updating category: {expected_title} ({magnit_id})")
 
-                    if api_data:
-                        # Обновляем категорию
-                        upd, add, del_count = self.update_category_from_api(
-                            db, category, api_data
+                    api_data = self.fetch_category_data(magnit_id)
+
+                    if not api_data:
+                        stats["errors"].append(
+                            f"Failed to fetch data for {expected_title}"
+                        )
+                        stats["processed"] += 1
+                        continue
+
+                    cat_info = api_data.get("category", {})
+                    api_title = cat_info.get("title", expected_title)
+
+                    db_category = (
+                        db.query(Category)
+                        .filter(Category.magnit_id == magnit_id)
+                        .filter(Category.parent_id.is_(None))
+                        .first()
+                    )
+
+                    if not db_category:
+                        db_category = Category(
+                            magnit_id=magnit_id, name=api_title, url="", parent_id=None
+                        )
+                        db.add(db_category)
+                        db.commit()
+                        db.refresh(db_category)
+                        stats["added"] += 1
+
+                    if db_category.name != api_title:
+                        db_category.name = api_title
+                        db.commit()
+                        stats["updated"] += 1
+
+                    if api_data.get("fastCategoriesExtended"):
+                        upd, add, deleted = self.update_category_from_api(
+                            db, db_category, api_data
                         )
                         stats["updated"] += upd
                         stats["added"] += add
-                        stats["deleted"] += del_count
-                    else:
-                        stats["errors"].append(
-                            f"Failed to fetch data for {category.name}"
-                        )
+                        stats["deleted"] += deleted
 
                     stats["processed"] += 1
 
                 except Exception as e:
-                    error_msg = f"Error updating {category.name}: {str(e)}"
+                    error_msg = (
+                        f"Error updating {cat_data.get('title', 'unknown')}: {str(e)}"
+                    )
                     print(error_msg)
                     stats["errors"].append(error_msg)
                     stats["processed"] += 1

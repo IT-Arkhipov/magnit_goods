@@ -68,7 +68,7 @@ Deduplication by `store_code`. Existing stores shown as "(уже в базе)" i
 
 ## Category tracking
 
-147 categories loaded from JSON (24 root + 123 subcategories). Hierarchical tree with parent-child sync:
+78 categories in DB (14 root + 64 subcategories). Hierarchical tree with parent-child sync:
 - Selecting parent → auto-selects all children
 - Partial selection → parent shows indeterminate state
 - State persists in `categories.is_tracked` column

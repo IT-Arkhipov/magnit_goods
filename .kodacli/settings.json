@@ -15,7 +15,8 @@
       "Bash(python *)",
       "Shell(python *)",
       "Shell(cd *)",
-      "WriteFile"
+      "WriteFile",
+      "Edit"
     ]
   },
   "$version": 3  
