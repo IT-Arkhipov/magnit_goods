@@ -1107,12 +1107,14 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
             `;
             
             // Заголовки колонок для цен других магазинов
+            console.log('DEBUG renderProductsList: selectedStores =', selectedStores, 'activeStoreCode =', activeStoreCode);
             const otherStoreHeaders = selectedStores.length > 1 
                 ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
                     const storeName = storeInfoMap[s] || s;
                     return `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
                 }).join('')
                 : '';
+            console.log('DEBUG renderProductsList: otherStoreHeaders =', otherStoreHeaders);
             
             sortedParents.forEach(([parentId, parentData], pIndex) => {
                 const parentExpanded = pIndex === 0;
