@@ -6,7 +6,7 @@
 <!-- Панель выбора магазинов для сравнения (Фаза 1) -->
 <div class="card">
     <h2>Сравнение товаров по магазинам</h2>
-    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите от 2 до 5 магазинов для сравнения цен на товары</p>
+    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите магазины для просмотра и сравнения цен на товары</p>
     
     <div style="overflow-x: auto; margin-bottom: 12px;">
         <table id="storesTable" style="width: 100%; border-collapse: collapse;">
@@ -732,8 +732,8 @@ function applyStoreComparison() {
     const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]:checked');
     const selected = Array.from(checkboxes).map(cb => cb.value);
     
-    if (selected.length < 2) {
-        alert('Выберите минимум 2 магазина для сравнения');
+    if (selected.length < 1) {
+        alert('Выберите минимум 1 магазин');
         return;
     }
     
@@ -751,7 +751,10 @@ function applyStoreComparison() {
     loadProducts();
     
     // Показываем сообщение
-    alert(`Выбрано магазинов: ${selected.join(', ')}. Загружены товары для магазина: ${selected[0]}`);
+    const msg = selected.length === 1 
+        ? `Выбран магазин: ${selected[0]}`
+        : `Выбрано магазинов: ${selected.length}. Загружены товары для магазина: ${selected[0]}`;
+    alert(msg);
 }
 
 // Обновление dropdown с магазинами - только выбранные
@@ -847,7 +850,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Проверяем, есть ли сохранённые магазины для сравнения
     const savedStores = getSelectedStores();
-    if (savedStores.length >= 2) {
+    if (savedStores.length >= 1) {
         // Обновляем dropdown - показываем только выбранные магазины
         populateStoreDropdown(savedStores);
         
