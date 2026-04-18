@@ -1175,42 +1175,41 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
                     catData.products.forEach(p => {
                         const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция">🔥</span> ` : '';
                         
-                        // Сбор цен из всех магазинов (включая активный)
-                        const productPrices = otherStorePrices[p.product_id] || {};
-                        // Добавляем цену активного магазина
-                        productPrices[activeStoreCode] = { price: p.price };
-                        
-                        const otherStoreCells = selectedStores.length > 1 
-                            ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
-                                const priceInfo = productPrices[storeCode];
-                                if (!priceInfo) {
-                                    return `<td style="text-align:center;color:#999;">-</td>`;
-                                }
-                                // Находим минимальную цену среди всех магазинов
-                                const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
-                                const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
-                                const isMin = minPrice != null && priceInfo.price === minPrice;
-                                const color = isMin ? '#e31e25' : '#000';
-                                return `<td style="text-align:center;font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
-                            }).join('')
-                            : '';
-                        
-                        // Определяем, является ли цена активного магазина минимальной
-                        const allPricesActive = Object.values(productPrices).map(x => x.price).filter(x => x != null);
-                        const minPriceActive = allPricesActive.length > 0 ? Math.min(...allPricesActive) : null;
-                        const isMinActive = minPriceActive != null && p.price === minPriceActive;
-                        const activePriceColor = isMinActive ? '#e31e25' : '#e31e25';
-                        
-                        html += `
-                            <tr>
-                                <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
-                                ${otherStoreCells}
-                                <td><span style="font-size:15px;font-weight:bold;color:${activePriceColor};">${p.price} ₽</span></td>
-                                <td>${p.old_price ? `<span style="text-decoration:line-through;color:#999;font-size:12px;">${p.old_price} ₽</span>` : '-'}</td>
-                                <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
-                                <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-                            </tr>
-                        `;
+                         // Сбор цен из всех магазинов (включая активный)
+                         const productPrices = otherStorePrices[p.product_id] || {};
+                         // Добавляем цену активного магазина
+                         productPrices[activeStoreCode] = { price: p.price };
+                         
+                         // Вычисляем минимальную цену и проверяем, все ли цены одинаковые
+                         const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
+                         const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
+                         const allEqual = allPrices.length > 0 && allPrices.every(p => p === minPrice);
+                         
+                         const otherStoreCells = selectedStores.length > 1 
+                             ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
+                                 const priceInfo = productPrices[storeCode];
+                                 if (!priceInfo) {
+                                     return `<td style="text-align:center;color:#999;">-</td>`;
+                                 }
+                                 // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                                 const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                                 return `<td style="text-align:center;font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
+                             }).join('')
+                             : '';
+                         
+                         // Цена активного магазина: если все равные - черный, иначе выделяем минимальную красным
+                         const activePriceColor = allEqual ? '#000' : (p.price === minPrice ? '#e31e25' : '#000');
+                         
+                         html += `
+                             <tr>
+                                 <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
+                                 ${otherStoreCells}
+                                 <td><span style="font-size:15px;font-weight:bold;color:${activePriceColor};">${p.price} ₽</span></td>
+                                 <td>${p.old_price ? `<span style="text-decoration:line-through;color:#999;font-size:12px;">${p.old_price} ₽</span>` : '-'}</td>
+                                 <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
+                                 <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+                             </tr>
+                         `;
                     });
                     
                     html += `
@@ -1258,24 +1257,27 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
     sorted.forEach(([catId, catData]) => {
         html += `<h4>${escapeHtml(catData.name)} (${catData.products.length})</h4>`;
         html += `<table><thead><tr><th>Название</th>${otherStoreHeaders}<th>Цена</th><th>Скидка</th><th>Наличие</th></tr></thead><tbody>`;
-        catData.products.forEach(p => {
-            const productPrices = otherStorePrices[p.product_id] || {};
-            // Добавляем цену активного магазина
-            productPrices[activeStoreCode] = { price: p.price };
-            
-            const otherStoreCells = selectedStores.length > 1 
-                ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
-                    const priceInfo = productPrices[storeCode];
-                    if (!priceInfo) return '<td style="color:#999;">-</td>';
-                    const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
-                    const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
-                    const isMin = minPrice != null && priceInfo.price === minPrice;
-                    const color = isMin ? '#e31e25' : '#000';
-                    return `<td style="font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
-                }).join('')
-                : '';
-            html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
-        });
+             catData.products.forEach(p => {
+             const productPrices = otherStorePrices[p.product_id] || {};
+             // Добавляем цену активного магазина
+             productPrices[activeStoreCode] = { price: p.price };
+             
+             // Вычисляем минимальную цену и проверяем, все ли цены одинаковые
+             const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
+             const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
+             const allEqual = allPrices.length > 0 && allPrices.every(p => p === minPrice);
+             
+             const otherStoreCells = selectedStores.length > 1 
+                 ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
+                     const priceInfo = productPrices[storeCode];
+                     if (!priceInfo) return '<td style="color:#999;">-</td>';
+                     // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                     const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                     return `<td style="font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
+                 }).join('')
+                 : '';
+             html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+         });
         html += '</tbody></table>';
     });
     listDiv.innerHTML = html;
