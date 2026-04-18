@@ -363,6 +363,38 @@ def get_products_stats(
     }
 
 
+@router.get("/products/multi-prices")
+def get_multi_store_prices(
+    product_ids: str = Query(..., description="Comma-separated product IDs"),
+    store_codes: str = Query(..., description="Comma-separated store codes"),
+    db: Session = Depends(get_db),
+):
+    """Получение цен товаров из нескольких магазинов."""
+    pid_list = [int(x.strip()) for x in product_ids.split(',') if x.strip().isdigit()]
+    store_list = [x.strip() for x in store_codes.split(',') if x.strip()]
+    
+    if not pid_list or not store_list:
+        return {}
+    
+    products = db.query(Product).filter(
+        Product.product_id.in_(pid_list),
+        Product.store_code.in_(store_list)
+    ).all()
+    
+    result = {}
+    for p in products:
+        if p.product_id not in result:
+            result[p.product_id] = {}
+        result[p.product_id][p.store_code] = {
+            "price": p.price,
+            "old_price": p.old_price,
+            "in_stock": p.in_stock,
+            "discount_percent": p.discount_percent,
+        }
+    
+    return result
+
+
 @router.get("/products/{product_id}", response_model=dict)
 def get_product(
     product_id: int,
