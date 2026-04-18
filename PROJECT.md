@@ -154,9 +154,8 @@ POST https://magnit.ru/webgate/v1/stores-facade/search/detail
 | DG | М.Косметик |
 | GM | Семейный |
 | MO | Опт |
-| MC | Моя цена |
+| MC | Моя цена | 9 |
 | ZARYAD | Заряд |
-| DARKSTORE | Мигом |
 | MM_MINI | Мини |
 
 ### Rate Limiting

@@ -74,7 +74,7 @@ class MagnitAPIClient:
 
         Args:
             store_code: Код магазина
-            store_type: Тип магазина (MM, ME, DG, GM, MO, MC, ZARYAD, DARKSTORE, MM_MINI)
+            store_type: Тип магазина (MM, ME, DG, GM, MO, MC, ZARYAD, MM_MINI)
                        Или числовой код (6 для Экстра, и т.д.)
             category_ids: Список ID категорий для фильтрации товаров
                          Если None - возвращаются категории
@@ -298,7 +298,6 @@ STORE_TYPE_MAP = {
     "MO": "Опт",
     "MC": "Моя цена",
     "ZARYAD": "Заряд",
-    "DARKSTORE": "Мигом",
     "MM_MINI": "Мини",
 }
 
@@ -312,9 +311,8 @@ API_STORE_TYPE_CODE = {
     "М.Косметик": "3",
     "Семейный": "5",
     "Опт": "7",
-    "Моя цена": "4",
+    "Моя цена": "9",
     "Заряд": "8",
-    "Мигом": "9",
     "Мини": "2",
 }
 
