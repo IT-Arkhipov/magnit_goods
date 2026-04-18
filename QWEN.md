@@ -137,7 +137,7 @@ venv\Scripts\python.exe -m uvicorn src.server.main:app --host 0.0.0.0 --port 800
 | `GM` | Семейный |
 | `ME` | Экстра |
 | `MO` | Опт |
-| `MC` | Моя цена |
+| `MC` | Моя цена | 9 |
 | `ZARYAD` | Заряд |
 | `DG` | М.Косметик |
 | `DARKSTORE` | Мигом |
