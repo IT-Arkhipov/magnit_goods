@@ -1202,10 +1202,12 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                              if (!priceInfo) {
                                  return `<td style="text-align:center;color:#999;">-</td>`;
                              }
-                             // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                             const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                             const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                             return `<td style="text-align:center;font-weight:bold;color:${color};">${priceInfo.price} ₽${savingsText}</td>`;
+                              // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                              const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                              const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                              const savingsFontSize = getSavingsFontSize(savingsPercent);
+                              const savingsStyle = savingsText ? `font-size:${savingsFontSize};` : '';
+                              return `<td style="text-align:center;font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
                          }).join('');
                          
                          html += `
@@ -1284,10 +1286,12 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                  ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
                      const priceInfo = productPrices[storeCode];
                      if (!priceInfo) return '<td style="color:#999;">-</td>';
-                     // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                     const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                     const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                     return `<td style="font-weight:bold;color:${color};">${priceInfo.price} ₽${savingsText}</td>`;
+                      // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                      const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                      const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                      const savingsFontSize = getSavingsFontSize(savingsPercent);
+                      const savingsStyle = savingsText ? `font-size:${savingsFontSize};` : '';
+                      return `<td style="font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
                  }).join('')
                  : '';
              
@@ -1344,6 +1348,15 @@ function debounce(func, wait) {
         clearTimeout(timeout);
         timeout = setTimeout(later, wait);
     };
+}
+
+// Расчёт размера шрифта для процента экономии
+function getSavingsFontSize(savingsPercent) {
+    if (!savingsPercent) return '11px';
+    // Увеличение на 1px за каждые 10%: 10% -> +1, 20% -> +2, 30% -> +3 и т.д.
+    const fontSizeIncrease = Math.round(savingsPercent / 10);
+    const baseFontSize = 11; // базовый размер шрифта
+    return `${baseFontSize + fontSizeIncrease}px`;
 }
 
 // Раскрытие всех категорий
