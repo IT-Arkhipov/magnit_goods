@@ -996,6 +996,41 @@ async function loadProductsEnhanced() {
             return;
         }
 
+        // Загружаем информацию о магазинах для отображения названий в колонках
+        let storeInfoMap = {};
+        if (selectedStores.length > 1) {
+            try {
+                const storesResp = await fetch('/api/stores');
+                const allStores = await storesResp.json();
+                allStores.forEach(store => {
+                    // Форматируем: Тип - Адрес (только улица и здание)
+                    let address = store.full_address || '';
+                    // Ищем начало улицы: ищем "ул", "пер", "пр-кт" и т.д.
+                    const ull = address.indexOf('ул');
+                    const per = address.indexOf('пер');
+                    const prkt = address.indexOf('пр-кт');
+                    const pros = address.indexOf('проспект');
+                    const terr = address.indexOf('тер');
+                    const idxs = [ull, per, prkt, pros, terr].filter(x => x >= 0);
+                    if (idxs.length > 0) {
+                        const start = Math.min(...idxs);
+                        address = address.substring(start);
+                    } else {
+                        // Если не найдено, берём всё после последней запятой
+                        const lastComma = address.lastIndexOf(',');
+                        if (lastComma > 0) {
+                            address = address.substring(lastComma + 1).trim();
+                        }
+                    }
+                    // Убираем начальные запятые, дефисы и пробелы
+                    address = address.replace(/^[\s,\-—]+/, '').trim();
+                    storeInfoMap[store.store_code] = `${store.store_type} - ${address}`;
+                });
+            } catch (e) {
+                console.error('Ошибка загрузки магазинов:', e);
+            }
+        }
+
         // Загружаем цены из других магазинов для сравнения
         let otherStorePrices = {};
         if (selectedStores.length > 1) {
@@ -1013,7 +1048,7 @@ async function loadProductsEnhanced() {
         }
 
         // Используем существующую логику рендеринга
-        renderProductsList(products, selectedStores, activeStoreCode, otherStorePrices, listDiv);
+        renderProductsList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv);
         
         // Обновляем статистику после загрузки товаров
         loadProductStats();
@@ -1024,7 +1059,7 @@ async function loadProductsEnhanced() {
 }
 
 // Вспомогательная функция для рендеринга списка товаров в иерархическом виде
-function renderProductsList(products, selectedStores, activeStoreCode, otherStorePrices, listDiv) {
+function renderProductsList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv) {
     // Загружаем дерево категорий для иерархии
     fetch('/api/categories/tree')
         .then(r => r.json())
@@ -1070,7 +1105,10 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
             
             // Заголовки колонок для цен других магазинов
             const otherStoreHeaders = selectedStores.length > 1 
-                ? selectedStores.filter(s => s !== activeStoreCode).map(s => `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:12px;">${escapeHtml(s)}</th>`).join('')
+                ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
+                    const storeName = storeInfoMap[s] || s;
+                    return `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
+                }).join('')
                 : '';
             
             sortedParents.forEach(([parentId, parentData], pIndex) => {
@@ -1190,12 +1228,12 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
         })
         .catch(err => {
             // Fallback - простой список без иерархии
-            renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, listDiv);
+            renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv);
         });
 }
 
 // Простой fallback - без иерархии
-function renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, listDiv) {
+function renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv) {
     const grouped = {};
     products.forEach(p => {
         const catId = p.category_id || 0;
@@ -1207,7 +1245,10 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
     
     // Заголовки колонок для цен других магазинов
     const otherStoreHeaders = selectedStores.length > 1 
-        ? selectedStores.filter(s => s !== activeStoreCode).map(s => `<th>${escapeHtml(s)}</th>`).join('')
+        ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
+            const storeName = storeInfoMap[s] || s;
+            return `<th>${escapeHtml(storeName)}</th>`;
+        }).join('')
         : '';
     
     let html = `<div style="margin-bottom: 16px;">Категорий: ${sorted.length}, Товаров: ${products.length}</div>`;
