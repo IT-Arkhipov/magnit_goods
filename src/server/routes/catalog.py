@@ -254,6 +254,7 @@ def update_categories_tracking(
 def list_products(
     store_code: Optional[str] = Query(None),
     category_id: Optional[int] = Query(None),
+    category_ids: Optional[str] = Query(None, description="Comma-separated category IDs"),
     search: Optional[str] = Query(None),
     min_price: Optional[float] = Query(None),
     max_price: Optional[float] = Query(None),
@@ -269,6 +270,10 @@ def list_products(
         query = query.filter(Product.store_code == store_code)
     if category_id:
         query = query.filter(Product.category_id == category_id)
+    if category_ids:
+        cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
+        if cat_id_list:
+            query = query.filter(Product.category_id.in_(cat_id_list))
     if search:
         query = query.filter(Product.name.like(f"%{search}%"))
     if min_price is not None:
