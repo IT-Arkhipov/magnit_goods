@@ -228,8 +228,8 @@
          <h2 style="margin: 0;">Категории товаров</h2>
          <div style="display: flex; gap: 8px;">
              <button class="btn btn-info" onclick="fetchMagnitCategoryIds()">Обновить каталог</button>
-             <button class="btn btn-success" onclick="saveSelectedCategories()">Сохранить выбор</button>
-             <button class="btn btn-primary" id="scan-btn" onclick="startScanProducts()">Сканировать товары</button>
+<button class="btn" style="background: #007bff; color: white;" onclick="saveSelectedCategories()">Сохранить выбор</button>
+              <button class="btn btn-success" id="scan-btn" onclick="startScanProducts()">Сканировать товары</button>
               <button class="btn btn-danger" id="cancel-scan-btn" onclick="cancelScan()" style="display: none;">Остановить</button>
          </div>
      </div>
@@ -310,12 +310,7 @@ async function loadCategoriesTree() {
 
         // Показываем статус загрузки
         const statusDiv = document.getElementById('load-status');
-        if (categoriesData.length > 0) {
-            statusDiv.innerHTML = `<div class="badge badge-success">Каталог загружен. Отслеживается: ${trackedCategories.length}</div>`;
-            setTimeout(() => {
-                statusDiv.innerHTML = '';
-            }, 3000);
-        }
+        // Убрано сообщение "Каталог загружен" при открытии страницы
     } catch (e) {
         console.error('Ошибка загрузки дерева:', e);
         const statusDiv = document.getElementById('load-status');
@@ -852,22 +847,17 @@ async function pollUpdateStatus(updateBtn) {
             const status = await response.json();
             
             if (status.in_progress) {
-                const progress = status.total > 0 
-                    ? Math.round((status.processed / status.total) * 100)
-                    : 0;
-                updateStatus.innerHTML = `<div class="badge badge-info">⏳ Обновление в процессе... ${progress}% (${status.processed}/${status.total})</div>`;
+                updateStatus.innerHTML = `<div class="badge badge-info">Обновление каталога...</div>`;
             } else {
                 // Обновление завершено
                 clearInterval(pollInterval);
 
-                let message = `✓ Обновление завершено!<br>`;
-                message += `Всего категорий: ${status.total}<br>`;
+                let message = `Обновление завершено!<br>`;
                 message += `Добавлено: ${status.processed || 0}<br>`;
                 message += `Восстановлено отслеживаний: ${status.updated}`;
 
                 if (status.error_count > 0) {
-                    // Ошибки при получении данных из API - не обновляем дерево
-                    message = `❌ Обновление не выполнено<br>`;
+                    message = `Обновление не выполнено<br>`;
                     message += `Ошибок при получении данных: ${status.error_count}`;
                     if (status.errors && status.errors.length > 0) {
                         message += '<br><details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:500;">Ошибки</summary><ul style="margin:8px 0;padding-left:20px;font-size:12px;">';

@@ -5,8 +5,8 @@
 {% block content %}
 <!-- Панель выбора магазинов для сравнения (Фаза 1) -->
 <div class="card">
-    <h3>Сравнение товаров по магазинам</h3>
-    <p style="color: #666; font-size: 14px; margin-bottom: 12px;">Выберите от 2 до 5 магазинов для сравнения цен на товары</p>
+    <h2>Сравнение товаров по магазинам</h2>
+    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите от 2 до 5 магазинов для сравнения цен на товары</p>
     
     <div style="overflow-x: auto; margin-bottom: 12px;">
         <table id="storesTable" style="width: 100%; border-collapse: collapse;">
@@ -28,14 +28,14 @@
     </div>
     
     <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
-        <button class="btn btn-primary" onclick="applyStoreComparison()">Применить выбор</button>
+        <button class="btn" style="background: #007bff; color: white;" onclick="applyStoreComparison()">Применить выбор</button>
         <button class="btn btn-secondary" onclick="clearStoreSelection()">Очистить</button>
         <span id="selectedStoresCount" class="badge badge-info" style="font-size: 14px;">Выбрано: 0 / 0</span>
     </div>
 </div>
 
-<!-- Панель статистики -->
-<div class="card">
+<!-- Панель статистики (временно скрыта)
+<div class="card" style="display: none;">
     <h3>Статистика товаров</h3>
     <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px;">
         <div class="stat-card">
@@ -60,6 +60,7 @@
         </div>
     </div>
 </div>
+-->
 
 <style>
 .stat-card {
@@ -81,7 +82,7 @@
     margin-bottom: 4px;
 }
 .stat-label {
-    font-size: 12px;
+    font-size: 14px;
     color: #666;
     text-transform: uppercase;
 }
@@ -102,17 +103,17 @@
         </div>
         <div class="form-group">
             <label>Категория</label>
-            <select id="categoryFilter">
+            <select id="categoryFilter" disabled>
                 <option value="">Все категории</option>
             </select>
         </div>
         <div class="form-group">
             <label>Поиск</label>
-            <input type="text" id="searchFilter" placeholder="Название товара">
+            <input type="text" id="searchFilter" placeholder="Название товара" disabled>
         </div>
         <div class="form-group">
             <label>Сортировка</label>
-            <select id="sortFilter">
+            <select id="sortFilter" disabled>
                 <option value="name">По названию</option>
                 <option value="price">По цене</option>
                 <option value="discount">По скидке</option>
@@ -120,7 +121,7 @@
         </div>
         <div class="form-group">
             <label>Наличие</label>
-            <select id="stockFilter">
+            <select id="stockFilter" disabled>
                 <option value="">Все</option>
                 <option value="in_stock">В наличии</option>
                 <option value="out_of_stock">Нет в наличии</option>
@@ -129,7 +130,7 @@
         </div>
         <div class="form-group">
             <label>Акции</label>
-            <select id="promoFilter">
+            <select id="promoFilter" disabled>
                 <option value="">Все</option>
                 <option value="discount">Со скидкой</option>
                 <option value="promotion">Акции</option>
@@ -137,14 +138,11 @@
         </div>
         <div class="form-group">
             <label>Цена от</label>
-            <input type="number" id="minPrice" placeholder="0" min="0">
+            <input type="number" id="minPrice" placeholder="0" min="0" disabled>
         </div>
         <div class="form-group">
             <label>Цена до</label>
-            <input type="number" id="maxPrice" placeholder="1000" min="0">
-        </div>
-        <div class="form-group" style="align-self: end;">
-            <button class="btn btn-primary" onclick="loadProducts()">Поиск</button>
+            <input type="number" id="maxPrice" placeholder="1000" min="0" disabled>
         </div>
     </div>
 </div>
@@ -196,8 +194,18 @@ async function loadProducts() {
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
     try {
+        // Получаем ID отслеживаемых категорий (только дочерние)
+        const trackedResp = await fetch('/api/categories?tracked=true');
+        const trackedCategories = await trackedResp.json();
+        const trackedCatIds = trackedCategories.filter(c => c.parent_id).map(c => c.id);
+        
         let url = `/api/products?store_code=${encodeURIComponent(activeStoreCode)}&sort_by=${sort}&limit=100`;
-        if (category) url += `&category_id=${category}`;
+        if (category) {
+            url += `&category_id=${category}`;
+        } else if (trackedCatIds.length > 0) {
+            // Фильтруем только по отслеживаемым категориям
+            url += `&category_ids=${trackedCatIds.join(',')}`;
+        }
         if (search) url += `&search=${encodeURIComponent(search)}`;
 
         const response = await fetch(url);
@@ -227,7 +235,7 @@ async function loadProducts() {
                 <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(true)">Развернуть все</button>
                 <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(false)">Свернуть все</button>
                 <span style="margin-left: 12px; color: #666;">Категорий: ${sortedCategories.length}, Товаров: ${products.length}</span>
-                ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
+                ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 14px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
             </div>
         `;
 
@@ -275,7 +283,7 @@ async function loadProducts() {
             catData.products.forEach(p => {
                 const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция до ${p.promo_discount ? p.promo_discount + '%' : ''}">🔥 Акция</span> ` : '';
                 const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
-                const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+                const qtyBadge = p.quantity !== undefined ? `<span style="font-size:12px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
 
                 html += `
                     <tr>
@@ -687,7 +695,10 @@ function getSelectedStores() {
 }
 
 // Загрузка при загрузке страницы
-document.getElementById('storeCode').addEventListener('change', loadCategories);
+document.getElementById('storeCode').addEventListener('change', () => {
+    loadCategories();
+    loadProducts();
+});
 
 // Загрузка магазинов при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
@@ -828,8 +839,17 @@ async function loadProductsEnhanced() {
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
     try {
+        // Получаем ID отслеживаемых категорий (только дочерние)
+        const trackedResp = await fetch('/api/categories?tracked=true');
+        const trackedCategories = await trackedResp.json();
+        const trackedCatIds = trackedCategories.filter(c => c.parent_id).map(c => c.id);
+        
         let url = `/api/products?store_code=${encodeURIComponent(activeStoreCode)}&sort_by=${sort}&limit=500`;
-        if (category) url += `&category_id=${category}`;
+        if (category) {
+            url += `&category_id=${category}`;
+        } else if (trackedCatIds.length > 0) {
+            url += `&category_ids=${trackedCatIds.join(',')}`;
+        }
         if (search) url += `&search=${encodeURIComponent(search)}`;
         if (minPrice) url += `&min_price=${minPrice}`;
         if (maxPrice) url += `&max_price=${maxPrice}`;
@@ -907,11 +927,9 @@ function renderProductsList(products, selectedStores, listDiv) {
             const sortedParents = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
             
             let html = `
-                <div style="margin-bottom: 16px;">
-                    <button class="btn btn-sm btn-secondary" onclick="toggleAllProducts(true)">Развернуть все</button>
-                    <button class="btn btn-sm btn-secondary" onclick="toggleAllProducts(false)">Свернуть все</button>
-                    <span style="margin-left: 12px; color: #666;">Категорий: ${sortedParents.length}, Товаров: ${products.length}</span>
-                    ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
+                <div style="margin-bottom: 12px; font-size: 14px; color: #666;">
+                    Категорий: ${sortedParents.length}, Товаров: ${products.length}
+                    ${selectedStores.length > 1 ? ` | Сравнение с ${selectedStores.length} магазинами` : ''}
                 </div>
             `;
             
@@ -921,45 +939,45 @@ function renderProductsList(products, selectedStores, listDiv) {
                 const totalProducts = childCats.reduce((sum, [,c]) => sum + c.products.length, 0);
                 
                 html += `
-                    <div class="parent-category" style="margin-bottom: 12px;">
+                    <div class="parent-category" style="margin-bottom: 8px;">
                         <div class="parent-header" onclick="toggleParentCategory('${parentId}')" style="
-                            padding: 14px 18px;
-                            background: #2c3e50;
-                            color: white;
-                            border-radius: 6px;
+                            padding: 10px 12px;
+                            background: #f8f9fa;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
                             cursor: pointer;
                             display: flex;
                             justify-content: space-between;
                             align-items: center;
-                            font-weight: 600;
-                            font-size: 15px;
+                            font-weight: 500;
+                            font-size: 14px;
                         ">
-                            <span>${escapeHtml(parentData.name)} <span style="opacity: 0.8; font-weight: normal;">(${totalProducts} товаров)</span></span>
+                            <span>${escapeHtml(parentData.name)} <span style="color: #666; font-weight: normal;">(${totalProducts})</span></span>
                             <span class="parent-arrow" style="transition: transform 0.3s; transform: ${parentExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
                         </div>
-                        <div class="parent-content" id="parent-${parentId}" style="display: ${parentExpanded ? 'block' : 'none'}; padding: 12px 0;">
+                        <div class="parent-content" id="parent-${parentId}" style="display: ${parentExpanded ? 'block' : 'none'}; padding: 8px 0;">
                 `;
                 
                 childCats.forEach(([catId, catData], cIndex) => {
                     const catExpanded = cIndex === 0;
                     html += `
-                        <div class="child-category" style="margin-bottom: 8px; margin-left: 20px;">
+                        <div class="child-category" style="margin-bottom: 6px; margin-left: 16px;">
                             <div class="child-header" onclick="toggleChildCategory('${parentId}-${catId}')" style="
-                                padding: 10px 14px;
-                                background: #3498db;
-                                color: white;
+                                padding: 8px 10px;
+                                background: #fff;
+                                border: 1px solid #ddd;
                                 border-radius: 4px;
                                 cursor: pointer;
                                 display: flex;
                                 justify-content: space-between;
                                 align-items: center;
-                                font-weight: 500;
+                                font-size: 14px;
                             ">
-                                <span>${escapeHtml(catData.name)} <span style="opacity: 0.9; font-weight: normal;">(${catData.products.length})</span></span>
+                                <span>${escapeHtml(catData.name)} <span style="color: #666;">(${catData.products.length})</span></span>
                                 <span class="child-arrow" style="transition: transform 0.3s; transform: ${catExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
                             </div>
-                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 10px; background: #f8f9fa; border-radius: 0 0 4px 4px; overflow-x: auto;">
-                                <table style="min-width: 600px;">
+                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 8px; background: #fff; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; overflow-x: auto;">
+                                <table style="min-width: 500px; font-size: 14px;">
                                     <thead>
                                         <tr>
                                             <th>Название</th>
@@ -977,8 +995,8 @@ function renderProductsList(products, selectedStores, listDiv) {
                         html += `
                             <tr>
                                 <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
-                                <td><span class="price-current">${p.price} ₽</span></td>
-                                <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
+                                <td><span style="font-size:15px;font-weight:bold;color:#e31e25;">${p.price} ₽</span></td>
+                                <td>${p.old_price ? `<span style="text-decoration:line-through;color:#999;font-size:12px;">${p.old_price} ₽</span>` : '-'}</td>
                                 <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
                                 <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
                             </tr>
