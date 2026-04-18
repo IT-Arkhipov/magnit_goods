@@ -1108,9 +1108,10 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
             
             // Заголовки колонок для цен других магазинов
             console.log('DEBUG renderProductsList: selectedStores =', selectedStores, 'activeStoreCode =', activeStoreCode);
+            console.log('DEBUG renderProductsList: storeInfoMap =', storeInfoMap);
             const otherStoreHeaders = selectedStores.length > 1 
                 ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
-                    const storeName = storeInfoMap[s] || s;
+                    const storeName = storeInfoMap[s] || s;  // Fallback на код магазина если нет информации
                     return `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
                 }).join('')
                 : '';
