@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
+from datetime import datetime
 
 from src.server.database import get_db
 from src.server.models import ScanJob
@@ -31,3 +32,21 @@ def get_job(job_id: int, db: Session = Depends(get_db)):
     if not job:
         raise HTTPException(status_code=404, detail="Задание не найдено")
     return job
+
+
+@router.post("/{job_id}/cancel")
+def cancel_job(job_id: int, db: Session = Depends(get_db)):
+    """Отменить задание."""
+    job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Задание не найдено")
+    print(f"DEBUG cancel: job_id={job_id}, status={job.status}")
+    if job.status == "cancelled":
+        return {"status": "cancelled", "message": "Уже отменено"}
+    if job.status in ["completed", "failed"]:
+        raise HTTPException(status_code=400, detail=f"Задание уже завершено (статус: {job.status})")
+    job.status = "cancelled"
+    job.finished_at = datetime.utcnow()
+    job.error_message = "Отменено пользователем"
+    db.commit()
+    return {"status": "cancelled"}

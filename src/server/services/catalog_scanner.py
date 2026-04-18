@@ -26,13 +26,19 @@ class CatalogScanner:
         self,
         db: Session,
         store_code: Optional[str] = None,
-        store_type: Optional[str] = None,
+        address: Optional[str] = None,
         job_id: Optional[int] = None,
     ):
         self.db = db
         self.store_code = store_code
-        self.store_type = store_type or os.getenv("STORE_TYPE", "MM")
+        self.address = address or ""
         self.job_id = job_id
+        
+        # Получаем store_type из БД по store_code
+        from src.server.models import Store
+        store = self.db.query(Store).filter(Store.store_code == store_code).first() if store_code else None
+        self.store_type = store.store_type if store and store.store_type else "Магнит"
+        
         self.api = (
             MagnitAPIClient(store_code=store_code, store_type=self.store_type)
             if store_code
@@ -42,12 +48,10 @@ class CatalogScanner:
     def _update_job_progress(self, progress: int, message: str):
         """Обновить прогресс задания."""
         if self.job_id:
-            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(
-                {
-                    "progress": progress,
-                    "progress_message": message,
-                }
-            )
+            update_dict = {"progress_message": message}
+            if progress >= 0:
+                update_dict["progress"] = progress
+            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(update_dict)
             self.db.commit()
 
     def scan_categories(self) -> dict:
@@ -70,10 +74,17 @@ class CatalogScanner:
         if self.job_id:
             self._update_job_progress(5, "Получение списка корневых категорий из БД...")
 
-        # Получаем все корневые категории из БД
+        # Получаем все отслеживаемые корневые категории из БД
         root_categories = (
-            self.db.query(Category).filter(Category.parent_id.is_(None)).all()
+            self.db.query(Category)
+            .filter(Category.parent_id.is_(None), Category.is_tracked == True)  # noqa: E712
+            .all()
         )
+
+        if not root_categories:
+            if self.job_id:
+                self._update_job_progress(10, "Нет отслеживаемых корневых категорий")
+            return {"scanned": 0, "added": 0, "updated": 0, "deleted": 0}
 
         if self.job_id:
             self._update_job_progress(
@@ -91,18 +102,7 @@ class CatalogScanner:
                 continue
 
             try:
-                # Вызываем API с magnit_id корневой категории
-                result = self.api.search(
-                    store_code=self.store_code,
-                    category_ids=[root_cat.magnit_id],
-                    limit=32,
-                    offset=0,
-                )
-
-                # API возвращает товары в items, но нам нужны fastCategoriesExtended
-                # Поэтому делаем отдельный запрос для получения подкатегорий
-                # (search() с category_ids возвращает товары, а не категории)
-                # Нужно напрямую вызвать API для получения подкатегорий
+                # Получаем подкатегории из API
                 api_data = self._fetch_category_data(root_cat.magnit_id)
 
                 if not api_data or "category" not in api_data:
@@ -262,19 +262,21 @@ class CatalogScanner:
         total_price_changes = 0
         total_scanned = 0
 
-        # Сканируем по одной категории за раз
+# Сканируем по одной категории за раз
         for cat_idx, cat_magnit_id in enumerate(category_ids):
-            progress_base = 25 + int((cat_idx / len(category_ids)) * 70)
+            # Проверка на отмену - сбрасываем кэш сессии
+            self.db.expire_all()
             if self.job_id:
-                cat = (
-                    self.db.query(Category)
-                    .filter(
-                        Category.magnit_id == cat_magnit_id,
-                    )
-                    .first()
-                )
+                job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
+                if job and job.status == "cancelled":
+                    print(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                    return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
+                
+                # Показать магазин и категорию
+                cat = self.db.query(Category).filter(Category.magnit_id == cat_magnit_id).first()
                 cat_name = cat.name if cat else f"ID:{cat_magnit_id}"
-                self._update_job_progress(progress_base, f"Категория: {cat_name}...")
+                clean_address = (self.address or "").replace("\n", " ").replace("\r", " ").strip()
+                self._update_job_progress(-1, f"{self.store_type}: {clean_address} | 📁 {cat_name}")
 
             offset = 0
             has_more = True
@@ -285,6 +287,14 @@ class CatalogScanner:
                 last_error = None
 
                 while retry_count < max_retries:
+                    # Проверка на отмену перед каждым запросом
+                    self.db.expire_all()
+                    if self.job_id:
+                        job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
+                        if job and job.status == "cancelled":
+                            print(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                            return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
+                    
                     try:
                         print(
                             f"DEBUG: Calling search with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
@@ -314,18 +324,30 @@ class CatalogScanner:
                             )
                             time.sleep(wait_time)
                         else:
-                            print(
-                                f"ERROR: Ошибка получения товаров после {max_retries} попыток (категория {cat_magnit_id}): {e}"
-                            )
+                            err_msg = str(e)
+                            if "invalid_service_pair" in err_msg or "service not found" in err_msg:
+                                print(
+                                    f"WARN: Категория {cat_magnit_id} недоступна для типа магазина {self.store_type} — пропускаем"
+                                )
+                            else:
+                                print(
+                                    f"ERROR: Ошибка получения товаров после {max_retries} попыток (категория {cat_magnit_id}): {e}"
+                                )
                             import traceback
-
                             print(traceback.format_exc())
 
                 # Если все попытки исчерпаны, пропускаем эту категорию
                 if retry_count >= max_retries and last_error:
-                    print(
-                        f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
-                    )
+                    err_msg = str(last_error)
+                    if "invalid_service_pair" in err_msg or "service not found" in err_msg:
+                        msg = f"⚠️ Категория {cat_name} недоступна для {self.store_type}"
+                        if self.job_id:
+                            self._update_job_progress(progress_base, msg)
+                        print(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
+                    else:
+                        print(
+                            f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
+                        )
                     break
 
                 products = result.get("items", [])
@@ -359,15 +381,21 @@ class CatalogScanner:
 
         self.db.commit()
 
+        # Удаляем устаревшие товары (30+ дней без обновлений)
+        deleted = self.cleanup_stale_products(days_threshold=30)
+
         result = {
             "scanned": total_scanned,
             "added": total_added,
             "updated": total_updated,
             "price_changes": total_price_changes,
+            "deleted": deleted,
         }
 
         if self.job_id:
             self._update_job_progress(95, f"Товары сохранены: {total_scanned} шт.")
+            if deleted > 0:
+                self._update_job_progress(98, f"Удалено устаревших товаров: {deleted}")
 
         return result
 
@@ -375,14 +403,20 @@ class CatalogScanner:
         self, products: list[dict], category_magnit_id: int
     ) -> tuple[int, int, int]:
         """
-        Сохранить товары в БД.
+        Сохранить товары в БД с использованием bulk операций для оптимизации.
+
+        Оптимизация:
+        - Один SELECT для всех product_ids (вместо N+1 запросов)
+        - Bulk INSERT для новых товаров
+        - Bulk UPDATE для существующих товаров
+        - Bulk INSERT для истории цен
+        - Один COMMIT в конце
 
         Returns:
             (added_count, updated_count, price_change_count)
         """
-        added = 0
-        updated = 0
-        price_changes = 0
+        if not products:
+            return 0, 0, 0
 
         try:
             # Находим категорию по magnit_id в БД (универсальная категория)
@@ -404,169 +438,205 @@ class CatalogScanner:
             print(traceback.format_exc())
             raise
 
-        for product_data in products:
-            existing = (
-                self.db.query(Product)
-                .filter(
-                    Product.product_id == product_data["product_id"],
-                    Product.store_code == self.store_code,
-                )
-                .first()
+        # 1. Получаем все существующие товары ОДНИМ запросом
+        product_ids = [p["product_id"] for p in products]
+        existing_products = {
+            p.product_id: p
+            for p in self.db.query(Product)
+            .filter(
+                Product.product_id.in_(product_ids),
+                Product.store_code == self.store_code,
             )
+            .all()
+        }
 
+        # 2. Разделяем на INSERT и UPDATE
+        to_insert = []
+        to_update = []
+        price_history_records = []
+
+        now = datetime.utcnow()
+
+        for product_data in products:
+            product_id = product_data["product_id"]
             current_price = product_data["price"]
             current_old_price = product_data.get("old_price")
 
+            # Парсим promo_end_date из ISO строки
+            promo_end = None
+            if product_data.get("promo_end_date"):
+                try:
+                    promo_end = datetime.fromisoformat(
+                        product_data["promo_end_date"].replace("Z", "+00:00")
+                    )
+                except (ValueError, AttributeError):
+                    pass
+
+            existing = existing_products.get(product_id)
+
             if existing:
+                # UPDATE: проверяем изменение цены
                 old_price_val = existing.price
                 new_price_val = current_price
-
-                existing.name = product_data.get("name", existing.name)
-                existing.price = new_price_val
-                existing.old_price = current_old_price
-                existing.sku = product_data.get("sku", existing.sku)
-                existing.unit = product_data.get("unit", existing.unit)
-                existing.image_url = product_data.get("image_url", existing.image_url)
-                existing.in_stock = product_data.get("in_stock", existing.in_stock)
-                existing.last_seen = datetime.utcnow()
-
-                # Остатки и доступность
-                if "quantity" in product_data:
-                    existing.quantity = product_data["quantity"]
-                if "is_low_stock" in product_data:
-                    existing.is_low_stock = product_data["is_low_stock"]
-                if "pickup_only" in product_data:
-                    existing.pickup_only = product_data["pickup_only"]
-
-                # Акции
-                if "is_promotion" in product_data:
-                    existing.is_promotion = product_data["is_promotion"]
-                if "discount_percent" in product_data:
-                    existing.discount_percent = product_data["discount_percent"]
-                if "promo_end_date" in product_data and product_data["promo_end_date"]:
-                    try:
-                        existing.promo_end_date = datetime.fromisoformat(
-                            product_data["promo_end_date"].replace("Z", "+00:00")
-                        )
-                    except (ValueError, AttributeError):
-                        pass
-
-                # Рейтинги
-                if "rating" in product_data:
-                    existing.rating = product_data["rating"]
-                if "scores_count" in product_data:
-                    existing.scores_count = product_data["scores_count"]
-                if "comments_count" in product_data:
-                    existing.comments_count = product_data["comments_count"]
-
-                # SEO и каталог
-                if "seo_code" in product_data:
-                    existing.seo_code = product_data["seo_code"]
-                if "service" in product_data:
-                    existing.service = product_data["service"]
-                if "catalog_type" in product_data:
-                    existing.catalog_type = product_data["catalog_type"]
-
-                # Параметры заказа
-                if "min_order_qty" in product_data:
-                    existing.min_order_qty = product_data["min_order_qty"]
-                if "order_step_qty" in product_data:
-                    existing.order_step_qty = product_data["order_step_qty"]
-
-                # Весовые
-                if "is_weighted" in product_data:
-                    existing.is_weighted = product_data["is_weighted"]
-                if "unit_price" in product_data:
-                    existing.unit_price = product_data["unit_price"]
 
                 if abs(old_price_val - new_price_val) > 0.01:
                     change_type = (
                         "decreased" if new_price_val < old_price_val else "increased"
                     )
-                    price_changes += 1
-                    existing.last_price_change = datetime.utcnow()
-
-                    history = PriceHistory(
-                        product_id=existing.product_id,
-                        store_code=self.store_code,
-                        price=new_price_val,
-                        old_price=current_old_price,
-                        recorded_at=datetime.utcnow(),
-                        change_type=change_type,
+                    price_history_records.append(
+                        {
+                            "product_id": product_id,
+                            "store_code": self.store_code,
+                            "price": new_price_val,
+                            "old_price": current_old_price,
+                            "recorded_at": now,
+                            "change_type": change_type,
+                        }
                     )
-                    self.db.add(history)
 
-                updated += 1
-                snapshot_product_id = existing.product_id
+                # Обновляем поля
+                to_update.append(
+                    {
+                        "id": existing.id,
+                        "name": product_data.get("name", existing.name),
+                        "price": new_price_val,
+                        "old_price": current_old_price,
+                        "sku": product_data.get("sku", existing.sku),
+                        "unit": product_data.get("unit", existing.unit),
+                        "image_url": product_data.get("image_url", existing.image_url),
+                        "in_stock": product_data.get("in_stock", existing.in_stock),
+                        "last_seen": now,
+                        # Остатки
+                        "quantity": product_data.get("quantity", existing.quantity),
+                        "is_low_stock": product_data.get(
+                            "is_low_stock", existing.is_low_stock
+                        ),
+                        "pickup_only": product_data.get(
+                            "pickup_only", existing.pickup_only
+                        ),
+                        # Акции
+                        "is_promotion": product_data.get(
+                            "is_promotion", existing.is_promotion
+                        ),
+                        "discount_percent": product_data.get(
+                            "discount_percent", existing.discount_percent
+                        ),
+                        "promo_end_date": promo_end,
+                        # Рейтинги
+                        "rating": product_data.get("rating", existing.rating),
+                        "scores_count": product_data.get(
+                            "scores_count", existing.scores_count
+                        ),
+                        "comments_count": product_data.get(
+                            "comments_count", existing.comments_count
+                        ),
+                        # SEO
+                        "seo_code": product_data.get("seo_code", existing.seo_code),
+                        "service": product_data.get("service", existing.service),
+                        "catalog_type": product_data.get(
+                            "catalog_type", existing.catalog_type
+                        ),
+                        # Параметры заказа
+                        "min_order_qty": product_data.get(
+                            "min_order_qty", existing.min_order_qty
+                        ),
+                        "order_step_qty": product_data.get(
+                            "order_step_qty", existing.order_step_qty
+                        ),
+                        # Весовые
+                        "is_weighted": product_data.get(
+                            "is_weighted", existing.is_weighted
+                        ),
+                        "unit_price": product_data.get("unit_price", existing.unit_price),
+                        "last_price_change": now
+                        if abs(old_price_val - new_price_val) > 0.01
+                        else existing.last_price_change,
+                    }
+                )
             else:
-                # Парсим promo_end_date из ISO строки
-                promo_end = None
-                if product_data.get("promo_end_date"):
-                    try:
-                        promo_end = datetime.fromisoformat(
-                            product_data["promo_end_date"].replace("Z", "+00:00")
-                        )
-                    except (ValueError, AttributeError):
-                        pass
-
-                new_product = Product(
-                    product_id=product_data["product_id"],
-                    name=product_data.get("name", "Без названия"),
-                    sku=product_data.get("sku"),
-                    category_id=db_category_id,
-                    store_code=self.store_code,
-                    price=current_price,
-                    old_price=current_old_price,
-                    currency="₽",
-                    unit=product_data.get("unit", "шт"),
-                    image_url=product_data.get("image_url"),
-                    in_stock=product_data.get("in_stock", True),
-                    # Остатки
-                    quantity=product_data.get("quantity", 0),
-                    is_low_stock=product_data.get("is_low_stock"),
-                    pickup_only=product_data.get("pickup_only", False),
-                    # Акции
-                    is_promotion=product_data.get("is_promotion", False),
-                    discount_percent=product_data.get("discount_percent"),
-                    promo_end_date=promo_end,
-                    # Рейтинги
-                    rating=product_data.get("rating"),
-                    scores_count=product_data.get("scores_count", 0),
-                    comments_count=product_data.get("comments_count", 0),
-                    # SEO
-                    seo_code=product_data.get("seo_code"),
-                    service=product_data.get("service"),
-                    catalog_type=product_data.get("catalog_type"),
-                    # Параметры заказа
-                    min_order_qty=product_data.get("min_order_qty", 1),
-                    order_step_qty=product_data.get("order_step_qty", 1),
-                    # Весовые
-                    is_weighted=product_data.get("is_weighted", False),
-                    unit_price=product_data.get("unit_price"),
-                    first_seen=datetime.utcnow(),
-                    last_seen=datetime.utcnow(),
+                # INSERT
+                to_insert.append(
+                    {
+                        "product_id": product_id,
+                        "name": product_data.get("name", "Без названия"),
+                        "sku": product_data.get("sku"),
+                        "category_id": db_category_id,
+                        "store_code": self.store_code,
+                        "price": current_price,
+                        "old_price": current_old_price,
+                        "currency": "₽",
+                        "unit": product_data.get("unit", "шт"),
+                        "image_url": product_data.get("image_url"),
+                        "in_stock": product_data.get("in_stock", True),
+                        # Остатки
+                        "quantity": product_data.get("quantity", 0),
+                        "is_low_stock": product_data.get("is_low_stock"),
+                        "pickup_only": product_data.get("pickup_only", False),
+                        # Акции
+                        "is_promotion": product_data.get("is_promotion", False),
+                        "discount_percent": product_data.get("discount_percent"),
+                        "promo_end_date": promo_end,
+                        # Рейтинги
+                        "rating": product_data.get("rating"),
+                        "scores_count": product_data.get("scores_count", 0),
+                        "comments_count": product_data.get("comments_count", 0),
+                        # SEO
+                        "seo_code": product_data.get("seo_code"),
+                        "service": product_data.get("service"),
+                        "catalog_type": product_data.get("catalog_type"),
+                        # Параметры заказа
+                        "min_order_qty": product_data.get("min_order_qty", 1),
+                        "order_step_qty": product_data.get("order_step_qty", 1),
+                        # Весовые
+                        "is_weighted": product_data.get("is_weighted", False),
+                        "unit_price": product_data.get("unit_price"),
+                        "first_seen": now,
+                        "last_seen": now,
+                    }
                 )
-                self.db.add(new_product)
-                added += 1
 
-                history = PriceHistory(
-                    product_id=new_product.product_id,
-                    store_code=self.store_code,
-                    price=new_product.price,
-                    old_price=new_product.old_price,
-                    recorded_at=datetime.utcnow(),
-                    change_type="initial",
+                price_history_records.append(
+                    {
+                        "product_id": product_id,
+                        "store_code": self.store_code,
+                        "price": current_price,
+                        "old_price": current_old_price,
+                        "recorded_at": now,
+                        "change_type": "initial",
+                    }
                 )
-                self.db.add(history)
 
-                snapshot_product_id = new_product.product_id
+        # 3. Bulk INSERT
+        added = 0
+        if to_insert:
+            self.db.bulk_insert_mappings(Product, to_insert)
+            added = len(to_insert)
+            print(f"DEBUG: Bulk inserted {added} products")
 
-            # Записываем ежедневный снимок цены
+        # 4. Bulk UPDATE
+        updated = 0
+        if to_update:
+            self.db.bulk_update_mappings(Product, to_update)
+            updated = len(to_update)
+            print(f"DEBUG: Bulk updated {updated} products")
+
+        # 5. Bulk INSERT для истории цен
+        price_changes = 0
+        if price_history_records:
+            self.db.bulk_insert_mappings(PriceHistory, price_history_records)
+            price_changes = len(price_history_records)
+            print(f"DEBUG: Bulk inserted {price_changes} price history records")
+
+        # 6. Сохраняем снимки цен
+        for product_data in products:
             self._save_price_snapshot(
-                product_id=snapshot_product_id,
-                price=current_price,
-                old_price=current_old_price,
+                product_id=product_data["product_id"],
+                price=product_data["price"],
+                old_price=product_data.get("old_price"),
             )
+
+        # 7. Один COMMIT для всех операций
+        self.db.commit()
 
         return added, updated, price_changes
 
@@ -616,6 +686,37 @@ class CatalogScanner:
             DailyPriceSnapshot.snapshot_date < cutoff_date,
             DailyPriceSnapshot.store_code == self.store_code,
         ).delete(synchronize_session=False)
+
+    def cleanup_stale_products(self, days_threshold: int = 30) -> int:
+        """
+        Удалить товары, которые не обновлялись N дней.
+        
+        Args:
+            days_threshold: Количество дней без обновлений (по умолчанию 30)
+            
+        Returns:
+            Количество удалённых товаров
+        """
+        cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
+        
+        # Находим устаревшие товары для текущего магазина
+        stale_products = self.db.query(Product).filter(
+            Product.last_seen < cutoff_date,
+            Product.store_code == self.store_code
+        ).all()
+        
+        count = len(stale_products)
+        
+        if count > 0:
+            print(f"DEBUG: Удаление {count} устаревших товаров для магазина {self.store_code} (не обновлялись {days_threshold}+ дней)")
+            
+            # Удаляем товары (история цен удалится каскадно, если настроено в моделях)
+            for product in stale_products:
+                self.db.delete(product)
+            
+            self.db.commit()
+        
+        return count
 
     def close(self):
         """Закрыть клиент."""

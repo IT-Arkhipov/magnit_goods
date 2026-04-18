@@ -132,7 +132,7 @@ def get_categories_tree(db: Session = Depends(get_db)):
         .all()
     )
 
-    def build_tree(category):
+    def build_tree(category, parent_id=None):
         children = (
             db.query(Category)
             .filter(Category.parent_id == category.id)
@@ -146,15 +146,16 @@ def get_categories_tree(db: Session = Depends(get_db)):
             "magnit_id": category.magnit_id,
             "is_tracked": category.is_tracked,
             "product_count": category.product_count,
+            "parent_id": parent_id,
             "children": [],
         }
         for child in children:
-            result["children"].append(build_tree(child))
+            result["children"].append(build_tree(child, category.id))
         return result
 
     result = []
     for cat in root_categories:
-        result.append(build_tree(cat))
+        result.append(build_tree(cat, None))
     return result
 
 
@@ -221,13 +222,21 @@ def update_categories_tracking(
     category_ids: list[int] = Body(..., embed=True),
     db: Session = Depends(get_db),
 ):
-    """Обновить отслеживание для списка категорий (включить выбранные, выключить остальные)."""
+    """Обновить отслеживание для списка категорий (только дочерние)."""
+    # Фильтруем - оставляем только дочерние категории (с parent_id)
+    child_ids = [cid for cid in category_ids if cid is not None]
+    actual_child_ids = db.query(Category.id).filter(
+        Category.id.in_(child_ids),
+        Category.parent_id != None
+    ).all()
+    actual_child_ids = [c.id for c in actual_child_ids]
+    
     # Сначала выключаем все
     db.query(Category).update({"is_tracked": False})
 
-    # Включаем выбранные
-    if category_ids:
-        db.query(Category).filter(Category.id.in_(category_ids)).update(
+    # Включаем только дочерние
+    if actual_child_ids:
+        db.query(Category).filter(Category.id.in_(actual_child_ids)).update(
             {"is_tracked": True}, synchronize_session=False
         )
 
@@ -237,7 +246,7 @@ def update_categories_tracking(
     return {
         "status": "success",
         "tracked_count": tracked_count,
-        "updated_ids": category_ids,
+        "updated_ids": actual_child_ids,
     }
 
 
@@ -423,15 +432,18 @@ def scan_all_stores(
     if not stores:
         raise HTTPException(status_code=400, detail="Нет магазинов в БД")
 
-    # Получаем отслеживаемые категории
-    tracked_cats = db.query(Category).filter(Category.is_tracked == True).all()  # noqa: E712
+    # Получаем отслеживаемые категории (только дочерние, не корневые)
+    tracked_cats = db.query(Category).filter(
+        Category.is_tracked == True,  # noqa: E712
+        Category.parent_id != None
+    ).all()
     if not tracked_cats:
-        raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий")
+        raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий (только дочерние)")
 
     cat_codes = [cat.magnit_id for cat in tracked_cats]
 
-    # Сохраняем список магазинов и категорий для фоновой задачи
-    store_codes_list = [(s.store_code, s.store_type, s.address) for s in stores]
+    # Сохраняем список магазинов для фоновой задачи
+    store_codes_list = [(s.store_code, s.full_address) for s in stores]
 
     # Создаём задание
     job = ScanJob(
@@ -447,7 +459,6 @@ def scan_all_stores(
     job_id = job.id
 
     def run_scan_all():
-        # Создаём новую сессию для фонового потока
         from src.server.database import SessionLocal as NewSession
 
         bg_db = NewSession()
@@ -466,24 +477,35 @@ def scan_all_stores(
             total_added = 0
             total_updated = 0
             total_stores = len(store_codes_list)
+            total_categories = len(cat_codes)
+            total_operations = total_stores * total_categories
+            current_operation = 0
 
-            for idx, (store_code, store_type, address) in enumerate(store_codes_list):
-                # Обновляем прогресс
-                progress_pct = int((idx / total_stores) * 100)
-                job_db.progress = progress_pct
-                job_db.progress_message = (
-                    f"Магазин {idx + 1}/{total_stores}: {store_code} ({store_type})"
-                )
+            for idx, (store_code, address) in enumerate(store_codes_list):
+                bg_db.expire_all()
+                job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+                if job_db and job_db.status == "cancelled":
+                    job_db.progress_message = "Отменено пользователем"
+                    bg_db.commit()
+                    return
+                
+                # Показать магазин ДО начала сканирования
+                job_db.progress_message = f"🏪 {store_code}: {address}<br>📁 Магазин {idx + 1}/{total_stores}"
                 bg_db.commit()
-
+                
                 try:
                     scanner = CatalogScanner(
-                        bg_db, store_code=store_code, job_id=job_id
+                        bg_db, store_code=store_code, address=address, job_id=job_id
                     )
                     result = scanner.scan_products(
                         category_ids=cat_codes, tracked_only=tracked_only
                     )
                     scanner.close()
+                    
+                    current_operation += total_categories
+                    progress_pct = int((current_operation / total_operations) * 100) if total_operations > 0 else 0
+                    job_db.progress = progress_pct
+                    bg_db.commit()
 
                     total_scanned += result.get("scanned", 0)
                     total_added += result.get("added", 0)
@@ -494,13 +516,14 @@ def scan_all_stores(
                     job_db.items_updated = total_updated
                     bg_db.commit()
                 except Exception as e:
-                    tb = traceback.format_exc()
                     print(f"ERROR scanning store {store_code}: {str(e)}")
-                    print(f"TRACEBACK:\n{tb}")
                     job_db.progress_message = f"Ошибка {store_code}: {str(e)}"
                     bg_db.commit()
 
-            # Завершение
+            job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+            if job_db and job_db.status == "cancelled":
+                return
+                
             job_db.status = "completed"
             job_db.finished_at = datetime.utcnow()
             job_db.progress = 100

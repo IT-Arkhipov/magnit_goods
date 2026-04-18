@@ -51,11 +51,14 @@ class MagnitAPIClient:
         self._last_request_time = 0
 
     def _rate_limit_wait(self):
-        """Пауза между запросами для соблюдения rate limiting."""
+        """Пауза между запросами для соблюдения rate limiting (случайная 0.1-0.5 сек)."""
         if self._last_request_time > 0:
             elapsed = time.time() - self._last_request_time
             if elapsed < self.rate_limit:
-                time.sleep(self.rate_limit - elapsed)
+                delay = self.rate_limit - elapsed
+                time.sleep(delay)
+        import random
+        time.sleep(random.uniform(0.1, 0.5))
         self._last_request_time = time.time()
 
     def search(
@@ -96,6 +99,7 @@ class MagnitAPIClient:
         url = f"{self.base_url}/webgate/v2/goods/search"
 
         # Строим payload с правильным форматом для API
+        s_type_code = API_STORE_TYPE_CODE.get(s_type, s_type)
         payload = {
             "sort": {
                 "order": "desc",
@@ -107,7 +111,7 @@ class MagnitAPIClient:
             },
             "includeAdultGoods": True,
             "storeCode": code,
-            "storeType": s_type,
+            "storeType": s_type_code,
             "catalogType": "1",
         }
 
@@ -298,6 +302,22 @@ STORE_TYPE_MAP = {
     "MM_MINI": "Мини",
 }
 
+# Обратный маппинг: UI-лейбл → API код
+REVERSE_STORE_TYPE_MAP = {v: k for k, v in STORE_TYPE_MAP.items()}
+
+# Маппинг для API запросов (лейбл → числовой код)
+API_STORE_TYPE_CODE = {
+    "Магнит": "1",
+    "Экстра": "6",
+    "М.Косметик": "3",
+    "Семейный": "5",
+    "Опт": "7",
+    "Моя цена": "4",
+    "Заряд": "8",
+    "Мигом": "9",
+    "Мини": "2",
+}
+
 ALL_STORE_TYPES = list(STORE_TYPE_MAP.keys())
 
 
@@ -340,11 +360,14 @@ class StoresAPI:
         self._last_request_time = 0
 
     def _rate_limit_wait(self):
-        """Пауза между запросами."""
+        """Пауза между запросами (случайная 0.1-0.5 сек)."""
         if self._last_request_time > 0:
             elapsed = time.time() - self._last_request_time
             if elapsed < self.rate_limit:
-                time.sleep(self.rate_limit - elapsed)
+                delay = self.rate_limit - elapsed
+                time.sleep(delay)
+        import random
+        time.sleep(random.uniform(0.1, 0.5))
         self._last_request_time = time.time()
 
     def search_stores(

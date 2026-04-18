@@ -230,6 +230,7 @@
              <button class="btn btn-info" onclick="fetchMagnitCategoryIds()">Обновить каталог</button>
              <button class="btn btn-success" onclick="saveSelectedCategories()">Сохранить выбор</button>
              <button class="btn btn-primary" id="scan-btn" onclick="startScanProducts()">Сканировать товары</button>
+              <button class="btn btn-danger" id="cancel-scan-btn" onclick="cancelScan()" style="display: none;">Остановить</button>
          </div>
      </div>
 
@@ -424,12 +425,15 @@ function toggleCategory(categoryId, checked) {
     const category = findCategory(categoriesData, categoryId);
     if (!category) return;
     
+    // Если это корневая категория (нет parent_id), не добавляем в selectedCategories
+    const isRoot = !category.parent_id;
+    
     if (checked) {
-        selectedCategories.add(categoryId);
+        if (!isRoot) selectedCategories.add(categoryId);
         // Выбираем все дочерние
         selectAllChildren(categoryId, true);
     } else {
-        selectedCategories.delete(categoryId);
+        if (!isRoot) selectedCategories.delete(categoryId);
         // Снимаем выбор со всех дочерних
         selectAllChildren(categoryId, false);
     }
@@ -571,7 +575,7 @@ function toggleSelectAll(checked) {
     if (checked) {
         function addAll(categories) {
             categories.forEach(cat => {
-                selectedCategories.add(cat.id);
+                if (cat.parent_id) selectedCategories.add(cat.id);  // Только дочерние
                 if (cat.children) addAll(cat.children);
             });
         }
@@ -604,7 +608,7 @@ function countAllCategories() {
     let count = 0;
     function countCats(categories) {
         categories.forEach(cat => {
-            count++;
+            if (cat.parent_id) count++;  // Только дочерние
             if (cat.children) countCats(cat.children);
         });
     }
@@ -671,6 +675,7 @@ async function startScanProducts() {
         }
 
         scanBtn.disabled = true;
+        document.getElementById('cancel-scan-btn').style.display = 'inline-block';
         scanStatus.innerHTML = `<div class="badge badge-info">Запуск сканирования ${stores.length} магазинов, ${trackedCategories.length} категорий...</div>`;
         scanProgress.style.display = 'block';
         progressBar.style.width = '0%';
@@ -692,17 +697,44 @@ async function startScanProducts() {
 
         const startResult = await response.json();
         const jobId = startResult.job_id;
+        currentJobId = jobId;
 
         // Polling статуса задания
-        let pollingInterval = setInterval(async () => {
+        pollingInterval = setInterval(async () => {
             try {
                 const jobResponse = await fetch(`/api/jobs/${jobId}`);
                 const job = await jobResponse.json();
 
                 // Обновляем прогресс-бар
                 progressBar.style.width = `${job.progress}%`;
+                progressBar.textContent = `${job.progress}%`;
                 progressPercent.textContent = `${job.progress}%`;
-                progressText.textContent = job.progress_message || 'Обработка...';
+                
+                // Проверка на отмену
+                console.log('Job status:', job.status, 'progress:', job.progress);
+                if (job.status === 'cancelled') {
+                    clearInterval(pollingInterval);
+                    scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+                    scanBtn.disabled = false;
+                    document.getElementById('cancel-scan-btn').style.display = 'none';
+                    scanProgress.style.display = 'none';
+                    currentJobId = null;
+                    return;
+                }
+                
+                // Детальный прогресс с иконками
+                let detailedProgress = job.progress_message || 'Обработка...';
+                if (job.items_scanned > 0) {
+                    detailedProgress += ` | 📦 ${job.items_scanned} товаров`;
+                }
+                if (job.items_added > 0) {
+                    detailedProgress += ` | ➕ ${job.items_added} новых`;
+                }
+                if (job.items_updated > 0) {
+                    detailedProgress += ` | 🔄 ${job.items_updated} обновлено`;
+                }
+                
+                progressText.textContent = detailedProgress;
 
                 if (job.status === 'completed') {
                     clearInterval(pollingInterval);
@@ -717,18 +749,32 @@ async function startScanProducts() {
                         Товаров обновлено: ${job.items_updated || 0}
                     `;
 
-                    scanStatus.innerHTML = `<div class="badge badge-success">${summary}</div>`;
+                    scanStatus.innerHTML = `<div class="badge badge-success" style="display: block; margin-bottom: 12px;">${summary}</div>`;
 
+                    // Скрыть кнопку остановки
+                    document.getElementById('cancel-scan-btn').style.display = 'none';
+
+                    // Кнопка для перехода к товарам
+                    const goToProductsBtn = document.createElement('button');
+                    goToProductsBtn.className = 'btn btn-primary';
+                    goToProductsBtn.textContent = 'Перейти к Товарам →';
+                    goToProductsBtn.onclick = () => window.location.href = '/products';
+                    scanStatus.appendChild(goToProductsBtn);
+                    
+                    // Скрыть результаты через 5 секунд
                     setTimeout(() => {
-                        scanBtn.disabled = false;
-                        scanProgress.style.display = 'none';
                         scanStatus.innerHTML = '';
-                    }, 10000);
+                        scanProgress.style.display = 'none';
+                    }, 5000);
+                    
+                    scanBtn.disabled = false;
+                    currentJobId = null;
                 } else if (job.status === 'failed') {
                     clearInterval(pollingInterval);
                     scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${job.error_message || 'Неизвестная ошибка'}</div>`;
                     scanBtn.disabled = false;
                     scanProgress.style.display = 'none';
+                    currentJobId = null;
                 }
                 // Если status === 'running' или 'pending' — продолжаем polling
             } catch (e) {
@@ -855,5 +901,69 @@ async function pollUpdateStatus(updateBtn) {
 window.addEventListener('DOMContentLoaded', async () => {
     await loadCategoriesTree();
 });
+
+// Остановка сканирования
+let currentJobId = null;
+let pollingInterval = null;
+
+function cancelScan() {
+    console.log('cancelScan called, currentJobId:', currentJobId);
+    if (currentJobId) {
+        fetch(`/api/jobs/${currentJobId}/cancel`, { method: 'POST' })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => {
+                        throw new Error(err.detail || 'Не удалось отменить');
+                    });
+                }
+                return response.json();
+            })
+            .then(() => {
+                console.log('Cancel API success, fetching final status...');
+                // Ещё один запрос для получения финального статуса
+                return fetch(`/api/jobs/${currentJobId}`);
+            })
+            .then(response => response.json())
+            .then(job => {
+                console.log('Final job status:', job.status);
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                const btn = document.getElementById('scan-btn');
+                const cancelBtn = document.getElementById('cancel-scan-btn');
+                const progressEl = document.getElementById('scan-progress');
+                const statusEl = document.getElementById('scan-status');
+                console.log('Elements:', btn, cancelBtn, progressEl, statusEl);
+                if (btn) btn.disabled = false;
+                if (cancelBtn) cancelBtn.style.display = 'none';
+                if (progressEl) progressEl.style.display = 'none';
+                if (statusEl) statusEl.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+                // Скрыть сообщение через 3 секунды
+                setTimeout(() => {
+                    if (statusEl) statusEl.innerHTML = '';
+                }, 3000);
+                currentJobId = null;
+            })
+            .catch(e => {
+                console.error('Ошибка отмены:', e);
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                }
+                scanBtn.disabled = false;
+                document.getElementById('cancel-scan-btn').style.display = 'none';
+                scanProgress.style.display = 'none';
+                scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+            });
+    } else {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+        }
+        scanBtn.disabled = false;
+        document.getElementById('cancel-scan-btn').style.display = 'none';
+        scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+        scanProgress.style.display = 'none';
+    }
+}
 </script>
 {% endblock %}

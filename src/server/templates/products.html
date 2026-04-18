@@ -5,7 +5,7 @@
 {% block content %}
 <!-- Панель выбора магазинов для сравнения (Фаза 1) -->
 <div class="card">
-    <h3>🛒 Сравнение товаров по магазинам</h3>
+    <h3>Сравнение товаров по магазинам</h3>
     <p style="color: #666; font-size: 14px; margin-bottom: 12px;">Выберите от 2 до 5 магазинов для сравнения цен на товары</p>
     
     <div style="overflow-x: auto; margin-bottom: 12px;">
@@ -13,7 +13,7 @@
             <thead>
                 <tr style="background: #f8f9fa;">
                     <th style="padding: 10px; border: 1px solid #ddd; vertical-align: middle; text-align: center;">
-                        <input type="checkbox" id="selectAllStores" onchange="toggleAllStores()" style="transform: scale(1.2);">
+                        <input type="checkbox" id="selectAllStores" onchange="toggleAllStores()">
                     </th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Тип</th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Город</th>
@@ -34,13 +34,71 @@
     </div>
 </div>
 
+<!-- Панель статистики -->
 <div class="card">
-    <h2>Товары</h2>
+    <h3>Статистика товаров</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px;">
+        <div class="stat-card">
+            <div class="stat-value" id="statTotal">-</div>
+            <div class="stat-label">Всего товаров</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statInStock">-</div>
+            <div class="stat-label">В наличии</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statDiscount">-</div>
+            <div class="stat-label">Со скидкой</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statPromo">-</div>
+            <div class="stat-label">Акции</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statLastUpdate">-</div>
+            <div class="stat-label">Обновлено</div>
+        </div>
+    </div>
+</div>
+
+<style>
+.stat-card {
+    background: #f8f9fa;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #2196f3;
+    margin-bottom: 4px;
+}
+.stat-label {
+    font-size: 12px;
+    color: #666;
+    text-transform: uppercase;
+}
+</style>
+
+<div class="card">
+    <h2>Фильтры и поиск товаров</h2>
 
     <div class="form-row">
         <div class="form-group">
-            <label>Код магазина</label>
-            <input type="text" id="storeCode" placeholder="Например: 12345" value="{{ store_code or '' }}">
+            <label>Магазин</label>
+            <select id="storeCode">
+                <option value="">Выберите магазин</option>
+                {% for store in stores %}
+                <option value="{{ store.store_code }}">{{ store.store_type }} - {{ store.full_address }}</option>
+                {% endfor %}
+            </select>
         </div>
         <div class="form-group">
             <label>Категория</label>
@@ -60,7 +118,34 @@
                 <option value="discount">По скидке</option>
             </select>
         </div>
-        <button class="btn btn-primary" onclick="loadProducts()">Загрузить</button>
+        <div class="form-group">
+            <label>Наличие</label>
+            <select id="stockFilter">
+                <option value="">Все</option>
+                <option value="in_stock">В наличии</option>
+                <option value="out_of_stock">Нет в наличии</option>
+                <option value="low_stock">Мало осталось</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Акции</label>
+            <select id="promoFilter">
+                <option value="">Все</option>
+                <option value="discount">Со скидкой</option>
+                <option value="promotion">Акции</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Цена от</label>
+            <input type="number" id="minPrice" placeholder="0" min="0">
+        </div>
+        <div class="form-group">
+            <label>Цена до</label>
+            <input type="number" id="maxPrice" placeholder="1000" min="0">
+        </div>
+        <div class="form-group" style="align-self: end;">
+            <button class="btn btn-primary" onclick="loadProducts()">Поиск</button>
+        </div>
     </div>
 </div>
 
@@ -95,8 +180,15 @@ async function loadProducts() {
     const search = document.getElementById('searchFilter').value;
     const sort = document.getElementById('sortFilter').value;
 
-    if (!storeCode) {
-        alert('Укажите код магазина');
+    // Получаем выбранные магазины для сравнения
+    const selectedStores = getSelectedStores();
+    
+    // Если нет выбранного магазина в поле, берём первый из выбранных для сравнения
+    const activeStoreCode = storeCode || (selectedStores.length > 0 ? selectedStores[0] : null);
+
+    if (!activeStoreCode) {
+        const listDiv = document.getElementById('products-list');
+        listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения или укажите код магазина</p>';
         return;
     }
 
@@ -104,7 +196,7 @@ async function loadProducts() {
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
     try {
-        let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=100`;
+        let url = `/api/products?store_code=${encodeURIComponent(activeStoreCode)}&sort_by=${sort}&limit=100`;
         if (category) url += `&category_id=${category}`;
         if (search) url += `&search=${encodeURIComponent(search)}`;
 
@@ -116,42 +208,98 @@ async function loadProducts() {
             return;
         }
 
+        // Группировка по категориям
+        const grouped = {};
+        products.forEach(p => {
+            const catId = p.category_id || 0;
+            const catName = p.category_name || 'Другое';
+            if (!grouped[catId]) {
+                grouped[catId] = { name: catName, products: [] };
+            }
+            grouped[catId].products.push(p);
+        });
+
+        // Сортировка категорий по имени
+        const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+
         let html = `
-            <table>
-                <thead>
-                    <tr>
-                        <th>Название</th>
-                        <th>Цена</th>
-                        <th>Старая цена</th>
-                        <th>Скидка</th>
-                        <th>Наличие</th>
-                        <th>Действия</th>
-                    </tr>
-                </thead>
-                <tbody>
+            <div style="margin-bottom: 16px;">
+                <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(true)">Развернуть все</button>
+                <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(false)">Свернуть все</button>
+                <span style="margin-left: 12px; color: #666;">Категорий: ${sortedCategories.length}, Товаров: ${products.length}</span>
+                ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
+            </div>
         `;
 
-        products.forEach(p => {
-            const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция до ${p.promo_discount ? p.promo_discount + '%' : ''}">🔥 Акция</span> ` : '';
-            const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
-            const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+        sortedCategories.forEach(([catId, catData], index) => {
+            const isExpanded = index === 0; // Первая категория развернута по умолчанию
+            html += `
+                <div class="category-accordion" style="margin-bottom: 8px;">
+                    <div class="category-header" onclick="toggleCategory('${catId}')" style="
+                        padding: 12px 16px;
+                        background: #f8f9fa;
+                        border: 1px solid #ddd;
+                        border-radius: 4px;
+                        cursor: pointer;
+                        display: flex;
+                        justify-content: space-between;
+                        align-items: center;
+                        font-weight: 500;
+                    ">
+                        <span>${escapeHtml(catData.name)} <span style="color: #666; font-weight: normal;">(${catData.products.length})</span></span>
+                        <span class="category-arrow" style="transition: transform 0.3s; transform: ${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                    </div>
+                    <div class="category-content" id="category-${catId}" style="
+                        display: ${isExpanded ? 'block' : 'none'};
+                        padding: 12px;
+                        background: #fff;
+                        border: 1px solid #ddd;
+                        border-top: none;
+                        border-radius: 0 0 4px 4px;
+                        overflow-x: auto;
+                    ">
+                        <table style="min-width: 600px;">
+                            <thead>
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Цена</th>
+                                    <th>Старая цена</th>
+                                    <th>Скидка</th>
+                                    <th>Наличие</th>
+                                    <th>Действия</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+            `;
+
+            catData.products.forEach(p => {
+                const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция до ${p.promo_discount ? p.promo_discount + '%' : ''}">🔥 Акция</span> ` : '';
+                const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
+                const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+
+                html += `
+                    <tr>
+                        <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
+                        <td><span class="price-current">${p.price} ₽</span></td>
+                        <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
+                        <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
+                        <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+                        <td>
+                            <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
+                            ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
+                        </td>
+                    </tr>
+                `;
+            });
 
             html += `
-                <tr>
-                    <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
-                    <td><span class="price-current">${p.price} ₽</span></td>
-                    <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
-                    <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
-                    <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-        <td>
-            <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
-            <button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>
-        </td>
-                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
             `;
         });
 
-        html += '</tbody></table>';
         listDiv.innerHTML = html;
     } catch (e) {
         listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
@@ -354,6 +502,26 @@ function closeCompareModal() {
     document.getElementById('compareModal').style.display = 'none';
 }
 
+// Аккордеон категорий
+function toggleCategory(catId) {
+    const content = document.getElementById(`category-${catId}`);
+    const header = content.previousElementSibling;
+    const arrow = header.querySelector('.category-arrow');
+    
+    const isExpanded = content.style.display === 'block';
+    content.style.display = isExpanded ? 'none' : 'block';
+    arrow.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+function toggleAllCategories(expand) {
+    document.querySelectorAll('.category-content').forEach(content => {
+        content.style.display = expand ? 'block' : 'none';
+    });
+    document.querySelectorAll('.category-arrow').forEach(arrow => {
+        arrow.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)';
+    });
+}
+
 // ============================================
 // Фаза 1: Панель выбора магазинов для сравнения
 // ============================================
@@ -367,7 +535,7 @@ async function loadStoresForComparison() {
     tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Загрузка списка магазинов...</td></tr>';
     
     try {
-        const response = await fetch('/api/stores?limit=100');
+        const response = await fetch('/api/stores?is_active=true&limit=100');
         allStores = await response.json();
         
         // Сортировка по Типу, затем по Адресу
@@ -395,7 +563,7 @@ async function loadStoresForComparison() {
             const isChecked = savedStores.includes(store.store_code);
             const storeType = store.store_type || store.type || '-';
             const city = store.city || '-';
-            const address = store.address || '-';
+            const address = store.full_address || '-';
             
             html += `
                 <tr>
@@ -490,11 +658,15 @@ function applyStoreComparison() {
     // Сохраняем в localStorage
     localStorage.setItem('compareStores', JSON.stringify(selected));
     
-    // Показываем сообщение
-    alert(`Выбрано магазинов: ${selected.join(', ')}. Загрузка товаров...`);
+    // Устанавливаем первый выбранный магазин в поле "Код магазина"
+    document.getElementById('storeCode').value = selected[0];
     
-    // Можно добавить автоматическую загрузку товаров
-    // loadProductsByStores(selected);
+    // Загружаем категории и товары
+    loadCategories();
+    loadProducts();
+    
+    // Показываем сообщение
+    alert(`Выбрано магазинов: ${selected.join(', ')}. Загружены товары для магазина: ${selected[0]}`);
 }
 
 // Очистка выбора
@@ -517,9 +689,296 @@ function getSelectedStores() {
 // Загрузка при загрузке страницы
 document.getElementById('storeCode').addEventListener('change', loadCategories);
 
-// Загружаем магазины при загрузке страницы
+// Загрузка магазинов при загрузке страницы
 document.addEventListener('DOMContentLoaded', () => {
     loadStoresForComparison();
+    
+    // Проверяем, есть ли сохранённые магазины для сравнения
+    const savedStores = getSelectedStores();
+    if (savedStores.length >= 2) {
+        // Ищем первый магазин с товарами
+        findFirstStoreWithProducts(savedStores).then(storeCode => {
+            if (storeCode) {
+                document.getElementById('storeCode').value = storeCode;
+                loadCategories();
+                loadProducts();
+            } else {
+                // Если нет магазинов с товарами, используем первый
+                document.getElementById('storeCode').value = savedStores[0];
+                loadCategories();
+                loadProducts();
+            }
+        });
+    } else {
+        // Автоматически загружаем товары при смене кода магазина
+        const storeCodeInput = document.getElementById('storeCode');
+        if (storeCodeInput.value) {
+            loadCategories();
+            loadProducts();
+        }
+        
+        storeCodeInput.addEventListener('change', () => {
+            loadCategories();
+            loadProducts();
+        });
+    }
+});
+
+// Поиск первого магазина с товарами
+async function findFirstStoreWithProducts(storeCodes) {
+    for (const code of storeCodes) {
+        try {
+            const response = await fetch(`/api/products?store_code=${encodeURIComponent(code)}&limit=1`);
+            const products = await response.json();
+            if (products.length > 0) {
+                return code;
+            }
+        } catch (e) {
+            console.warn(`Ошибка проверки магазина ${code}:`, e);
+        }
+    }
+    return null;
+}
+
+// ============================================
+// Новые функции для статистики и фильтров
+// ============================================
+
+// Загрузка статистики товаров
+async function loadProductStats() {
+    const storeCode = document.getElementById('storeCode').value;
+    let activeStoreCode = storeCode;
+    
+    if (!activeStoreCode) {
+        const selectedStores = getSelectedStores();
+        if (selectedStores.length === 0) return;
+        activeStoreCode = selectedStores[0];
+    }
+    
+    try {
+        const response = await fetch(`/api/products/stats?store_code=${encodeURIComponent(activeStoreCode)}`);
+        const stats = await response.json();
+        
+        document.getElementById('statTotal').textContent = stats.total;
+        document.getElementById('statInStock').textContent = stats.in_stock;
+        document.getElementById('statDiscount').textContent = stats.with_discount;
+        document.getElementById('statPromo').textContent = stats.with_promotion;
+        
+        if (stats.last_update) {
+            const date = new Date(stats.last_update);
+            const formatted = date.toLocaleString('ru-RU', {
+                day: '2-digit',
+                month: '2-digit',
+                hour: '2-digit',
+                minute: '2-digit'
+            });
+            document.getElementById('statLastUpdate').textContent = formatted;
+        } else {
+            document.getElementById('statLastUpdate').textContent = 'Нет данных';
+        }
+    } catch (e) {
+        console.error('Ошибка загрузки статистики:', e);
+    }
+}
+
+// Улучшенная функция loadProducts с поддержкой новых фильтров
+async function loadProductsEnhanced() {
+    const storeCode = document.getElementById('storeCode').value;
+    const category = document.getElementById('categoryFilter').value;
+    const search = document.getElementById('searchFilter').value;
+    const sort = document.getElementById('sortFilter').value;
+    const stockFilter = document.getElementById('stockFilter')?.value || '';
+    const promoFilter = document.getElementById('promoFilter')?.value || '';
+    const minPrice = document.getElementById('minPrice')?.value || '';
+    const maxPrice = document.getElementById('maxPrice')?.value || '';
+
+    const selectedStores = getSelectedStores();
+    const activeStoreCode = storeCode || (selectedStores.length > 0 ? selectedStores[0] : null);
+
+    if (!activeStoreCode) {
+        const listDiv = document.getElementById('products-list');
+        listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения или укажите код магазина</p>';
+        return;
+    }
+
+    const listDiv = document.getElementById('products-list');
+    listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
+
+    try {
+        let url = `/api/products?store_code=${encodeURIComponent(activeStoreCode)}&sort_by=${sort}&limit=500`;
+        if (category) url += `&category_id=${category}`;
+        if (search) url += `&search=${encodeURIComponent(search)}`;
+        if (minPrice) url += `&min_price=${minPrice}`;
+        if (maxPrice) url += `&max_price=${maxPrice}`;
+
+        const response = await fetch(url);
+        let products = await response.json();
+
+        // Клиентская фильтрация
+        if (stockFilter === 'in_stock') {
+            products = products.filter(p => p.in_stock);
+        } else if (stockFilter === 'out_of_stock') {
+            products = products.filter(p => !p.in_stock);
+        } else if (stockFilter === 'low_stock') {
+            products = products.filter(p => p.is_low_stock);
+        }
+
+        if (promoFilter === 'discount') {
+            products = products.filter(p => p.old_price && p.old_price > p.price);
+        } else if (promoFilter === 'promotion') {
+            products = products.filter(p => p.is_promotion);
+        }
+
+        if (products.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Товары не найдены</p>';
+            return;
+        }
+
+        // Используем существующую логику рендеринга
+        renderProductsList(products, selectedStores, listDiv);
+        
+        // Обновляем статистику после загрузки товаров
+        loadProductStats();
+        
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+// Вспомогательная функция для рендеринга списка товаров
+function renderProductsList(products, selectedStores, listDiv) {
+    // Группировка по категориям
+    const grouped = {};
+    products.forEach(p => {
+        const catId = p.category_id || 0;
+        const catName = p.category_name || 'Другое';
+        if (!grouped[catId]) {
+            grouped[catId] = { name: catName, products: [] };
+        }
+        grouped[catId].products.push(p);
+    });
+
+    const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+
+    let html = `
+        <div style="margin-bottom: 16px;">
+            <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(true)">Развернуть все</button>
+            <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(false)">Свернуть все</button>
+            <span style="margin-left: 12px; color: #666;">Категорий: ${sortedCategories.length}, Товаров: ${products.length}</span>
+            ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
+        </div>
+    `;
+
+    sortedCategories.forEach(([catId, catData], index) => {
+        const isExpanded = index === 0;
+        html += `
+            <div class="category-accordion" style="margin-bottom: 8px;">
+                <div class="category-header" onclick="toggleCategory('${catId}')" style="
+                    padding: 12px 16px;
+                    background: #f8f9fa;
+                    border: 1px solid #ddd;
+                    border-radius: 4px;
+                    cursor: pointer;
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    font-weight: 500;
+                ">
+                    <span>${escapeHtml(catData.name)} <span style="color: #666; font-weight: normal;">(${catData.products.length})</span></span>
+                    <span class="category-arrow" style="transition: transform 0.3s; transform: ${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                </div>
+                <div class="category-content" id="category-${catId}" style="
+                    display: ${isExpanded ? 'block' : 'none'};
+                    padding: 12px;
+                    background: #fff;
+                    border: 1px solid #ddd;
+                    border-top: none;
+                    border-radius: 0 0 4px 4px;
+                    overflow-x: auto;
+                ">
+                    <table style="min-width: 600px;">
+                        <thead>
+                            <tr>
+                                <th>Название</th>
+                                <th>Цена</th>
+                                <th>Старая цена</th>
+                                <th>Скидка</th>
+                                <th>Наличие</th>
+                                <th>Действия</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+        `;
+
+        catData.products.forEach(p => {
+            const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция">🔥 Акция</span> ` : '';
+            const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
+            const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+
+            html += `
+                <tr>
+                    <td><strong>${escapeHtml(p.name)}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
+                    <td><span class="price-current">${p.price} ₽</span></td>
+                    <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
+                    <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
+                    <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+                    <td>
+                        <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
+                        <button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', '${escapeHtml(p.name)}')">Сравнить</button>
+                    </td>
+                </tr>
+            `;
+        });
+
+        html += `
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        `;
+    });
+
+    listDiv.innerHTML = html;
+}
+
+// Debounce helper для фильтров цены
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Переопределяем loadProducts для использования улучшенной версии
+const originalLoadProducts = loadProducts;
+loadProducts = loadProductsEnhanced;
+
+// Обработчики для новых фильтров
+document.addEventListener('DOMContentLoaded', () => {
+    // Загружаем статистику при загрузке
+    setTimeout(loadProductStats, 1000);
+    
+    // Обновляем статистику каждые 30 секунд
+    setInterval(loadProductStats, 30000);
+    
+    // Обработчики для фильтров
+    const stockFilterEl = document.getElementById('stockFilter');
+    const promoFilterEl = document.getElementById('promoFilter');
+    const minPriceEl = document.getElementById('minPrice');
+    const maxPriceEl = document.getElementById('maxPrice');
+    
+    if (stockFilterEl) stockFilterEl.addEventListener('change', loadProducts);
+    if (promoFilterEl) promoFilterEl.addEventListener('change', loadProducts);
+    
+    // Debounce для фильтров цены
+    const debouncedLoad = debounce(loadProducts, 500);
+    if (minPriceEl) minPriceEl.addEventListener('input', debouncedLoad);
+    if (maxPriceEl) maxPriceEl.addEventListener('input', debouncedLoad);
 });
 </script>
 {% endblock %}

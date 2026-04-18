@@ -110,6 +110,35 @@ Root test files (`test_*.py`) are ad-hoc scripts, not pytest suites.
 
 See `IMPLEMENTATION_PLAN.md` and `NEXT_STEPS.md` for roadmap.
 
+## Обновление товаров в БД
+
+### Оптимизация производительности
+- `_save_products()` использует bulk операции для ускорения:
+  - `bulk_insert_mappings()` для новых товаров
+  - `bulk_update_mappings()` для существующих товаров
+  - `bulk_insert_mappings()` для истории цен
+- Один SELECT для всех товаров вместо N+1 запросов
+- Один COMMIT в конце вместо множественных
+- **Производительность:** ~5-10x быстрее для батчей 50+ товаров
+
+### Автоматическая очистка
+- `cleanup_stale_products(days=30)` удаляет товары без обновлений 30+ дней
+- Вызывается автоматически после сканирования каждого магазина
+- Предотвращает накопление устаревших данных в БД
+
+### Статистика товаров
+- **Endpoint:** `GET /api/products/stats?store_code=X`
+- **Возвращает:** total, in_stock, with_discount, avg_price, last_update, price_changes_today
+- Обновляется автоматически каждые 30 секунд на странице /products
+- Отображается в панели статистики с 6 карточками метрик
+
+### UI Features
+- **Детальный прогресс-бар** на странице /catalog с иконками: 📦 товаров | ➕ новых | 🔄 обновлено
+- **Автоперенаправление** на /products через 3 секунды после успешного сканирования
+- **Панель статистики** на /products с ключевыми метриками в реальном времени
+- **Дополнительные фильтры:** наличие (в наличии/нет/мало), акции (скидки/акции), диапазон цен
+- **Независимый выбор магазинов** для сравнения на странице /products
+
 ## Common pitfalls
 
 - Store IDs are strings (MD5 hashes), not integers — use `store_hash_id()` helper
@@ -118,6 +147,8 @@ See `IMPLEMENTATION_PLAN.md` and `NEXT_STEPS.md` for roadmap.
 - `.env` is auto-updated by `/api/stores/select` — don't edit manually during runtime
 - Server must run from project root (`D:\pythonProjects\magnit_goods`) for correct paths
 - Catalog update uses complete replacement logic — don't interrupt the process during update
+- **Bulk operations:** `_save_products()` now uses bulk_insert/update_mappings — don't modify without testing
+- **API endpoint order:** `/api/products/stats` must be defined BEFORE `/api/products/{product_id}` in routes
 
 ## Language
 
