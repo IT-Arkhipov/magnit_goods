@@ -1139,7 +1139,7 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
             const otherStoreHeaders = selectedStores.length > 1 
                 ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
                     const storeName = storeInfoMap[s] || s;  // Fallback на код магазина если нет информации
-                    return `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
+                    return `<th style="padding:8px;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
                 }).join('')
                 : '';
             
@@ -1330,8 +1330,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
              const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
              html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
-         });
-        html += '</tbody></table>';
+         html += '</tbody></table>';
     });
     listDiv.innerHTML = html;
 }
