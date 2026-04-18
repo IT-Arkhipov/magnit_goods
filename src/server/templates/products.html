@@ -1214,6 +1214,15 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
                          const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
                          const allEqual = allPrices.length > 0 && allPrices.every(p => p === minPrice);
                          
+                         // Вычисляем процент экономии для минимальной цены
+                         let savingsPercent = null;
+                         if (!allEqual && minPrice !== null && allPrices.length > 1) {
+                             // Средняя цена всех цен кроме минимальной
+                             const otherPrices = allPrices.filter(p => p !== minPrice);
+                             const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                             savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+                         }
+                         
                          const otherStoreCells = selectedStores.length > 1 
                              ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
                                  const priceInfo = productPrices[storeCode];
@@ -1222,18 +1231,20 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
                                  }
                                  // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
                                  const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                                 return `<td style="text-align:center;font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
+                                 const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                                 return `<td style="text-align:center;font-weight:bold;color:${color};">${priceInfo.price} ₽${savingsText}</td>`;
                              }).join('')
                              : '';
                          
                          // Цена активного магазина: если все равные - черный, иначе выделяем минимальную красным
                          const activePriceColor = allEqual ? '#000' : (p.price === minPrice ? '#e31e25' : '#000');
+                         const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
                          
                          html += `
                              <tr>
                                  <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
                                  ${otherStoreCells}
-                                 <td><span style="font-size:15px;font-weight:bold;color:${activePriceColor};">${p.price} ₽</span></td>
+                                 <td><span style="font-size:15px;font-weight:bold;color:${activePriceColor};">${p.price} ₽${activeSavingsText}</span></td>
                                  <td>${p.old_price ? `<span style="text-decoration:line-through;color:#999;font-size:12px;">${p.old_price} ₽</span>` : '-'}</td>
                                  <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
                                  <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
@@ -1296,16 +1307,29 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
              const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
              const allEqual = allPrices.length > 0 && allPrices.every(p => p === minPrice);
              
+             // Вычисляем процент экономии для минимальной цены
+             let savingsPercent = null;
+             if (!allEqual && minPrice !== null && allPrices.length > 1) {
+                 // Средняя цена всех цен кроме минимальной
+                 const otherPrices = allPrices.filter(p => p !== minPrice);
+                 const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                 savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+             }
+             
              const otherStoreCells = selectedStores.length > 1 
                  ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
                      const priceInfo = productPrices[storeCode];
                      if (!priceInfo) return '<td style="color:#999;">-</td>';
                      // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
                      const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                     return `<td style="font-weight:bold;color:${color};">${priceInfo.price} ₽</td>`;
+                     const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                     return `<td style="font-weight:bold;color:${color};">${priceInfo.price} ₽${savingsText}</td>`;
                  }).join('')
                  : '';
-             html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+             
+             const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+             html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+         });
          });
         html += '</tbody></table>';
     });
