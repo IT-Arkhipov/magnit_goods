@@ -13,7 +13,7 @@
             <thead>
                 <tr style="background: #f8f9fa;">
                     <th style="padding: 10px; border: 1px solid #ddd; vertical-align: middle; text-align: center;">
-                        <input type="checkbox" id="selectAllStores" onchange="toggleAllStores()">
+                        <input type="checkbox" id="selectAllStores" onchange="toggleAllStores()" style="margin:0;">
                     </th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Тип</th>
                     <th style="padding: 10px; border: 1px solid #ddd;">Город</th>
@@ -85,6 +85,9 @@
     font-size: 14px;
     color: #666;
     text-transform: uppercase;
+}
+#selectAllStores, #storesTableBody input[type="checkbox"] {
+    cursor: pointer;
 }
 </style>
 
@@ -619,10 +622,28 @@ function toggleAllStores() {
     const selectAll = document.getElementById('selectAllStores');
     const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
     
-    checkboxes.forEach(cb => {
-        cb.checked = selectAll.checked;
-        updateStoreRowStyle(cb);
-    });
+    // Если уже выбраны все (checked), то снимаем
+    // Если выбраны не все (unchecked или indeterminate), то выбираем все (до 5)
+    if (selectAll.checked || selectAll.indeterminate) {
+        // Выбираем все (до 5 магазинов)
+        let selected = 0;
+        checkboxes.forEach(cb => {
+            if (selected < MAX_COMPARE_STORES) {
+                cb.checked = true;
+                updateStoreRowStyle(cb);
+                selected++;
+            } else {
+                cb.checked = false;
+                updateStoreRowStyle(cb);
+            }
+        });
+    } else {
+        // Снимаем все
+        checkboxes.forEach(cb => {
+            cb.checked = false;
+            updateStoreRowStyle(cb);
+        });
+    }
     
     updateSelectedStoresCount();
 }
@@ -638,9 +659,15 @@ function updateSelectedStoresCount() {
     
     badge.textContent = `Выбрано: ${count} / ${total}`;
     
-    // Снимаем выделение с "выбрать все", если не все выбраны
     if (selectAll) {
-        selectAll.checked = count === total && total > 0;
+        // Устанавливаем неопределённое состояние при частичном выборе
+        if (count > 0 && count < total) {
+            selectAll.indeterminate = true;
+            selectAll.checked = false;
+        } else {
+            selectAll.indeterminate = false;
+            selectAll.checked = count === total && total > 0;
+        }
         
         // Блокируем выбор больше 5 магазинов
         checkboxes.forEach(cb => {
