@@ -747,16 +747,39 @@ async function findFirstStoreWithProducts(storeCodes) {
 // Загрузка статистики товаров
 async function loadProductStats() {
     const storeCode = document.getElementById('storeCode').value;
-    let activeStoreCode = storeCode;
     
-    if (!activeStoreCode) {
-        const selectedStores = getSelectedStores();
-        if (selectedStores.length === 0) return;
-        activeStoreCode = selectedStores[0];
+    // Если магазин не выбран, показываем общую статистику по всем магазинам
+    if (!storeCode) {
+        try {
+            const response = await fetch('/api/products/stats');
+            const stats = await response.json();
+            
+            document.getElementById('statTotal').textContent = stats.total;
+            document.getElementById('statInStock').textContent = stats.in_stock;
+            document.getElementById('statDiscount').textContent = stats.with_discount;
+            document.getElementById('statPromo').textContent = stats.with_promotion;
+            
+            if (stats.last_update) {
+                const date = new Date(stats.last_update);
+                const formatted = date.toLocaleString('ru-RU', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    hour: '2-digit',
+                    minute: '2-digit'
+                });
+                document.getElementById('statLastUpdate').textContent = formatted;
+            } else {
+                document.getElementById('statLastUpdate').textContent = 'Нет данных';
+            }
+        } catch (e) {
+            console.error('Ошибка загрузки статистики:', e);
+        }
+        return;
     }
     
+    // Если магазин выбран - показываем статистику по этому магазину
     try {
-        const response = await fetch(`/api/products/stats?store_code=${encodeURIComponent(activeStoreCode)}`);
+        const response = await fetch(`/api/products/stats?store_code=${encodeURIComponent(storeCode)}`);
         const stats = await response.json();
         
         document.getElementById('statTotal').textContent = stats.total;
@@ -845,100 +868,199 @@ async function loadProductsEnhanced() {
     }
 }
 
-// Вспомогательная функция для рендеринга списка товаров
+// Вспомогательная функция для рендеринга списка товаров в иерархическом виде
 function renderProductsList(products, selectedStores, listDiv) {
-    // Группировка по категориям
+    // Загружаем дерево категорий для иерархии
+    fetch('/api/categories/tree')
+        .then(r => r.json())
+        .then(categoriesTree => {
+            // Построение карты категорий
+            const categoryMap = {};
+            categoriesTree.forEach(root => {
+                categoryMap[root.id] = { ...root, children: root.children || [] };
+                if (root.children) {
+                    root.children.forEach(child => {
+                        categoryMap[child.id] = { ...child, parent: root.id };
+                    });
+                }
+            });
+            
+            // Группировка по родительской категории
+            const grouped = {};
+            products.forEach(p => {
+                const catId = p.category_id || 0;
+                const cat = categoryMap[catId];
+                const parentId = cat && cat.parent ? cat.parent : (catId || 0);
+                const parentName = cat && cat.parent ? categoryMap[cat.parent]?.name : (p.category_name || 'Другое');
+                
+                if (!grouped[parentId]) {
+                    grouped[parentId] = { name: parentName, children: {} };
+                }
+                // Группируем по дочерней категории внутри родителя
+                const childName = p.category_name || 'Другое';
+                if (!grouped[parentId].children[catId]) {
+                    grouped[parentId].children[catId] = { name: childName, products: [] };
+                }
+                grouped[parentId].children[catId].products.push(p);
+            });
+            
+            const sortedParents = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+            
+            let html = `
+                <div style="margin-bottom: 16px;">
+                    <button class="btn btn-sm btn-secondary" onclick="toggleAllProducts(true)">Развернуть все</button>
+                    <button class="btn btn-sm btn-secondary" onclick="toggleAllProducts(false)">Свернуть все</button>
+                    <span style="margin-left: 12px; color: #666;">Категорий: ${sortedParents.length}, Товаров: ${products.length}</span>
+                    ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
+                </div>
+            `;
+            
+            sortedParents.forEach(([parentId, parentData], pIndex) => {
+                const parentExpanded = pIndex === 0;
+                const childCats = Object.entries(parentData.children).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+                const totalProducts = childCats.reduce((sum, [,c]) => sum + c.products.length, 0);
+                
+                html += `
+                    <div class="parent-category" style="margin-bottom: 12px;">
+                        <div class="parent-header" onclick="toggleParentCategory('${parentId}')" style="
+                            padding: 14px 18px;
+                            background: #2c3e50;
+                            color: white;
+                            border-radius: 6px;
+                            cursor: pointer;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            font-weight: 600;
+                            font-size: 15px;
+                        ">
+                            <span>${escapeHtml(parentData.name)} <span style="opacity: 0.8; font-weight: normal;">(${totalProducts} товаров)</span></span>
+                            <span class="parent-arrow" style="transition: transform 0.3s; transform: ${parentExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                        </div>
+                        <div class="parent-content" id="parent-${parentId}" style="display: ${parentExpanded ? 'block' : 'none'}; padding: 12px 0;">
+                `;
+                
+                childCats.forEach(([catId, catData], cIndex) => {
+                    const catExpanded = cIndex === 0;
+                    html += `
+                        <div class="child-category" style="margin-bottom: 8px; margin-left: 20px;">
+                            <div class="child-header" onclick="toggleChildCategory('${parentId}-${catId}')" style="
+                                padding: 10px 14px;
+                                background: #3498db;
+                                color: white;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                font-weight: 500;
+                            ">
+                                <span>${escapeHtml(catData.name)} <span style="opacity: 0.9; font-weight: normal;">(${catData.products.length})</span></span>
+                                <span class="child-arrow" style="transition: transform 0.3s; transform: ${catExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                            </div>
+                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 10px; background: #f8f9fa; border-radius: 0 0 4px 4px; overflow-x: auto;">
+                                <table style="min-width: 600px;">
+                                    <thead>
+                                        <tr>
+                                            <th>Название</th>
+                                            <th>Цена</th>
+                                            <th>Старая</th>
+                                            <th>Скидка</th>
+                                            <th>Наличие</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                    catData.products.forEach(p => {
+                        const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция">🔥</span> ` : '';
+                        html += `
+                            <tr>
+                                <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
+                                <td><span class="price-current">${p.price} ₽</span></td>
+                                <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
+                                <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : '-'}</td>
+                                <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+                            </tr>
+                        `;
+                    });
+                    
+                    html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listDiv.innerHTML = html;
+        })
+        .catch(err => {
+            // Fallback - простой список без иерархии
+            renderSimpleList(products, selectedStores, listDiv);
+        });
+}
+
+// Простой fallback - без иерархии
+function renderSimpleList(products, selectedStores, listDiv) {
     const grouped = {};
     products.forEach(p => {
         const catId = p.category_id || 0;
         const catName = p.category_name || 'Другое';
-        if (!grouped[catId]) {
-            grouped[catId] = { name: catName, products: [] };
-        }
+        if (!grouped[catId]) grouped[catId] = { name: catName, products: [] };
         grouped[catId].products.push(p);
     });
-
-    const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
-
-    let html = `
-        <div style="margin-bottom: 16px;">
-            <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(true)">Развернуть все</button>
-            <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(false)">Свернуть все</button>
-            <span style="margin-left: 12px; color: #666;">Категорий: ${sortedCategories.length}, Товаров: ${products.length}</span>
-            ${selectedStores.length > 1 ? `<span style="margin-left: 12px; color: #666; font-size: 13px;">🛒 Сравнение с: ${selectedStores.length} магазинами</span>` : ''}
-        </div>
-    `;
-
-    sortedCategories.forEach(([catId, catData], index) => {
-        const isExpanded = index === 0;
-        html += `
-            <div class="category-accordion" style="margin-bottom: 8px;">
-                <div class="category-header" onclick="toggleCategory('${catId}')" style="
-                    padding: 12px 16px;
-                    background: #f8f9fa;
-                    border: 1px solid #ddd;
-                    border-radius: 4px;
-                    cursor: pointer;
-                    display: flex;
-                    justify-content: space-between;
-                    align-items: center;
-                    font-weight: 500;
-                ">
-                    <span>${escapeHtml(catData.name)} <span style="color: #666; font-weight: normal;">(${catData.products.length})</span></span>
-                    <span class="category-arrow" style="transition: transform 0.3s; transform: ${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
-                </div>
-                <div class="category-content" id="category-${catId}" style="
-                    display: ${isExpanded ? 'block' : 'none'};
-                    padding: 12px;
-                    background: #fff;
-                    border: 1px solid #ddd;
-                    border-top: none;
-                    border-radius: 0 0 4px 4px;
-                    overflow-x: auto;
-                ">
-                    <table style="min-width: 600px;">
-                        <thead>
-                            <tr>
-                                <th>Название</th>
-                                <th>Цена</th>
-                                <th>Старая цена</th>
-                                <th>Скидка</th>
-                                <th>Наличие</th>
-                                <th>Действия</th>
-                            </tr>
-                        </thead>
-                        <tbody>
-        `;
-
+    const sorted = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+    let html = `<div style="margin-bottom: 16px;">Категорий: ${sorted.length}, Товаров: ${products.length}</div>`;
+    sorted.forEach(([catId, catData]) => {
+        html += `<h4>${escapeHtml(catData.name)} (${catData.products.length})</h4>`;
+        html += '<table><thead><tr><th>Название</th><th>Цена</th><th>Скидка</th><th>Наличие</th></tr></thead><tbody>';
         catData.products.forEach(p => {
-            const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция">🔥 Акция</span> ` : '';
-            const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
-            const qtyBadge = p.quantity !== undefined ? `<span style="font-size:11px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
-
-            html += `
-                <tr>
-                    <td><strong>${escapeHtml(p.name)}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
-                    <td><span class="price-current">${p.price} ₽</span></td>
-                    <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
-                    <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
-                    <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-                    <td>
-                        <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
-                        <button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', '${escapeHtml(p.name)}')">Сравнить</button>
-                    </td>
-                </tr>
-            `;
+            html += `<tr><td>${escapeHtml(p.name)}</td><td>${p.price} ₽</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
         });
-
-        html += `
-                        </tbody>
-                    </table>
-                </div>
-            </div>
-        `;
+        html += '</tbody></table>';
     });
-
     listDiv.innerHTML = html;
+}
+
+// Переключение родительской категории
+function toggleParentCategory(id) {
+    const el = document.getElementById('parent-' + id);
+    const arrow = el.previousElementSibling.querySelector('.parent-arrow');
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        arrow.style.transform = 'rotate(90deg)';
+    } else {
+        el.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// Переключение дочерней категории
+function toggleChildCategory(id) {
+    const el = document.getElementById('child-' + id);
+    const arrow = el.previousElementSibling.querySelector('.child-arrow');
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        arrow.style.transform = 'rotate(90deg)';
+    } else {
+        el.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// Развернуть/свернуть все
+function toggleAllProducts(expand) {
+    document.querySelectorAll('.parent-content').forEach(el => el.style.display = expand ? 'block' : 'none');
+    document.querySelectorAll('.child-content').forEach(el => el.style.display = expand ? 'block' : 'none');
+    document.querySelectorAll('.parent-arrow').forEach(el => el.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)');
+    document.querySelectorAll('.child-arrow').forEach(el => el.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)');
 }
 
 // Debounce helper для фильтров цены

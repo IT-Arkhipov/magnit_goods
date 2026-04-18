@@ -45,13 +45,12 @@ class CatalogScanner:
             else None
         )
 
-    def _update_job_progress(self, progress: int, message: str):
-        """Обновить прогресс задания."""
+    def _update_job_progress(self, message: str):
+        """Обновить прогресс задания (только message, progress обновляется в catalog.py)."""
         if self.job_id:
-            update_dict = {"progress_message": message}
-            if progress >= 0:
-                update_dict["progress"] = progress
-            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(update_dict)
+            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(
+                {"progress_message": message}
+            )
             self.db.commit()
 
     def scan_categories(self) -> dict:
@@ -72,7 +71,7 @@ class CatalogScanner:
             raise ValueError("store_code не указан")
 
         if self.job_id:
-            self._update_job_progress(5, "Получение списка корневых категорий из БД...")
+            self._update_job_progress("Получение списка корневых категорий из БД...")
 
         # Получаем все отслеживаемые корневые категории из БД
         root_categories = (
@@ -83,12 +82,12 @@ class CatalogScanner:
 
         if not root_categories:
             if self.job_id:
-                self._update_job_progress(10, "Нет отслеживаемых корневых категорий")
+                self._update_job_progress("Нет отслеживаемых корневых категорий")
             return {"scanned": 0, "added": 0, "updated": 0, "deleted": 0}
 
         if self.job_id:
             self._update_job_progress(
-                10, f"Найдено {len(root_categories)} корневых категорий, обновление..."
+                f"Найдено {len(root_categories)} корневых категорий, обновление..."
             )
 
         added = 0
@@ -164,9 +163,7 @@ class CatalogScanner:
                 total_processed += 1
 
                 if self.job_id:
-                    progress = 10 + int(((i + 1) / len(root_categories)) * 10)
                     self._update_job_progress(
-                        progress,
                         f"Обновлено {root_cat.name}: +{added} ~{updated} -{deleted}",
                     )
 
@@ -181,7 +178,7 @@ class CatalogScanner:
         }
 
         if self.job_id:
-            self._update_job_progress(20, f"Категории синхронизированы: {total_processed}")
+            self._update_job_progress(f"Категории синхронизированы: {total_processed}")
 
         return result
 
@@ -254,7 +251,7 @@ class CatalogScanner:
 
         if self.job_id:
             self._update_job_progress(
-                25, f"Сканирование товаров из {len(category_ids)} категорий..."
+                f"Сканирование товаров из {len(category_ids)} категорий..."
             )
 
         total_added = 0
@@ -276,7 +273,7 @@ class CatalogScanner:
                 cat = self.db.query(Category).filter(Category.magnit_id == cat_magnit_id).first()
                 cat_name = cat.name if cat else f"ID:{cat_magnit_id}"
                 clean_address = (self.address or "").replace("\n", " ").replace("\r", " ").strip()
-                self._update_job_progress(-1, f"{self.store_type}: {clean_address} | 📁 {cat_name}")
+                self._update_job_progress(f"{self.store_type}: {clean_address} | 📁 {cat_name}")
 
             offset = 0
             has_more = True
@@ -342,7 +339,7 @@ class CatalogScanner:
                     if "invalid_service_pair" in err_msg or "service not found" in err_msg:
                         msg = f"⚠️ Категория {cat_name} недоступна для {self.store_type}"
                         if self.job_id:
-                            self._update_job_progress(progress_base, msg)
+                            self._update_job_progress(msg)
                         print(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
                     else:
                         print(
@@ -393,9 +390,9 @@ class CatalogScanner:
         }
 
         if self.job_id:
-            self._update_job_progress(95, f"Товары сохранены: {total_scanned} шт.")
+            self._update_job_progress(f"Товары сохранены: {total_scanned} шт.")
             if deleted > 0:
-                self._update_job_progress(98, f"Удалено устаревших товаров: {deleted}")
+                self._update_job_progress(f"Удалено устаревших товаров: {deleted}")
 
         return result
 

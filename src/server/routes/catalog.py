@@ -263,7 +263,8 @@ def list_products(
     db: Session = Depends(get_db),
 ):
     """Список товаров с фильтрацией и сортировкой."""
-    query = db.query(Product)
+    from sqlalchemy.orm import joinedload
+    query = db.query(Product).options(joinedload(Product.category))
     if store_code:
         query = query.filter(Product.store_code == store_code)
     if category_id:
@@ -306,6 +307,9 @@ def list_products(
                 "in_stock": p.in_stock,
                 "category_id": p.category_id,
                 "store_code": p.store_code,
+                # Категория с информацией о родителе
+                "category_name": p.category.name if p.category else None,
+                "category_parent_id": p.category.parent_id if p.category else None,
                 # Остатки
                 "quantity": p.quantity,
                 "is_low_stock": p.is_low_stock,
@@ -326,6 +330,32 @@ def list_products(
             }
         )
     return result
+
+
+@router.get("/products/stats")
+def get_products_stats(
+    store_code: Optional[str] = Query(None),
+    db: Session = Depends(get_db),
+):
+    """Статистика товаров."""
+    query = db.query(Product)
+    if store_code:
+        query = query.filter(Product.store_code == store_code)
+    
+    total = query.count()
+    in_stock = query.filter(Product.in_stock == True).count()  # noqa: E712
+    with_discount = query.filter(Product.old_price.isnot(None)).count()
+    with_promotion = query.filter(Product.is_promotion == True).count()
+    
+    last_update = query.order_by(Product.last_seen.desc()).first()
+    
+    return {
+        "total": total,
+        "in_stock": in_stock,
+        "with_discount": with_discount,
+        "with_promotion": with_promotion,
+        "last_update": last_update.last_seen.isoformat() if last_update and last_update.last_seen else None,
+    }
 
 
 @router.get("/products/{product_id}", response_model=dict)
@@ -497,19 +527,25 @@ def scan_all_stores(
                     scanner = CatalogScanner(
                         bg_db, store_code=store_code, address=address, job_id=job_id
                     )
-                    result = scanner.scan_products(
-                        category_ids=cat_codes, tracked_only=tracked_only
-                    )
-                    scanner.close()
                     
-                    current_operation += total_categories
-                    progress_pct = int((current_operation / total_operations) * 100) if total_operations > 0 else 0
-                    job_db.progress = progress_pct
-                    bg_db.commit()
-
-                    total_scanned += result.get("scanned", 0)
-                    total_added += result.get("added", 0)
-                    total_updated += result.get("updated", 0)
+                    # Сканируем по одной категории за раз для обновления прогресса
+                    for cat_idx, cat_code in enumerate(cat_codes):
+                        result = scanner.scan_products(
+                            category_ids=[cat_code], tracked_only=tracked_only
+                        )
+                        
+                        # После каждой категории обновляем прогресс
+                        current_operation += 1
+                        progress_pct = int((current_operation / total_operations) * 100) if total_operations > 0 else 0
+                        job_db.progress = progress_pct
+                        job_db.progress_message = f"🏪 {store_code}: {address[:30]}...<br>📁 Категория {current_operation}/{total_operations}"
+                        bg_db.commit()
+                        
+                        total_scanned += result.get("scanned", 0)
+                        total_added += result.get("added", 0)
+                        total_updated += result.get("updated", 0)
+                    
+                    scanner.close()
 
                     job_db.items_scanned = total_scanned
                     job_db.items_added = total_added

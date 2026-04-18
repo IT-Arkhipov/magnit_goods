@@ -81,8 +81,11 @@ class Product(Base):
     product_id = Column(Integer, nullable=False)
     name = Column(String, nullable=False)
     sku = Column(String, nullable=True)
-    category_id = Column(Integer, nullable=True, index=True)
+    category_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
     store_code = Column(String, nullable=False, index=True)
+    
+    # Relationships
+    category = relationship("Category", backref="products")
 
     price = Column(Float, nullable=False, index=True)
     old_price = Column(Float, nullable=True)

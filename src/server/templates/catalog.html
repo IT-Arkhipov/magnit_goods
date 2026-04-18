@@ -656,6 +656,23 @@ async function startScanProducts() {
     const progressPercent = document.getElementById('progress-percent');
 
     try {
+        // Сначала сохраняем текущий выбор категорий
+        scanStatus.innerHTML = '<div class="badge badge-info">Сохранение выбора категорий...</div>';
+        
+        const saveResponse = await fetch('/api/categories/update-tracking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category_ids: Array.from(selectedCategories) })
+        });
+        const saveResult = await saveResponse.json();
+        
+        if (saveResult.status !== 'success') {
+            scanStatus.innerHTML = '<div class="badge badge-danger">Ошибка сохранения категорий</div>';
+            return;
+        }
+        
+        scanStatus.innerHTML = `<div class="badge badge-success">Сохранено ${saveResult.tracked_count} категорий. Запуск сканирования...</div>`;
+        
         // Проверяем, есть ли отслеживаемые категории
         const trackedResponse = await fetch('/api/categories?tracked=true');
         const trackedCategories = await trackedResponse.json();
