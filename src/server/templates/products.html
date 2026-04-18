@@ -851,22 +851,51 @@ document.addEventListener('DOMContentLoaded', () => {
     // Проверяем, есть ли сохранённые магазины для сравнения
     const savedStores = getSelectedStores();
     if (savedStores.length >= 1) {
-        // Обновляем dropdown - показываем только выбранные магазины
-        populateStoreDropdown(savedStores);
-        
-        // Ищем первый магазин с товарами
-        findFirstStoreWithProducts(savedStores).then(storeCode => {
-            if (storeCode) {
-                document.getElementById('storeCode').value = storeCode;
-                loadCategories();
-                loadProducts();
-            } else {
-                // Если нет магазинов с товарами, используем первый
-                document.getElementById('storeCode').value = savedStores[0];
-                loadCategories();
-                loadProducts();
-            }
-        });
+        // Валидируем сохранённые магазины - проверяем, существуют ли они в БД
+        fetch('/api/stores')
+            .then(r => r.json())
+            .then(allStores => {
+                const validStoreCodes = new Set(allStores.map(s => s.store_code));
+                const validSavedStores = savedStores.filter(code => validStoreCodes.has(code));
+                
+                if (validSavedStores.length === 0) {
+                    // Если нет валидных магазинов, очищаем localStorage
+                    localStorage.removeItem('compareStores');
+                    // Загружаем товары для текущего магазина
+                    const storeCodeInput = document.getElementById('storeCode');
+                    if (storeCodeInput.value) {
+                        loadCategories();
+                        loadProducts();
+                    }
+                } else if (validSavedStores.length < savedStores.length) {
+                    // Если некоторые магазины невалидны, обновляем localStorage
+                    localStorage.setItem('compareStores', JSON.stringify(validSavedStores));
+                    // Обновляем dropdown и загружаем товары
+                    populateStoreDropdown(validSavedStores);
+                    findFirstStoreWithProducts(validSavedStores).then(storeCode => {
+                        if (storeCode) {
+                            document.getElementById('storeCode').value = storeCode;
+                            loadCategories();
+                            loadProducts();
+                        }
+                    });
+                } else {
+                    // Все магазины валидны
+                    populateStoreDropdown(validSavedStores);
+                    findFirstStoreWithProducts(validSavedStores).then(storeCode => {
+                        if (storeCode) {
+                            document.getElementById('storeCode').value = storeCode;
+                            loadCategories();
+                            loadProducts();
+                        }
+                    });
+                }
+            })
+            .catch(err => {
+                console.error('Ошибка валидации магазинов:', err);
+                // При ошибке очищаем localStorage
+                localStorage.removeItem('compareStores');
+            });
     } else {
         // Автоматически загружаем товары при смене кода магазина
         const storeCodeInput = document.getElementById('storeCode');
@@ -1107,15 +1136,12 @@ function renderProductsList(products, selectedStores, activeStoreCode, otherStor
             `;
             
             // Заголовки колонок для цен других магазинов
-            console.log('DEBUG renderProductsList: selectedStores =', selectedStores, 'activeStoreCode =', activeStoreCode);
-            console.log('DEBUG renderProductsList: storeInfoMap =', storeInfoMap);
             const otherStoreHeaders = selectedStores.length > 1 
                 ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
                     const storeName = storeInfoMap[s] || s;  // Fallback на код магазина если нет информации
                     return `<th style="padding:8px;border:1px solid #ddd;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
                 }).join('')
                 : '';
-            console.log('DEBUG renderProductsList: otherStoreHeaders =', otherStoreHeaders);
             
             sortedParents.forEach(([parentId, parentData], pIndex) => {
                 const parentExpanded = pIndex === 0;
