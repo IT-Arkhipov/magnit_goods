@@ -6,7 +6,7 @@
 <!-- Панель выбора магазинов для сравнения (Фаза 1) -->
 <div class="card">
     <h2>Сравнение товаров по магазинам</h2>
-    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите магазины для просмотра и сравнения цен на товары</p>
+    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите не более 5 магазинов для просмотра и сравнения цен на товары</p>
     
     <div style="overflow-x: auto; margin-bottom: 12px;">
         <table id="storesTable" style="width: 100%; border-collapse: collapse;">
@@ -746,11 +746,15 @@ function applyStoreComparison() {
     loadCategories();
     loadProducts();
     
-    // Показываем сообщение
-    const msg = selected.length === 1 
-        ? `Выбран магазин: ${selected[0]}`
-        : `Выбрано магазинов: ${selected.length}`;
-    alert(msg);
+    // Раскрываем/сворачиваем категории в зависимости от выбора экономии
+    const savingsFilter = document.getElementById('savingsFilter')?.value;
+    if (savingsFilter && savingsFilter !== '') {
+        // Раскрываем все категории если выбран процент экономии
+        setTimeout(expandAllCategories, 500);
+    } else {
+        // Сворачиваем все, кроме первой, если выбрано "-"
+        setTimeout(collapseAllButFirst, 500);
+    }
 }
 
 // Очистка выбора
@@ -1203,11 +1207,11 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                  return `<td style="text-align:center;color:#999;">-</td>`;
                              }
                               // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                              const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                              const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                              const savingsFontSize = getSavingsFontSize(savingsPercent);
-                              const savingsStyle = savingsText ? `font-size:${savingsFontSize};` : '';
-                              return `<td style="text-align:center;font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
+                               const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                               const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                               const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                               const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                               return `<td style="text-align:center;font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
                          }).join('');
                          
                          html += `
@@ -1286,12 +1290,12 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                  ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
                      const priceInfo = productPrices[storeCode];
                      if (!priceInfo) return '<td style="color:#999;">-</td>';
-                      // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                      const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                      const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                      const savingsFontSize = getSavingsFontSize(savingsPercent);
-                      const savingsStyle = savingsText ? `font-size:${savingsFontSize};` : '';
-                      return `<td style="font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
+                       // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                       const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                       const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                       const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                       const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                       return `<td style="font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
                  }).join('')
                  : '';
              
@@ -1337,6 +1341,36 @@ function toggleAllProducts(expand) {
     document.querySelectorAll('.child-arrow').forEach(el => el.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)');
 }
 
+// Свернуть все категории, кроме первой
+function collapseAllButFirst() {
+    const parentContents = document.querySelectorAll('.parent-content');
+    const parentArrows = document.querySelectorAll('.parent-arrow');
+    const childContents = document.querySelectorAll('.child-content');
+    const childArrows = document.querySelectorAll('.child-arrow');
+    
+    // Сворачиваем все родительские категории, кроме первой
+    parentContents.forEach((el, index) => {
+        if (index === 0) {
+            el.style.display = 'block';
+            parentArrows[index].style.transform = 'rotate(90deg)';
+        } else {
+            el.style.display = 'none';
+            parentArrows[index].style.transform = 'rotate(0deg)';
+        }
+    });
+    
+    // Сворачиваем все дочерние категории, кроме первой в первой родительской
+    childContents.forEach((el, index) => {
+        if (index === 0) {
+            el.style.display = 'block';
+            childArrows[index].style.transform = 'rotate(90deg)';
+        } else {
+            el.style.display = 'none';
+            childArrows[index].style.transform = 'rotate(0deg)';
+        }
+    });
+}
+
 // Debounce helper для фильтров цены
 function debounce(func, wait) {
     let timeout;
@@ -1352,11 +1386,10 @@ function debounce(func, wait) {
 
 // Расчёт размера шрифта для процента экономии
 function getSavingsFontSize(savingsPercent) {
-    if (!savingsPercent) return '11px';
-    // Увеличение на 1px за каждые 10%: 10% -> +1, 20% -> +2, 30% -> +3 и т.д.
-    const fontSizeIncrease = Math.round(savingsPercent / 10);
-    const baseFontSize = 11; // базовый размер шрифта
-    return `${baseFontSize + fontSizeIncrease}px`;
+    if (!savingsPercent) return '0px';
+    // Увеличение на 1px за каждый целый десяток процента: 10% -> +1, 15% -> +1, 20% -> +2, 23% -> +2 и т.д.
+    const fontSizeIncrease = Math.floor(savingsPercent / 10);
+    return `${fontSizeIncrease}px`;
 }
 
 // Раскрытие всех категорий
@@ -1406,16 +1439,46 @@ document.addEventListener('DOMContentLoaded', () => {
     
     if (stockFilterEl) stockFilterEl.addEventListener('change', loadProducts);
     if (promoFilterEl) promoFilterEl.addEventListener('change', loadProducts);
-    if (savingsFilterEl) savingsFilterEl.addEventListener('change', () => {
-        loadProducts();
-        // Раскрываем все категории при выборе процента экономии
-        setTimeout(expandAllCategories, 500);
-    });
+    if (savingsFilterEl) {
+        // Восстанавливаем сохранённый процент экономии
+        const savedSavings = localStorage.getItem('savingsFilter');
+        if (savedSavings) {
+            savingsFilterEl.value = savedSavings;
+        }
+        
+        savingsFilterEl.addEventListener('change', () => {
+            // Сохраняем выбранный процент в localStorage
+            localStorage.setItem('savingsFilter', savingsFilterEl.value);
+            loadProducts();
+            // Раскрываем все категории если выбран процент, иначе сворачиваем
+            if (savingsFilterEl.value !== '') {
+                setTimeout(expandAllCategories, 1000);
+            } else {
+                setTimeout(collapseAllButFirst, 1000);
+            }
+        });
+    }
     
     // Debounce для фильтров цены
     const debouncedLoad = debounce(loadProducts, 500);
     if (minPriceEl) minPriceEl.addEventListener('input', debouncedLoad);
     if (maxPriceEl) maxPriceEl.addEventListener('input', debouncedLoad);
+    
+    // Применяем сохранённый процент экономии при загрузке страницы
+    const savedSavings = localStorage.getItem('savingsFilter');
+    if (savedSavings && savingsFilterEl) {
+        savingsFilterEl.value = savedSavings;
+        // Загружаем товары с применённым фильтром
+        setTimeout(() => {
+            loadProducts();
+            // Раскрываем категории если выбран процент (не "-")
+            if (savedSavings !== '') {
+                setTimeout(expandAllCategories, 1000);
+            } else {
+                setTimeout(collapseAllButFirst, 1000);
+            }
+        }, 100);
+    }
 });
 </script>
 {% endblock %}

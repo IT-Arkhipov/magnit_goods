@@ -378,8 +378,8 @@ class CatalogScanner:
 
         self.db.commit()
 
-        # Удаляем устаревшие товары (30+ дней без обновлений)
-        deleted = self.cleanup_stale_products(days_threshold=30)
+        # Удаляем устаревшие товары (7+ дней без обновлений)
+        deleted = self.cleanup_stale_products(days_threshold=7)
 
         result = {
             "scanned": total_scanned,
@@ -684,7 +684,7 @@ class CatalogScanner:
             DailyPriceSnapshot.store_code == self.store_code,
         ).delete(synchronize_session=False)
 
-    def cleanup_stale_products(self, days_threshold: int = 30) -> int:
+    def cleanup_stale_products(self, days_threshold: int = 7) -> int:
         """
         Удалить товары, которые не обновлялись N дней.
         
