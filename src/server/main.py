@@ -1,5 +1,5 @@
-from fastapi import FastAPI, Request, Depends
-from starlette.responses import HTMLResponse, FileResponse
+from fastapi import FastAPI, Request, Depends, Query, BackgroundTasks
+from starlette.responses import HTMLResponse, FileResponse, RedirectResponse
 from starlette.templating import Jinja2Templates, _TemplateResponse as TemplateResponse
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
@@ -176,6 +176,21 @@ def migrate_fill_shop_type():
 
 migrate_fill_shop_type()
 
+# === Миграция: добавление поля last_scan_found в таблицу products ===
+def migrate_add_last_scan_found():
+    """Добавить поле last_scan_found в таблицу products (однократно)."""
+    inspector = inspect(engine)
+    cols = [c["name"] for c in inspector.get_columns("products")]
+    
+    if "last_scan_found" not in cols:
+        print("Миграция: добавление поля last_scan_found в таблицу products...", flush=True)
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE products ADD COLUMN last_scan_found DATETIME"))
+            conn.commit()
+        print("Поле last_scan_found добавлено в таблицу products", flush=True)
+
+migrate_add_last_scan_found()
+
 # === Очистка зависших заданий от предыдущего запуска ===
 from src.server.routes.stores import _mark_all_running_failed_on_startup
 
@@ -319,6 +334,40 @@ async def create_store_htmx(
         name="stores_table.html",
         context={"request": request, "stores": stores_list},
     )
+
+
+@app.get("/redirect-to-product")
+async def redirect_to_product(
+    url: str = Query(...),
+    shop_code: str = Query(...),
+    x_shop_type: str = Query(...),
+):
+    """Промежуточный редирект для установки cookies перед переходом на magnit.ru"""
+    response = RedirectResponse(url=url)
+    response.set_cookie("shopCode", shop_code, max_age=3600, path="/")
+    response.set_cookie("x_shop_type", x_shop_type, max_age=3600, path="/")
+    return response
+
+
+@app.get("/open-product-in-browser")
+async def open_product_in_browser(
+    product_url: str = Query(...),
+    store_code: str = Query(...),
+    store_type: str = Query(...),
+    background_tasks: BackgroundTasks = None,
+):
+    """Открыть товар в браузере с автоматическим выбором магазина через Playwright"""
+    from src.server.services.product_opener import open_product_with_store
+    
+    # Запускаем в фоне, чтобы не блокировать ответ
+    import threading
+    thread = threading.Thread(
+        target=open_product_with_store,
+        args=(product_url, store_code, store_type)
+    )
+    thread.start()
+    
+    return {"status": "opening", "message": "Открываем товар в браузере..."}
 
 
 if __name__ == "__main__":

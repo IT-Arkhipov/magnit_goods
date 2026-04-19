@@ -265,6 +265,8 @@ def list_products(
 ):
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
+    from datetime import datetime, timedelta
+    
     query = db.query(Product).options(joinedload(Product.category))
     if store_code:
         query = query.filter(Product.store_code == store_code)
@@ -280,6 +282,13 @@ def list_products(
         query = query.filter(Product.price >= min_price)
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
+    
+    # Фильтруем товары, которые не были найдены при последнем сканировании
+    # Показываем только товары, обновленные в течение последнего часа
+    if store_code:
+        from datetime import datetime, timedelta
+        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
+        query = query.filter(Product.last_seen >= one_hour_ago)
 
     if sort_by == "price":
         query = query.order_by(Product.price.asc())

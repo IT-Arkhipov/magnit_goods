@@ -203,7 +203,7 @@ class MagnitAPIClient:
 
             # Цена — конвертируем из копеек в рубли
             current_price = item.get("price")
-            if current_price and current_price > 1000:
+            if current_price and current_price >= 100:
                 current_price = current_price / 100
 
             # Акция/скидка
@@ -213,7 +213,7 @@ class MagnitAPIClient:
             discount_percent = promotion.get("discountPercent")
             promo_end_date = promotion.get("endDate")  # ISO строка
 
-            if old_price_raw and old_price_raw > 1000:
+            if old_price_raw and old_price_raw >= 100:
                 old_price_raw = old_price_raw / 100
 
             # Рейтинги
@@ -231,7 +231,7 @@ class MagnitAPIClient:
             weighted = item.get("weighted", {})
             is_weighted = weighted.get("isWeighted", False)
             unit_price = weighted.get("unitPrice")
-            if unit_price and unit_price > 1000:
+            if unit_price and unit_price >= 100:
                 unit_price = unit_price / 100
 
             # Первая картинка из gallery

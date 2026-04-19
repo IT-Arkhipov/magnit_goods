@@ -247,6 +247,25 @@
 </div>
 
 <script>
+// Маппинг числовых кодов типов магазинов на API коды
+const SHOP_TYPE_TO_API_CODE = {
+    1: "MM",        // Магнит
+    2: "MM_MINI",   // Мини
+    3: "DG",        // М.Косметик
+    5: "GM",        // Семейный
+    6: "ME",        // Экстра
+    7: "MO",        // Опт
+    8: "ZARYAD",    // Заряд
+    9: "MC",        // Моя цена
+};
+
+// Функция для открытия ссылки на товар
+function openProductLink(url, storeCode, shopType) {
+    // Просто открываем ссылку напрямую
+    // Пользователь сам выберет магазин на сайте Магнита
+    window.open(url, '_blank');
+}
+
 async function loadProducts() {
     const storeCode = document.getElementById('storeCode').value;
     const category = document.getElementById('categoryFilter').value;
@@ -1178,9 +1197,9 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             const sortedParents = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
             
             let html = `
-                <div style="margin-bottom: 12px; font-size: 14px; color: #666;">
-                    Категорий: ${sortedParents.length}, Товаров: ${products.length}
-                    ${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}
+                <div style="margin-bottom: 12px; font-size: 14px; color: #666; display: flex; align-items: center; gap: 16px;">
+                    <span>Категорий: ${sortedParents.length}, Товаров: ${products.length}${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}</span>
+                    <button class="btn btn-sm btn-secondary" onclick="expandAllCategories()" style="margin: 0;">Раскрыть все</button>
                 </div>
             `;
             
@@ -1289,25 +1308,21 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
-                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span><div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                                // Создаем ссылку на товар в Магните
+                                const seoCode = priceInfo.seo_code;
+                                const shopType = priceInfo.shop_type;
+                                const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+                                const priceLink = productUrl 
+                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
+                                    : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
+                                
+                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                           }).join('');
                          
                           html += `
                               <tr>
                                   <td class="product-name-cell">
-                                      ${(() => {
-                                          const priceInfo = productPrices[selectedStores[0]];
-                                          const shopType = priceInfo?.shop_type;
-                                          const seoCode = priceInfo?.seo_code;
-                                          const storeCode = selectedStores[0];
-                                          
-                                          if (seoCode && shopType && storeCode) {
-                                              const url = `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}`;
-                                              return `<a href="${url}" target="_blank" style="text-decoration: none; color: inherit;"><strong>${escapeHtml(p.name)}</strong></a>`;
-                                          } else {
-                                              return `<strong>${escapeHtml(p.name)}</strong>`;
-                                          }
-                                      })()}
+                                      <strong>${escapeHtml(p.name)}</strong>
                                       ${promoBadge}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}
                                   </td>
                                   ${storeCells}
@@ -1389,12 +1404,20 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                         const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
                         const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
                         
-                        // Информация для tooltip
-                        const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
-                        const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
-                        const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
-                        
-                        return `<td style="font-weight:bold;color:${color};" class="price-cell"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span><div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                         // Информация для tooltip
+                         const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                          const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                          const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                          
+                          // Создаем ссылку на товар в Магните
+                          const seoCode = priceInfo.seo_code;
+                          const shopType = priceInfo.shop_type;
+                          const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+                          const priceLink = productUrl 
+                              ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
+                              : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
+                          
+                          return `<td style="font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                   }).join('')
                   : '';
              
@@ -1403,10 +1426,11 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
               const activePriceInfo = productPrices[activeStoreCode];
               const activeShopType = activePriceInfo?.shop_type;
               const activeSeoCode = activePriceInfo?.seo_code;
-              const productLink = activeSeoCode && activeShopType && activeStoreCode 
-                  ? `<a href="https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}" target="_blank" style="text-decoration: none; color: inherit;"><strong>${escapeHtml(p.name)}</strong></a>`
-                  : `<strong>${escapeHtml(p.name)}</strong>`;
-              html += `<tr><td class="product-name-cell">${productLink}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}` : null;
+              const activePriceLink = activeProductUrl 
+                  ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeStoreCode}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
+                  : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
+              html += `<tr><td class="product-name-cell"><strong>${escapeHtml(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
          html += '</tbody></table>';
     });

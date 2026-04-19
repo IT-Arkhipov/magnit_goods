@@ -126,6 +126,7 @@ class Product(Base):
     first_seen = Column(DateTime, default=datetime.utcnow)
     last_seen = Column(DateTime, default=datetime.utcnow)
     last_price_change = Column(DateTime, nullable=True)
+    last_scan_found = Column(DateTime, nullable=True)  # Дата последнего сканирования, когда товар был найден
 
 
 class PriceHistory(Base):
