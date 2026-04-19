@@ -1,165 +1,159 @@
-# AGENTS.md
+# magnit_goods
 
-Agent instructions for the magnit_goods project — a FastAPI web server for tracking Magnit retail store prices.
+FastAPI-сервер для мониторинга цен в магазинах "Магнит". Сканирует каталог товаров, отслеживает цены, уведомляет об акциях.
 
-## Running the server
+## Запуск
 
 ```bash
-# From project root
+cd D:\pythonProjects\magnit_goods
 python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-Server runs on http://localhost:8000. Do NOT use `npm run dev` or similar — this is a Python project.
-
-## Environment setup
-
-Copy `.env.example` to `.env` and set:
-- `STORE_CODE` — Magnit store code (e.g., "992104")
-- `STORE_TYPE` — Store type (e.g., "Мини")
-- `GOODS_URL` — API endpoint (default: https://magnit.ru/webgate/v1/goods)
-
-The server updates `.env` automatically when user selects a store via `/api/stores/select`.
-
-## Database
-
-SQLite at `src/data/magnit.db` (gitignored). Tables auto-created on startup via `init_db()` in `main.py`.
-
-**Migration quirks:**
-- `migrate_store_ids()` runs on startup — converts integer IDs to MD5 hash strings (12 chars)
-- `migrate_categories()` runs on startup — updates category table structure if needed
-- Store IDs are `MD5(store_code|store_type|full_address)[:12]`, NOT auto-increment integers
-
-## Project structure
-
-```
-src/
-├── server/
-│   ├── main.py              # FastAPI app, migrations, page routes
-│   ├── database.py          # SQLAlchemy engine, session, init_db()
-│   ├── models.py            # Store, Category, Product, PriceHistory, ScanJob
-│   ├── schemas.py           # Pydantic request/response models
-│   ├── scheduler.py         # APScheduler for price updates
-│   ├── routes/              # API endpoints
-│   │   ├── stores.py        # Store CRUD, scan, select
-│   │   ├── catalog.py       # Categories, products (full replacement update)
-│   │   ├── prices.py        # Price history, alerts
-│   │   └── jobs.py          # Background job status
-│   ├── services/
-│   │   ├── magnit_api.py    # MagnitAPIClient (rate limit: 0.5s)
-│   │   ├── catalog_scanner.py
-│   │   ├── catalog_updater.py  # Catalog update service (replace_all_categories)
-│   │   ├── price_tracker.py
-│   │   └── notifications.py
-│   └── templates/           # Jinja2 HTML
-└── data/
-    ├── magnit.db            # SQLite database
-    └── categories.json      # Root categories definition (14 items)
-```
-
-## API rate limiting
-
-`MagnitAPIClient` enforces 0.5s delay between requests to avoid rate limits. Do NOT remove `_rate_limit_wait()` calls.
-
-## Store scanning workflow
-
-Two-step process:
-1. `POST /api/stores/preview` — search by address, return results with checkboxes (no DB save)
-2. `POST /api/stores/add-selected` — save selected stores to DB
-
-Deduplication by `store_code`. Existing stores shown as "(уже в базе)" in preview.
-
-## Category tracking
-
-80 categories in DB (14 root + 66 subcategories). Hierarchical tree with parent-child sync:
-- Selecting parent → auto-selects all children
-- Partial selection → parent shows indeterminate state
-- State persists in `categories.is_tracked` column
-
-Load categories: run `src/server/services/load_catalog_from_json.py` (one-time setup).
-
-**Catalog update logic:**
-- Button "Обновить каталог" performs complete category replacement
-- First fetches all categories from Magnit API, then clears DB and repopulates
-- Preserves `is_tracked` settings for categories with matching `magnit_id`
-- If API fails, DB remains unchanged (error displayed to user)
-
-## Background jobs
-
-`ScanJob` model tracks async operations. Status: `pending`, `running`, `completed`, `failed`.
-
-**Important:** On server restart, `_mark_all_running_failed_on_startup()` marks all running jobs as failed (prevents stale state).
-
-## Testing
-
-No test framework configured. Use manual testing via:
 - Swagger UI: http://localhost:8000/docs
-- Web pages: `/`, `/catalog`, `/products`, `/deals`, `/jobs`
+- Главная: http://localhost:8000
 
-Root test files (`test_*.py`) are ad-hoc scripts, not pytest suites.
+## Архитектура
 
-## Development status (2026-04-17)
+```
+src/server/
+├── main.py           # Точка входа, миграции при старте, роуты страниц
+├── database.py       # SQLAlchemy engine, session, init_db()
+├── models.py        # Store, Category, Product, PriceHistory, ScanJob, DailyPriceSnapshot
+├── schemas.py      # Pydantic модели
+├── scheduler.py    # APScheduler (ежедневные задания)
+├── routes/
+│   ├── stores.py   # /api/stores — CRUD, preview, add, select
+│   ├── catalog.py # /api/categories, /api/products*, /api/products/{id}
+│   ├── prices.py  # /api/prices/history, /api/prices/alerts
+│   └── jobs.py    # /api/jobs — статус фоновых задач
+├── services/
+│   ├── magnit_api.py      # MagnitAPIClient (rate limit 0.5s)
+│   ├── catalog_scanner.py # Сканирование категорий/товаров
+│   ├── catalog_updater.py # Обновление каталога (replace_all)
+│   ├── price_tracker.py   # Отслеживание цен, алерты
+│   ├── notifications.py   # Уведомления
+│   └── load_catalog_from_json.py # Загрузка корневых категорий
+└── templates/     # Jinja2 HTML-шаблоны
+    ├── base.html, stores.html, catalog.html, products.html, deals.html, jobs.html
+```
 
-**Completed:**
-- Module 1: Stores (CRUD, scan, select) — 100%
-- Module 2: Catalog (categories, UI) — 100%
+## База данных
 
-**In progress:**
-- Product scanning by category
-- Price monitoring and history
-- Discount alerts
+- ** SQLite**: `src/data/magnit.db` (в .gitignore)
+- Создаётся автоматически при старте через `init_db()`
+- **Важно**: ID магазинов — строки (MD5-хэши), НЕ integers. Используй `store_hash_id()` из models.py:
+  ```python
+  from src.server.models import store_hash_id
+  store_id = store_hash_id(store_code, store_type, full_address)  # 12 символов
+  ```
 
-See `IMPLEMENTATION_PLAN.md` and `NEXT_STEPS.md` for roadmap.
+## Модели
 
-## Обновление товаров в БД
+| Модель | Назначение |
+|--------|-----------|
+| `Store` | Магазин (id=MD5 hash) |
+| `Category` | Категория каталога (parent_id иерархия) |
+| `Product` | Товар с текущей ценой, остатками, акциями |
+| `PriceHistory` | История изменений цен |
+| `DailyPriceSnapshot` | Ежедневный снимок цены |
+| `ScanJob` | Фоновое задание (status: pending/running/completed/failed) |
 
-### Оптимизация производительности
-- `_save_products()` использует bulk операции для ускорения:
-  - `bulk_insert_mappings()` для новых товаров
-  - `bulk_update_mappings()` для существующих товаров
-  - `bulk_insert_mappings()` для истории цен
-- Один SELECT для всех товаров вместо N+1 запросов
-- Один COMMIT в конце вместо множественных
-- **Производительность:** ~5-10x быстрее для батчей 50+ товаров
+## Миграции (выполняются при каждом старте)
 
-### Автоматическая очистка
-- `cleanup_stale_products(days=30)` удаляет товары без обновлений 30+ дней
-- Вызывается автоматически после сканирования каждого магазина
-- Предотвращает накопление устаревших данных в БД
+- `migrate_store_ids()` — конвертирует integer ID → MD5-хэши
+- `migrate_categories()` — обновляет структуру category table
+- `migrate_add_shop_type()` — добавляет поле shop_type
+- `migrate_fill_shop_type()` — заполняет shop_type из store_type
+- `migrate_add_last_scan_found()` — добавляет поле last_scan_found
 
-### Статистика товаров
-- **Endpoint:** `GET /api/products/stats?store_code=X`
-- **Возвращает:** total, in_stock, with_discount, avg_price, last_update, price_changes_today
-- Обновляется автоматически каждые 30 секунд на странице /products
-- Отображается в панели статистики с 6 карточками метрик
+## API endpoints
 
-### UI Features
-- **Детальный прогресс-бар** на странице /catalog с иконками: 📦 товаров | ➕ новых | 🔄 обновлено
-- **Автоперенаправление** на /products через 3 секунды после успешного сканирования
-- **Панель статистики** на /products с ключевыми метриками в реальном времени
-- **Дополнительные фильтры:** наличие (в наличии/нет/мало), акции (скидки/акции), диапазон цен
-- **Независимый выбор магазинов** для сравнения на странице /products
+### Магазины
+- `GET /api/stores` — список магазинов
+- `POST /api/stores` — создать магазин
+- `GET /api/stores/search?q=...` — поиск
+- `POST /api/stores/preview` — предпросмотр (без сохранения)
+- `POST /api/stores/add-selected` — сохранить ��ыбранные
+- `POST /api/stores/select` — выбрать магазин (обновляет .env)
+- `DELETE /api/stores` — удалить магазины
 
-## Common pitfalls
+### Категории
+- `GET /api/categories` — дерево категорий
+- `POST /api/categories/scan` — сканировать из API
+- `PUT /api/categories/tracking` — обновить is_tracked
 
-- Store IDs are strings (MD5 hashes), not integers — use `store_hash_id()` helper
-- Don't bypass rate limiting in `magnit_api.py` — API will block requests
-- Migrations run automatically on startup — don't manually alter tables
-- `.env` is auto-updated by `/api/stores/select` — don't edit manually during runtime
-- Server must run from project root (`D:\pythonProjects\magnit_goods`) for correct paths
-- Catalog update uses complete replacement logic — don't interrupt the process during update
-- **Bulk operations:** `_save_products()` now uses bulk_insert/update_mappings — don't modify without testing
-- **API endpoint order:** `/api/products/stats` must be defined BEFORE `/api/products/{product_id}` in routes
+### Товары
+- `GET /api/products?store_code=X` — список товаров
+- `GET /api/products/stats?store_code=X` — статистика
+- `GET /api/products/{id}` — детали товара
+- `POST /api/products/scan` — сканировать товары
+- `GET /api/products/multi-prices?product_ids=...&store_codes=...` — цены из нескольких магазинов
 
-## Language
+### Цены
+- `GET /api/prices/history/{product_id}` — история цен
+- `GET /api/prices/alerts?store_code=X` — алерты (скидки)
 
-Code comments and docstrings are in Russian. Commit messages use Russian format: `<тип>: <описание>`.
+### Задания
+- `GET /api/jobs` — список заданий
+- `GET /api/jobs/{id}` — статус задания
 
-## Основные правила разработки
+## Rate Limiting
 
-**ВАЖНО: Коммитить только после согласования с пользователем!**
+- **0.5s задержка** между запросами в `MagnitAPIClient`
+- Реализовано через `_rate_limit_wait()` — НЕ убирать
+- API Магнита заблокирует при превышении
 
-- Перед созданием коммита ВСЕГДА спросить пользователя согласие
-- Показать список изменений, которые будут закоммичены
-- Дождаться явного подтверждения (например, "закомми" или "commit")
-- Никогда не коммитить автоматически без запроса
-- Если пользователь не согласен, откатить изменения по его требованию
+## Веб-страницы
+
+| URL | Описание |
+|-----|----------|
+| `/` | Главная (выбор магазина) |
+| `/stores` | Управление магазинами |
+| `/catalog` | Категории (дерево, чекбоксы) |
+| `/products` | Товары с фильтрами |
+| `/deals` | Акции и скидки |
+| `/jobs` | Фоновые задания |
+
+## Scheduler (APScheduler)
+
+Запускается через `init_scheduler(store_code)`:
+
+| Job ID | Расписание | Функция |
+|-------|-----------|---------|
+| `update_prices` | Ежедневно 8:00 | `update_prices_job()` |
+| `scan_catalog` | Воскресенье 6:00 | `scan_catalog_job()` |
+| `daily_report` | Ежедневно 20:00 | `generate_daily_report_job()` |
+
+## Критические особенности
+
+1. **API endpoint order**: `/api/products/stats` ДОЛЖЕН быть определён ДО `/api/products/{product_id}`
+2. **Обновление каталога**: полная замена категорий из API, сохраняется `is_tracked` для совпадающих `magnit_id`
+3. **.env**: автоматически обновляется через `/api/stores/select` — НЕ редактировать вручную
+4. **Store IDs**: всегда строки (MD5), не integers
+5. **Bulk operations**: `_save_products()` использует `bulk_insert_mappings()` / `bulk_update_mappings()`
+6. **Очистка**: `cleanup_stale_products(days=30)` удаляет товары без обновлений
+
+## Env vars
+
+```
+STORE_CODE=     # код магазина (напр. "992104")
+STORE_TYPE=     # тип (напр. "Мини", "Магнит", "Экстра")
+GOODS_URL=      # API endpoint (по умолчанию: https://magnit.ru/webgate/v1/goods)
+```
+
+## Язык
+
+- Комментарии и docstrings: русский
+- Коммиты: русский формат `<тип>: <описание>`
+- **Коммитить только после согласования с пользователем**
+
+## Тестирование
+
+Ручное через Swagger UI или веб-интерфейс. Тестовый фреймворк не настроен.
+
+## Распространённые ошибки
+
+- Не использовать `store_hash_id()` при создании Store
+- Убирать rate limiting — получить бан от API
+- Забывать что категории универсальные (без привязки к конкретному магазину)
+- ��арушать порядок endpoint definitions в FastAPI

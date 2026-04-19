@@ -313,6 +313,18 @@ def preview_stores(
                 pass
 
 
+STORE_TYPE_TO_SHOP_TYPE = {
+    "Магнит": 1,
+    "Мини": 2,
+    "М.Косметик": 3,
+    "Семейный": 5,
+    "Экстра": 6,
+    "Опт": 7,
+    "Заряд": 8,
+    "Моя цена": 9,
+}
+
+
 @router.post("/add-selected")
 def add_selected_stores(
     req: AddSelectedStoresRequest,
@@ -327,6 +339,7 @@ def add_selected_stores(
         if s.store_code in existing_codes:
             skipped += 1
         else:
+            shop_type_code = STORE_TYPE_TO_SHOP_TYPE.get(s.store_type)
             to_add.append(Store(
                 store_code=s.store_code,
                 store_type=s.store_type,
@@ -334,6 +347,7 @@ def add_selected_stores(
                 address=s.address,
                 full_address=s.full_address,
                 name=s.name,
+                shop_type=shop_type_code,
             ))
 
     if to_add:

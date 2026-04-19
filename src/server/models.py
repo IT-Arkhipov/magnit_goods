@@ -40,15 +40,23 @@ class Store(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
+    STORE_TYPE_TO_SHOP_TYPE = {
+        "Магнит": 1,
+        "Мини": 2,
+        "М.Косметик": 3,
+        "Семейный": 5,
+        "Экстра": 6,
+        "Опт": 7,
+        "Заряд": 8,
+        "Моя цена": 9,
+    }
+
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        if (
-            not kwargs.get("id")
-            and self.store_code
-            and self.store_type
-            and self.full_address
-        ):
+        if not kwargs.get("id") and self.store_code and self.store_type and self.full_address:
             self.id = store_hash_id(self.store_code, self.store_type, self.full_address)
+        if not kwargs.get("shop_type") and self.store_type:
+            self.shop_type = self.STORE_TYPE_TO_SHOP_TYPE.get(self.store_type)
 
 
 class Category(Base):
