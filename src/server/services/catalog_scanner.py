@@ -349,10 +349,22 @@ class CatalogScanner:
 
                 products = result.get("items", [])
                 has_more = result.get("hasMore", False)
-                offset = result.get("next_offset", offset + 50)
-
+                next_offset = result.get("next_offset")
+                
+                # Логируем пагинацию для отладки
+                print(f"DEBUG: Pagination - offset={offset}, items_count={len(products)}, has_more={has_more}, next_offset={next_offset}")
+                
+                # Если нет товаров, выходим из цикла (даже если hasMore=True)
                 if not products:
+                    print(f"DEBUG: No products returned, breaking pagination loop")
                     break
+                
+                # Если next_offset не определён, но есть товары, вычисляем сами
+                if next_offset is None and has_more:
+                    next_offset = offset + len(products)
+                    print(f"DEBUG: Calculated next_offset={next_offset}")
+                
+                offset = next_offset if next_offset is not None else offset + len(products)
 
                 added, updated, price_changes = self._save_products(
                     products, cat_magnit_id
@@ -503,6 +515,7 @@ class CatalogScanner:
                         "image_url": product_data.get("image_url", existing.image_url),
                         "in_stock": product_data.get("in_stock", existing.in_stock),
                         "last_seen": now,
+                        "last_scan_found": now,  # Обновляем время последнего сканирования
                         # Остатки
                         "quantity": product_data.get("quantity", existing.quantity),
                         "is_low_stock": product_data.get(
@@ -589,6 +602,7 @@ class CatalogScanner:
                         "unit_price": product_data.get("unit_price"),
                         "first_seen": now,
                         "last_seen": now,
+                        "last_scan_found": now,  # Устанавливаем время сканирования для новых товаров
                     }
                 )
 

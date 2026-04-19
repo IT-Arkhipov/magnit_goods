@@ -99,7 +99,22 @@ class MagnitAPIClient:
         url = f"{self.base_url}/webgate/v2/goods/search"
 
         # Строим payload с правильным форматом для API
-        s_type_code = API_STORE_TYPE_CODE.get(s_type, s_type)
+        # s_type может быть:
+        # 1. API код (MM, MM_MINI, ME, DG, GM, MO, MC, ZARYAD)
+        # 2. Русское название (Магнит, Мини, Экстра, и т.д.)
+        # 3. Числовой код (1, 2, 3, и т.д.)
+        
+        # Сначала преобразуем API код в русское название, если нужно
+        if s_type in STORE_TYPE_MAP:
+            # s_type это API код (MM, MM_MINI, и т.д.)
+            russian_name = STORE_TYPE_MAP[s_type]
+        else:
+            # s_type это русское название или числовой код
+            russian_name = s_type
+        
+        # Теперь преобразуем русское название в числовой код
+        s_type_code = API_STORE_TYPE_CODE.get(russian_name, russian_name)
+        
         payload = {
             "sort": {
                 "order": "desc",
@@ -162,9 +177,19 @@ class MagnitAPIClient:
                         items.append(parsed_item)
 
             # Пагинация
-            total = data.get("total", len(items))
-            has_more = data.get("hasMore", (offset + len(items)) < total)
-            next_offset = offset + len(items) if has_more else None
+            pagination = data.get("pagination", {})
+            total = pagination.get("totalCount", len(items))
+            has_more = pagination.get("hasMore", (offset + len(items)) < total)
+            
+            # Используем nextOffset из API, если он есть
+            api_next_offset = pagination.get("nextOffset")
+            if api_next_offset is not None:
+                next_offset = api_next_offset if has_more else None
+            else:
+                # Если API не вернул nextOffset, вычисляем сами
+                next_offset = offset + len(items) if has_more else None
+            
+            print(f"DEBUG pagination: offset={offset}, len(items)={len(items)}, total={total}, hasMore={has_more}, api_next_offset={api_next_offset}, next_offset={next_offset}")
 
             return {
                 "items": items,
@@ -203,42 +228,50 @@ class MagnitAPIClient:
 
             # Цена — конвертируем из копеек в рубли
             current_price = item.get("price")
-            if current_price and current_price >= 100:
+            product_name = item.get("name") or item.get("title", "")
+            
+            # API всегда возвращает цены в копейках, делим на 100
+            if current_price:
                 current_price = current_price / 100
 
             # Акция/скидка
-            promotion = item.get("promotion", {})
+            promotion = item.get("promotion") or {}
             old_price_raw = promotion.get("oldPrice") or item.get("oldPrice")
             is_promotion = promotion.get("isPromotion", False)
             discount_percent = promotion.get("discountPercent")
             promo_end_date = promotion.get("endDate")  # ISO строка
 
-            if old_price_raw and old_price_raw >= 100:
+            # API всегда возвращает цены в копейках, делим на 100
+            if old_price_raw:
                 old_price_raw = old_price_raw / 100
 
+            # Параметры заказа
+            order_props = item.get("orderProperties") or {}
+            min_order_qty = order_props.get("minOrderQuantity", 1)
+            order_step_qty = order_props.get("orderStepQuantity", 1)
+
             # Рейтинги
-            ratings = item.get("ratings", {})
+            ratings = item.get("ratings") or {}
             rating = ratings.get("rating")
             scores_count = ratings.get("scoresCount", 0)
             comments_count = ratings.get("commentsCount", 0)
 
-            # Параметры заказа
-            order_props = item.get("orderProperties", {})
-            min_order_qty = order_props.get("minOrderQuantity", 1)
-            order_step_qty = order_props.get("orderStepQuantity", 1)
-
             # Весовые товары
-            weighted = item.get("weighted", {})
+            weighted = item.get("weighted") or {}
             is_weighted = weighted.get("isWeighted", False)
             unit_price = weighted.get("unitPrice")
-            if unit_price and unit_price >= 100:
+            
+            # API всегда возвращает цены в копейках, делим на 100
+            if unit_price:
                 unit_price = unit_price / 100
 
             # Первая картинка из gallery
             gallery = item.get("gallery", [])
             image_url = None
             if gallery and len(gallery) > 0:
-                image_url = gallery[0].get("url")
+                first_image = gallery[0]
+                if first_image and isinstance(first_image, dict):
+                    image_url = first_image.get("url")
 
             return {
                 "product_id": int(product_id),
@@ -276,6 +309,8 @@ class MagnitAPIClient:
             }
         except Exception as e:
             print(f"Ошибка парсинга товара: {e}")
+            import traceback
+            traceback.print_exc()
             return None
 
     def set_store_code(self, store_code: str):

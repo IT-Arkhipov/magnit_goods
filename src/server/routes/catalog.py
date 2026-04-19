@@ -283,6 +283,42 @@ def list_products(
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
     
+    # Фильтруем товары, которые были найдены при последнем сканировании категории
+    # Показываем только товары, обновленные не позднее 1 часа от последнего обновления категории
+    if store_code:
+        from datetime import timedelta
+        
+        # Получаем максимальное время last_scan_found для каждой категории в этом магазине
+        from sqlalchemy import func
+        
+        max_scan_times = db.query(
+            Product.category_id,
+            func.max(Product.last_scan_found).label('max_scan_time')
+        ).filter(
+            Product.store_code == store_code,
+            Product.last_scan_found.isnot(None)
+        ).group_by(Product.category_id).all()
+        
+        # Создаем словарь с максимальным временем для каждой категории
+        scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
+        
+        if scan_times_dict:
+            # Для каждой категории показываем товары, обновленные не позднее 1 часа от последнего обновления
+            # ИЛИ товары, у которых last_scan_found не установлен (старые товары)
+            conditions = []
+            for cat_id, max_time in scan_times_dict.items():
+                cutoff_time = max_time - timedelta(hours=1)
+                conditions.append(
+                    (Product.category_id == cat_id) & 
+                    (
+                        ((Product.last_scan_found >= cutoff_time) & (Product.last_scan_found <= max_time)) |
+                        (Product.last_scan_found.is_(None))
+                    )
+                )
+            
+            from sqlalchemy import or_
+            query = query.filter(or_(*conditions))
+    
     if sort_by == "price":
         query = query.order_by(Product.price.asc())
     elif sort_by == "discount":

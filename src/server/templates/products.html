@@ -904,9 +904,31 @@ document.addEventListener('DOMContentLoaded', () => {
                 localStorage.removeItem('compareStores');
             });
     } else {
-        // Автоматически загружаем товары при загрузке страницы
-        loadCategories();
-        loadProducts();
+        // Если нет сохранённых магазинов, автоматически выбираем первый
+        fetch('/api/stores?is_active=true&limit=1')
+            .then(r => r.json())
+            .then(stores => {
+                if (stores.length > 0) {
+                    // Выбираем первый магазин
+                    localStorage.setItem('compareStores', JSON.stringify([stores[0].store_code]));
+                    // Обновляем UI чекбокса
+                    setTimeout(() => {
+                        const checkbox = document.querySelector(`input[value="${stores[0].store_code}"]`);
+                        if (checkbox) {
+                            checkbox.checked = true;
+                            updateStoreRowStyle(checkbox);
+                        }
+                    }, 100);
+                }
+                // Загружаем товары
+                loadCategories();
+                loadProducts();
+            })
+            .catch(err => {
+                console.error('Ошибка выбора первого магазина:', err);
+                loadCategories();
+                loadProducts();
+            });
     }
 });
 
@@ -1000,29 +1022,40 @@ async function loadProductsEnhanced() {
         const productMap = {}; // Для дедупликации по product_id
         
         for (const storeCode of selectedStores) {
-            let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=500`;
-            if (category) {
-                url += `&category_id=${category}`;
-            } else if (trackedCatIds.length > 0) {
-                url += `&category_ids=${trackedCatIds.join(',')}`;
-            }
-            if (search) url += `&search=${encodeURIComponent(search)}`;
-            if (minPrice) url += `&min_price=${minPrice}`;
-            if (maxPrice) url += `&max_price=${maxPrice}`;
+            let offset = 0;
+            let hasMore = true;
+            
+            while (hasMore) {
+                let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=500&offset=${offset}`;
+                if (category) {
+                    url += `&category_id=${category}`;
+                } else if (trackedCatIds.length > 0) {
+                    url += `&category_ids=${trackedCatIds.join(',')}`;
+                }
+                if (search) url += `&search=${encodeURIComponent(search)}`;
+                if (minPrice) url += `&min_price=${minPrice}`;
+                if (maxPrice) url += `&max_price=${maxPrice}`;
 
-            try {
-                const response = await fetch(url);
-                const products = await response.json();
-                
-                // Объединяем товары, избегая дубликатов
-                products.forEach(p => {
-                    if (!productMap[p.product_id]) {
-                        productMap[p.product_id] = p;
-                        allProducts.push(p);
+                try {
+                    const response = await fetch(url);
+                    const products = await response.json();
+                    
+                    if (products.length === 0) {
+                        hasMore = false;
+                    } else {
+                        // Объединяем товары, избегая дубликатов
+                        products.forEach(p => {
+                            if (!productMap[p.product_id]) {
+                                productMap[p.product_id] = p;
+                                allProducts.push(p);
+                            }
+                        });
+                        offset += products.length;
                     }
-                });
-            } catch (e) {
-                console.error(`Ошибка загрузки товаров из магазина ${storeCode}:`, e);
+                } catch (e) {
+                    console.error(`Ошибка загрузки товаров из магазина ${storeCode} (offset=${offset}):`, e);
+                    hasMore = false;
+                }
             }
         }
         
@@ -1199,7 +1232,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             let html = `
                 <div style="margin-bottom: 12px; font-size: 14px; color: #666; display: flex; align-items: center; gap: 16px;">
                     <span>Категорий: ${sortedParents.length}, Товаров: ${products.length}${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}</span>
-                    <button class="btn btn-sm btn-secondary" onclick="expandAllCategories()" style="margin: 0;">Раскрыть все</button>
+                    <button id="toggleAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="toggleAllCategoriesState()" style="margin: 0;">Раскрыть все</button>
                 </div>
             `;
             
@@ -1499,6 +1532,13 @@ function collapseAllButFirst() {
             childArrows[index].style.transform = 'rotate(0deg)';
         }
     });
+    
+    // Обновляем текст кнопки
+    const btn = document.getElementById('toggleAllCategoriesBtn');
+    if (btn) {
+        btn.textContent = 'Раскрыть все';
+        allCategoriesExpanded = false;
+    }
 }
 
 // Debounce helper для фильтров цены
@@ -1520,6 +1560,20 @@ function getSavingsFontSize(savingsPercent) {
     // Увеличение на 1px за каждый целый десяток процента: 10% -> +1, 15% -> +1, 20% -> +2, 23% -> +2 и т.д.
     const fontSizeIncrease = Math.floor(savingsPercent / 10);
     return `${fontSizeIncrease}px`;
+}
+
+// Состояние для отслеживания, развёрнуты ли все категории
+let allCategoriesExpanded = false;
+
+// Переключение состояния всех категорий
+function toggleAllCategoriesState() {
+    if (allCategoriesExpanded) {
+        collapseAllButFirst();
+        allCategoriesExpanded = false;
+    } else {
+        expandAllCategories();
+        allCategoriesExpanded = true;
+    }
 }
 
 // Раскрытие всех категорий
@@ -1546,6 +1600,13 @@ function expandAllCategories() {
             if (arrow) arrow.style.transform = 'rotate(90deg)';
         }
     });
+    
+    // Обновляем текст кнопки
+    const btn = document.getElementById('toggleAllCategoriesBtn');
+    if (btn) {
+        btn.textContent = 'Свернуть все';
+        allCategoriesExpanded = true;
+    }
 }
 
 // Переопределяем loadProducts для использования улучшенной версии
