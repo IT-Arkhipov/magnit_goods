@@ -89,6 +89,40 @@
 #selectAllStores, #storesTableBody input[type="checkbox"] {
     cursor: pointer;
 }
+.price-cell {
+    position: relative;
+    cursor: help;
+}
+.price-tooltip {
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+}
+.price-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #333;
+}
+.price-cell:hover .price-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
 </style>
 
 <div class="card">
@@ -1163,8 +1197,8 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 <span>${escapeHtml(catData.name)} <span style="color: #666;">(${catData.products.length})</span></span>
                                 <span class="child-arrow" style="transition: transform 0.3s; transform: ${catExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
                             </div>
-                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 8px; background: #fff; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px; overflow-x: auto;">
-                                <table style="min-width: 600px; font-size: 14px; table-layout: fixed;">
+                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 8px; background: #fff; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px;">
+                                <table style="width: 100%; font-size: 14px; table-layout: auto;">
                                     <thead>
                                         <tr>
                                             <th style="width: 40%; word-wrap: break-word;">Название</th>
@@ -1200,19 +1234,25 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                              savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
                          }
                          
-                         // Ячейки цен для всех выбранных магазинов
-                         const storeCells = selectedStores.map(storeCode => {
-                             const priceInfo = productPrices[storeCode];
-                             if (!priceInfo) {
-                                 return `<td style="text-align:center;color:#999;">-</td>`;
-                             }
-                              // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                               const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                               const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                               const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
-                               const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
-                               return `<td style="text-align:center;font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
-                         }).join('');
+                          // Ячейки цен для всех выбранных магазинов
+                          const storeCells = selectedStores.map(storeCode => {
+                              const priceInfo = productPrices[storeCode];
+                              if (!priceInfo) {
+                                  return `<td style="text-align:center;color:#999;">-</td>`;
+                              }
+                               // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                                const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                                const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                                const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                                const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                                
+                                // Информация для tooltip
+                                const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                                const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                                const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                                
+                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span><div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                          }).join('');
                          
                          html += `
                              <tr>
@@ -1286,18 +1326,24 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                  savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
              }
              
-             const otherStoreCells = selectedStores.length > 1 
-                 ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
-                     const priceInfo = productPrices[storeCode];
-                     if (!priceInfo) return '<td style="color:#999;">-</td>';
-                       // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
-                       const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                       const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-                       const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
-                       const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
-                       return `<td style="font-weight:bold;color:${color};"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></td>`;
-                 }).join('')
-                 : '';
+              const otherStoreCells = selectedStores.length > 1 
+                  ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
+                      const priceInfo = productPrices[storeCode];
+                      if (!priceInfo) return '<td style="color:#999;">-</td>';
+                        // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                        const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                        const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                        const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                        const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                        
+                        // Информация для tooltip
+                        const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                        const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                        const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                        
+                        return `<td style="font-weight:bold;color:${color};" class="price-cell"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span><div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                  }).join('')
+                  : '';
              
              const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
              html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;

@@ -390,6 +390,8 @@ def get_multi_store_prices(
             "old_price": p.old_price,
             "in_stock": p.in_stock,
             "discount_percent": p.discount_percent,
+            "quantity": p.quantity,
+            "last_seen": p.last_seen.isoformat() if p.last_seen else None,
         }
     
     return result
