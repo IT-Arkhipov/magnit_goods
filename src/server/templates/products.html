@@ -167,9 +167,9 @@
     <h2>Фильтры и поиск товаров</h2>
 
     <div class="form-row">
-        <div class="form-group">
+        <div class="form-group" style="flex: 3;">
             <label>Категория</label>
-            <select id="categoryFilter" disabled>
+            <select id="categoryFilter" onchange="loadProducts()">
                 <option value="">Все категории</option>
             </select>
         </div>
@@ -202,13 +202,13 @@
                 <option value="promotion">Акции</option>
             </select>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex: 0.5;">
             <label>Цена от</label>
-            <input type="number" id="minPrice" placeholder="0" min="0" disabled>
+            <input type="number" id="minPrice" placeholder="0" min="0" disabled style="width: 100%;">
         </div>
-        <div class="form-group">
+        <div class="form-group" style="flex: 0.5;">
             <label>Цена до</label>
-            <input type="number" id="maxPrice" placeholder="1000" min="0" disabled>
+            <input type="number" id="maxPrice" placeholder="1000" min="0" disabled style="width: 100%;">
         </div>
         <div class="form-group">
             <label>Экономия (%)</label>
@@ -1592,25 +1592,39 @@ document.addEventListener('DOMContentLoaded', () => {
     // Debounce для фильтров цены
     const debouncedLoad = debounce(loadProducts, 500);
     if (minPriceEl) minPriceEl.addEventListener('input', debouncedLoad);
-    if (maxPriceEl) maxPriceEl.addEventListener('input', debouncedLoad);
-    
-    // Применяем сохранённый процент экономии при загрузке страницы
-    const savedSavings = localStorage.getItem('savingsFilter');
-    if (savedSavings && savingsFilterEl) {
-        savingsFilterEl.value = savedSavings;
-        // Загружаем товары с применённым фильтром
-        setTimeout(() => {
-            loadProducts();
-            // Раскрываем категории если выбран процент (не "-")
-            if (savedSavings !== '') {
-                // Пытаемся раскрыть категории с несколькими попытками
-                setTimeout(expandAllCategories, 1500);
-                setTimeout(expandAllCategories, 2500);
-            } else {
-                setTimeout(collapseAllButFirst, 1500);
-            }
-        }, 100);
-    }
+     if (maxPriceEl) maxPriceEl.addEventListener('input', debouncedLoad);
+     
+     // Обработчик для dropdown категорий - загружаем товары при изменении
+     const categoryFilterEl = document.getElementById('categoryFilter');
+     if (categoryFilterEl) {
+         categoryFilterEl.addEventListener('change', () => {
+             setTimeout(loadProducts, 100);
+         });
+     }
+     
+     // Применяем сохранённый процент экономии при загрузке страницы
+     const savedSavings = localStorage.getItem('savingsFilter');
+     if (savedSavings && savingsFilterEl) {
+         savingsFilterEl.value = savedSavings;
+         // Загружаем товары с применённым фильтром
+         setTimeout(() => {
+             loadProducts();
+             // Раскрываем категории если выбран процент (не "-")
+             if (savedSavings !== '') {
+                 // Пытаемся раскрыть категории с несколькими попытками
+                 setTimeout(expandAllCategories, 1500);
+                 setTimeout(expandAllCategories, 2500);
+             } else {
+                 setTimeout(collapseAllButFirst, 1500);
+             }
+         }, 100);
+     }
+     
+     // Загружаем товары при загрузке страницы если есть выбранные магазины
+     const selectedStores = getSelectedStores();
+     if (selectedStores.length > 0) {
+         setTimeout(loadProducts, 500);
+     }
 });
 </script>
 {% endblock %}
