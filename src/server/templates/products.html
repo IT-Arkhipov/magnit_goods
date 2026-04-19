@@ -247,7 +247,6 @@
 </div>
 
 <script>
-console.log('[DEBUG] products.html loaded');
 // Маппинг числовых кодов типов магазинов на API коды
 const SHOP_TYPE_TO_API_CODE = {
     1: "MM",        // Магнит
@@ -285,7 +284,6 @@ async function loadProducts() {
         return;
     }
 
-    console.log('[DEBUG] loadProducts: activeStoreCode =', activeStoreCode);
     const listDiv = document.getElementById('products-list');
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
@@ -427,12 +425,6 @@ async function loadProducts() {
                     });
                 }
 
-                const pSeoCode = p.seo_code;
-                const pStoreCode = p.store_code || activeStoreCode;
-                const pShopType = p.shop_type;
-                if (index < 3) {
-                    console.log(`[DEBUG] Товар ${p.product_id}: name="${p.name.substring(0,20)}...", seo_code=${pSeoCode}, shop_type=${pShopType}, store_code=${pStoreCode}`);
-                }
                 html += `
                     <tr>
                         <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
@@ -1010,7 +1002,6 @@ async function loadProductsEnhanced() {
 
     const selectedStores = getSelectedStores();
 
-    console.log('[DEBUG] loadProductsEnhanced: selectedStores =', selectedStores);
     if (selectedStores.length === 0) {
         const listDiv = document.getElementById('products-list');
         listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения</p>';
@@ -1071,10 +1062,6 @@ async function loadProductsEnhanced() {
         let products = allProducts;
         
         // ОТЛАДКА: проверяем данные первых товаров
-        if (products.length > 0) {
-            console.log('[DEBUG] Первый товар:', JSON.stringify(products[0]));
-        }
-
         // Клиентская фильтрация
         if (stockFilter === 'in_stock') {
             products = products.filter(p => p.in_stock);
@@ -1359,10 +1346,6 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 const seoCode = priceInfo.seo_code;
                                 const shopType = priceInfo.shop_type;
                                 const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
-                                // ОТЛАДКА: логируем причину отсутствия ссылки
-                                if (p.product_id % 100 === 0) { // логируем каждый 100-й товар чтобы не засорять консоль
-                                    console.log(`[DEBUG] Товар ${p.product_id}: seoCode=${!!seoCode}, shopType=${shopType}, url=${productUrl}`);
-                                }
                                 const priceLink = productUrl 
                                     ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                                     : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
@@ -1464,10 +1447,6 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                           const seoCode = priceInfo.seo_code;
                           const shopType = priceInfo.shop_type;
                           const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
-                          // ОТЛАДКА: логируем причину отсутствия ссылки
-                          if (p.product_id % 100 === 0) {
-                              console.log(`[DEBUG] Товар ${p.product_id}: seoCode=${!!seoCode}, shopType=${shopType}, url=${productUrl}`);
-                          }
                           const priceLink = productUrl 
                               ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                               : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
