@@ -32,6 +32,7 @@ class Store(Base):
     )  # хэш из store_code + store_type + full_address
     store_code = Column(String, nullable=False, index=True)
     store_type = Column(String, nullable=False, index=True)
+    shop_type = Column(Integer, nullable=True, index=True)  # Числовой код типа магазина
     city = Column(String, nullable=False, index=True)
     address = Column(String, nullable=False)
     full_address = Column(String, nullable=False)

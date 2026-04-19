@@ -123,6 +123,44 @@
     opacity: 1;
     visibility: visible;
 }
+.product-name-cell {
+    position: relative;
+    cursor: pointer;
+}
+.product-image-tooltip {
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.product-image-tooltip img {
+    max-width: 150px;
+    max-height: 150px;
+    border-radius: 4px;
+}
+.product-image-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #ddd;
+}
+.product-name-cell:hover .product-image-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
 </style>
 
 <div class="card">
@@ -1254,12 +1292,27 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span><div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                           }).join('');
                          
-                         html += `
-                             <tr>
-                                 <td><strong>${escapeHtml(p.name)}</strong> ${promoBadge}</td>
-                                 ${storeCells}
-                             </tr>
-                         `;
+                          html += `
+                              <tr>
+                                  <td class="product-name-cell">
+                                      ${(() => {
+                                          const priceInfo = productPrices[selectedStores[0]];
+                                          const shopType = priceInfo?.shop_type;
+                                          const seoCode = priceInfo?.seo_code;
+                                          const storeCode = selectedStores[0];
+                                          
+                                          if (seoCode && shopType && storeCode) {
+                                              const url = `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}`;
+                                              return `<a href="${url}" target="_blank" style="text-decoration: none; color: inherit;"><strong>${escapeHtml(p.name)}</strong></a>`;
+                                          } else {
+                                              return `<strong>${escapeHtml(p.name)}</strong>`;
+                                          }
+                                      })()}
+                                      ${promoBadge}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}
+                                  </td>
+                                  ${storeCells}
+                              </tr>
+                          `;
                      });
                     
                     html += `
@@ -1345,8 +1398,15 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                   }).join('')
                   : '';
              
-             const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
-             html += `<tr><td>${escapeHtml(p.name)}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+              const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+              const activeStoreCode = selectedStores[0];
+              const activePriceInfo = productPrices[activeStoreCode];
+              const activeShopType = activePriceInfo?.shop_type;
+              const activeSeoCode = activePriceInfo?.seo_code;
+              const productLink = activeSeoCode && activeShopType && activeStoreCode 
+                  ? `<a href="https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}" target="_blank" style="text-decoration: none; color: inherit;"><strong>${escapeHtml(p.name)}</strong></a>`
+                  : `<strong>${escapeHtml(p.name)}</strong>`;
+              html += `<tr><td class="product-name-cell">${productLink}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${p.price} ₽${activeSavingsText}</td><td>${p.discount_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
          html += '</tbody></table>';
     });
@@ -1519,9 +1579,11 @@ document.addEventListener('DOMContentLoaded', () => {
             loadProducts();
             // Раскрываем категории если выбран процент (не "-")
             if (savedSavings !== '') {
-                setTimeout(expandAllCategories, 1000);
+                // Пытаемся раскрыть категории с несколькими попытками
+                setTimeout(expandAllCategories, 1500);
+                setTimeout(expandAllCategories, 2500);
             } else {
-                setTimeout(collapseAllButFirst, 1000);
+                setTimeout(collapseAllButFirst, 1500);
             }
         }, 100);
     }

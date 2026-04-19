@@ -120,6 +120,62 @@ def migrate_categories():
 
 migrate_categories()
 
+# === Миграция: добавление поля shop_type в таблицу stores ===
+def migrate_add_shop_type():
+    """Добавить поле shop_type в таблицу stores (однократно)."""
+    inspector = inspect(engine)
+    cols = [c["name"] for c in inspector.get_columns("stores")]
+    
+    if "shop_type" not in cols:
+        print("Миграция: добавление поля shop_type в таблицу stores...", flush=True)
+        with engine.connect() as conn:
+            conn.execute(text("ALTER TABLE stores ADD COLUMN shop_type INTEGER"))
+            conn.commit()
+        print("Поле shop_type добавлено в таблицу stores", flush=True)
+
+migrate_add_shop_type()
+
+# === Миграция: заполнение поля shop_type для известных типов магазинов ===
+def migrate_fill_shop_type():
+    """Заполнить поле shop_type на основе store_type."""
+    db_session = SessionLocal()
+    try:
+        # Маппинг store_type на числовые коды (из magnit_api.py)
+        shop_type_mapping = {
+            "Магнит": 1,
+            "Мини": 2,
+            "М.Косметик": 3,
+            "Семейный": 5,
+            "Экстра": 6,
+            "Опт": 7,
+            "Заряд": 8,
+            "Моя цена": 9,
+        }
+        
+        # Проверяем, есть ли уже заполненные значения
+        filled_count = db_session.query(Store).filter(Store.shop_type != None).count()
+        if filled_count > 0:
+            return  # уже заполнено
+        
+        print("Миграция: заполнение поля shop_type...", flush=True)
+        
+        for store_type, shop_type_code in shop_type_mapping.items():
+            stores = db_session.query(Store).filter(Store.store_type == store_type).all()
+            for store in stores:
+                store.shop_type = shop_type_code
+            if len(stores) > 0:
+                print(f"  Обновлено {len(stores)} магазинов типа '{store_type}' -> код {shop_type_code}", flush=True)
+        
+        db_session.commit()
+        print("Поле shop_type успешно заполнено", flush=True)
+    except Exception as e:
+        print(f"Ошибка при заполнении shop_type: {e}", flush=True)
+        db_session.rollback()
+    finally:
+        db_session.close()
+
+migrate_fill_shop_type()
+
 # === Очистка зависших заданий от предыдущего запуска ===
 from src.server.routes.stores import _mark_all_running_failed_on_startup
 

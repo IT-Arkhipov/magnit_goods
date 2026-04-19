@@ -370,11 +370,17 @@ def get_multi_store_prices(
     db: Session = Depends(get_db),
 ):
     """Получение цен товаров из нескольких магазинов."""
+    from src.server.models import Store
+    
     pid_list = [int(x.strip()) for x in product_ids.split(',') if x.strip().isdigit()]
     store_list = [x.strip() for x in store_codes.split(',') if x.strip()]
     
     if not pid_list or not store_list:
         return {}
+    
+    # Получаем информацию о магазинах (shop_type)
+    stores = db.query(Store).filter(Store.store_code.in_(store_list)).all()
+    store_shop_type_map = {s.store_code: s.shop_type for s in stores}
     
     products = db.query(Product).filter(
         Product.product_id.in_(pid_list),
@@ -392,6 +398,8 @@ def get_multi_store_prices(
             "discount_percent": p.discount_percent,
             "quantity": p.quantity,
             "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+            "seo_code": p.seo_code,
+            "shop_type": store_shop_type_map.get(p.store_code),
         }
     
     return result
