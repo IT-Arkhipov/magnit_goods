@@ -283,13 +283,6 @@ def list_products(
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
     
-    # Фильтруем товары, которые не были найдены при последнем сканировании
-    # Показываем только товары, обновленные в течение последнего часа
-    if store_code:
-        from datetime import datetime, timedelta
-        one_hour_ago = datetime.utcnow() - timedelta(hours=1)
-        query = query.filter(Product.last_seen >= one_hour_ago)
-
     if sort_by == "price":
         query = query.order_by(Product.price.asc())
     elif sort_by == "discount":
