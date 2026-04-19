@@ -53,6 +53,12 @@ class CatalogScanner:
             )
             self.db.commit()
 
+    def _update_job_progress_full(self, **kwargs):
+        """Обновить прогресс задания с детальными полями."""
+        if self.job_id:
+            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(kwargs)
+            self.db.commit()
+
     def scan_categories(self) -> dict:
         """
         Сканировать подкатегории из API Магнита для всех корневых категорий.
@@ -350,9 +356,17 @@ class CatalogScanner:
                 products = result.get("items", [])
                 has_more = result.get("hasMore", False)
                 next_offset = result.get("next_offset")
+                total_count = result.get("total", 0)
+                
+                # Обновляем общее количество товаров в категории (только при первом запросе)
+                if self.job_id and offset == 0 and total_count > 0:
+                    self._update_job_progress_full(
+                        current_category_items_total=total_count,
+                        current_category_items_loaded=0
+                    )
                 
                 # Логируем пагинацию для отладки
-                print(f"DEBUG: Pagination - offset={offset}, items_count={len(products)}, has_more={has_more}, next_offset={next_offset}")
+                print(f"DEBUG: Pagination - offset={offset}, items_count={len(products)}, has_more={has_more}, next_offset={next_offset}, total={total_count}")
                 
                 # Если нет товаров, выходим из цикла (даже если hasMore=True)
                 if not products:
@@ -373,6 +387,12 @@ class CatalogScanner:
                 total_updated += updated
                 total_price_changes += price_changes
                 total_scanned += len(products)
+
+                # Обновляем количество загруженных товаров в категории
+                if self.job_id:
+                    self._update_job_progress_full(
+                        current_category_items_loaded=total_scanned
+                    )
 
                 self.db.commit()
 

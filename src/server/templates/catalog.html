@@ -237,13 +237,31 @@
     <div id="load-status" style="margin-bottom: 12px;"></div>
     <div id="update-status" style="margin-bottom: 12px;"></div>
     <div id="scan-status" style="margin-bottom: 12px;"></div>
-    <div id="scan-progress" style="margin-bottom: 12px; display: none;">
+
+    <div id="overall-progress" style="margin-bottom: 12px; display: none; padding: 12px; background: #e3f2fd; border-radius: 4px; border: 1px solid #2196f3;">
         <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
-            <span id="progress-text">Сканирование...</span>
-            <span id="progress-percent">0%</span>
+            <strong>Общий прогресс:</strong>
+            <span id="overall-progress-percent" style="font-weight: bold; color: #1976d2;">0%</span>
         </div>
-        <div style="width: 100%; height: 24px; background: #e0e0e0; border-radius: 4px; overflow: hidden;">
-            <div id="progress-bar" style="height: 100%; background: #4caf50; width: 0%; transition: width 0.3s; display: flex; align-items: center; justify-content: center; color: white; font-size: 12px; font-weight: bold;"></div>
+        <div id="overall-progress-text" style="margin-bottom: 8px; font-size: 14px; color: #333;">Магазин: - | Категория: -</div>
+        <div style="width: 100%; height: 20px; background: #fff; border-radius: 4px; overflow: hidden;">
+            <div id="overall-progress-bar" style="height: 100%; background: #2196f3; width: 0%; transition: width 0.3s;"></div>
+        </div>
+    </div>
+
+    <div id="category-progress" style="margin-bottom: 12px; display: none; padding: 12px; background: #fff3e0; border-radius: 4px; border: 1px solid #ff9800;">
+        <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <strong id="category-name">Категория</strong>
+            <span id="category-progress-percent" style="font-weight: bold; color: #f57c00;">0%</span>
+        </div>
+        <div id="category-progress-text" style="margin-bottom: 8px; font-size: 14px; color: #333;">0 из 0 товаров</div>
+        <div style="width: 100%; height: 16px; background: #fff; border-radius: 4px; overflow: hidden;">
+            <div id="category-progress-bar" style="height: 100%; background: #ff9800; width: 0%; transition: width 0.3s;"></div>
+        </div>
+        <div style="margin-top: 6px; font-size: 12px; color: #666;">
+            Новых: <span id="category-added">0</span> |
+            Обновлено: <span id="category-updated">0</span> |
+            Всего: <span id="category-scanned">0</span>
         </div>
     </div>
 
@@ -645,10 +663,6 @@ async function saveSelectedCategories() {
 async function startScanProducts() {
     const scanBtn = document.getElementById('scan-btn');
     const scanStatus = document.getElementById('scan-status');
-    const scanProgress = document.getElementById('scan-progress');
-    const progressBar = document.getElementById('progress-bar');
-    const progressText = document.getElementById('progress-text');
-    const progressPercent = document.getElementById('progress-percent');
 
     try {
         // Сначала сохраняем текущий выбор категорий
@@ -689,10 +703,6 @@ async function startScanProducts() {
         scanBtn.disabled = true;
         document.getElementById('cancel-scan-btn').style.display = 'inline-block';
         scanStatus.innerHTML = `<div class="badge badge-info">Запуск сканирования ${stores.length} магазинов, ${trackedCategories.length} категорий...</div>`;
-        scanProgress.style.display = 'block';
-        progressBar.style.width = '0%';
-        progressPercent.textContent = '0%';
-        progressText.textContent = `Создание задания...`;
 
         // Запускаем фоновое задание
         const response = await fetch(`/api/catalog/scan-all-stores?tracked_only=true`, {
@@ -703,7 +713,6 @@ async function startScanProducts() {
             const error = await response.json();
             scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${error.detail || 'Неизвестная ошибка'}</div>`;
             scanBtn.disabled = false;
-            scanProgress.style.display = 'none';
             return;
         }
 
@@ -711,16 +720,49 @@ async function startScanProducts() {
         const jobId = startResult.job_id;
         currentJobId = jobId;
 
+        // Показать оба прогресс-бара
+        document.getElementById('overall-progress').style.display = 'block';
+        document.getElementById('category-progress').style.display = 'block';
+
         // Polling статуса задания
         pollingInterval = setInterval(async () => {
             try {
                 const jobResponse = await fetch(`/api/jobs/${jobId}`);
                 const job = await jobResponse.json();
 
-                // Обновляем прогресс-бар
-                progressBar.style.width = `${job.progress}%`;
-                progressBar.textContent = `${job.progress}%`;
-                progressPercent.textContent = `${job.progress}%`;
+                // Обновляем общий прогресс (магазины и категории)
+                if (job.total_stores && job.total_categories) {
+                    const totalOps = job.total_stores * job.total_categories;
+                    const currentOp = (job.current_store_index - 1) * job.total_categories + job.current_category_index;
+                    const overallPercent = Math.round((currentOp / totalOps) * 100);
+                    
+                    document.getElementById('overall-progress-percent').textContent = `${overallPercent}%`;
+                    document.getElementById('overall-progress-bar').style.width = `${overallPercent}%`;
+                    
+                    const storeName = job.current_store_address || job.current_store_code || '-';
+                    const catName = job.current_category_name || '-';
+                    document.getElementById('overall-progress-text').textContent = 
+                        `Магазин: ${storeName} (${job.current_store_index}/${job.total_stores}) | Категория: ${catName} (${job.current_category_index}/${job.total_categories})`;
+                }
+                
+                // Обновляем детальный прогресс по категории (товары)
+                if (job.current_category_items_total > 0) {
+                    const categoryPercent = Math.round((job.current_category_items_loaded / job.current_category_items_total) * 100);
+                    
+                    document.getElementById('category-progress-percent').textContent = `${categoryPercent}%`;
+                    document.getElementById('category-progress-bar').style.width = `${categoryPercent}%`;
+                    document.getElementById('category-progress-text').textContent = 
+                        `${job.current_category_items_loaded} из ${job.current_category_items_total} товаров`;
+                    document.getElementById('category-name').textContent = job.current_category_name || 'Категория';
+                } else if (job.current_category_name) {
+                    document.getElementById('category-name').textContent = job.current_category_name;
+                    document.getElementById('category-progress-text').textContent = 'Загрузка товаров...';
+                }
+                
+                // Обновляем статистику
+                document.getElementById('category-added').textContent = job.items_added || 0;
+                document.getElementById('category-updated').textContent = job.items_updated || 0;
+                document.getElementById('category-scanned').textContent = job.items_scanned || 0;
                 
                 // Проверка на отмену
                 console.log('Job status:', job.status, 'progress:', job.progress);
@@ -729,24 +771,11 @@ async function startScanProducts() {
                     scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
                     scanBtn.disabled = false;
                     document.getElementById('cancel-scan-btn').style.display = 'none';
-                    scanProgress.style.display = 'none';
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
                     currentJobId = null;
                     return;
                 }
-                
-                // Детальный прогресс с иконками
-                let detailedProgress = job.progress_message || 'Обработка...';
-                if (job.items_scanned > 0) {
-                    detailedProgress += ` | 📦 ${job.items_scanned} товаров`;
-                }
-                if (job.items_added > 0) {
-                    detailedProgress += ` | ➕ ${job.items_added} новых`;
-                }
-                if (job.items_updated > 0) {
-                    detailedProgress += ` | 🔄 ${job.items_updated} обновлено`;
-                }
-                
-                progressText.textContent = detailedProgress;
 
                 if (job.status === 'completed') {
                     clearInterval(pollingInterval);
@@ -766,6 +795,10 @@ async function startScanProducts() {
                     // Скрыть кнопку остановки
                     document.getElementById('cancel-scan-btn').style.display = 'none';
 
+                    // Скрыть прогресс-бары
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
+
                     // Кнопка для перехода к товарам
                     const goToProductsBtn = document.createElement('button');
                     goToProductsBtn.className = 'btn btn-primary';
@@ -776,7 +809,6 @@ async function startScanProducts() {
                     // Скрыть результаты через 5 секунд
                     setTimeout(() => {
                         scanStatus.innerHTML = '';
-                        scanProgress.style.display = 'none';
                     }, 5000);
                     
                     scanBtn.disabled = false;
@@ -785,7 +817,8 @@ async function startScanProducts() {
                     clearInterval(pollingInterval);
                     scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${job.error_message || 'Неизвестная ошибка'}</div>`;
                     scanBtn.disabled = false;
-                    scanProgress.style.display = 'none';
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
                     currentJobId = null;
                 }
                 // Если status === 'running' или 'pending' — продолжаем polling
@@ -798,7 +831,6 @@ async function startScanProducts() {
     } catch (e) {
         scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
         scanBtn.disabled = false;
-        scanProgress.style.display = 'none';
     }
 }
 
@@ -907,7 +939,116 @@ async function pollUpdateStatus(updateBtn) {
 // Загружаем дерево при загрузке страницы
 window.addEventListener('DOMContentLoaded', async () => {
     await loadCategoriesTree();
+    // Восстанавливаем прогресс если есть активное задание
+    await restoreProgressIfNeeded();
 });
+
+async function restoreProgressIfNeeded() {
+    try {
+        const response = await fetch('/api/jobs/active?job_type=scan_all_stores');
+        const activeJobs = await response.json();
+        
+        if (activeJobs && activeJobs.length > 0) {
+            // Фильтруем: только задания младше 6 часов и с реальным сканированием (total_stores > 0)
+            const now = Date.now();
+            const maxAge = 6 * 60 * 60 * 1000; // 6 часов
+            
+            const validJob = activeJobs.find(job => {
+                const jobTime = new Date(job.started_at).getTime();
+                const age = now - jobTime;
+                // Проверяем: задание не старше 6 часов И есть реальное сканирование (total_stores > 0)
+                return age < maxAge && job.total_stores > 0 && job.total_categories > 0;
+            });
+            
+            if (!validJob) {
+                console.log('Нет активных заданий для восстановления (старые или без данных)');
+                return;
+            }
+            
+            // Берём первое валидное задание
+            const job = validJob;
+            currentJobId = job.id;
+            
+            // Показываем прогресс-бары
+            document.getElementById('overall-progress').style.display = 'block';
+            document.getElementById('category-progress').style.display = 'block';
+            document.getElementById('scan-btn').disabled = true;
+            document.getElementById('cancel-scan-btn').style.display = 'inline-block';
+            
+            // Обновляем данные прогресса
+            updateProgressBars(job);
+            
+            // Запускаем polling
+            pollingInterval = setInterval(async () => {
+                try {
+                    const jobResponse = await fetch(`/api/jobs/${job.id}`);
+                    const updatedJob = await jobResponse.json();
+                    
+                    updateProgressBars(updatedJob);
+                    
+                    // Проверяем завершение
+                    if (updatedJob.status === 'completed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('scan-btn').disabled = false;
+                        document.getElementById('cancel-scan-btn').style.display = 'none';
+                        document.getElementById('overall-progress').style.display = 'none';
+                        document.getElementById('category-progress').style.display = 'none';
+                        currentJobId = null;
+                    } else if (updatedJob.status === 'cancelled' || updatedJob.status === 'failed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('scan-btn').disabled = false;
+                        document.getElementById('cancel-scan-btn').style.display = 'none';
+                        document.getElementById('overall-progress').style.display = 'none';
+                        document.getElementById('category-progress').style.display = 'none';
+                        currentJobId = null;
+                    }
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 2000);
+            
+            console.log('Восстановлен прогресс для задания:', job.id);
+        }
+    } catch (e) {
+        console.error('Ошибка восстановления прогресса:', e);
+    }
+}
+
+function updateProgressBars(job) {
+    // Общий прогресс
+    if (job.total_stores && job.total_categories) {
+        const totalOps = job.total_stores * job.total_categories;
+        const currentOp = (job.current_store_index - 1) * job.total_categories + job.current_category_index;
+        const overallPercent = Math.round((currentOp / totalOps) * 100);
+        
+        document.getElementById('overall-progress-percent').textContent = `${overallPercent}%`;
+        document.getElementById('overall-progress-bar').style.width = `${overallPercent}%`;
+        
+        const storeName = job.current_store_address || job.current_store_code || '-';
+        const catName = job.current_category_name || '-';
+        document.getElementById('overall-progress-text').textContent = 
+            `Магазин: ${storeName} (${job.current_store_index}/${job.total_stores}) | Категория: ${catName} (${job.current_category_index}/${job.total_categories})`;
+    }
+    
+    // Детальный прогресс по товарам
+    if (job.current_category_items_total > 0) {
+        const categoryPercent = Math.round((job.current_category_items_loaded / job.current_category_items_total) * 100);
+        
+        document.getElementById('category-progress-percent').textContent = `${categoryPercent}%`;
+        document.getElementById('category-progress-bar').style.width = `${categoryPercent}%`;
+        document.getElementById('category-progress-text').textContent = 
+            `${job.current_category_items_loaded} из ${job.current_category_items_total} товаров`;
+        document.getElementById('category-name').textContent = job.current_category_name || 'Категория';
+    } else if (job.current_category_name) {
+        document.getElementById('category-name').textContent = job.current_category_name;
+        document.getElementById('category-progress-text').textContent = 'Загрузка товаров...';
+    }
+    
+    // Статистика
+    document.getElementById('category-added').textContent = job.items_added || 0;
+    document.getElementById('category-updated').textContent = job.items_updated || 0;
+    document.getElementById('category-scanned').textContent = job.items_scanned || 0;
+}
 
 // Остановка сканирования
 let currentJobId = null;
@@ -939,12 +1080,13 @@ function cancelScan() {
                 }
                 const btn = document.getElementById('scan-btn');
                 const cancelBtn = document.getElementById('cancel-scan-btn');
-                const progressEl = document.getElementById('scan-progress');
+                const overallProgressEl = document.getElementById('overall-progress');
+                const categoryProgressEl = document.getElementById('category-progress');
                 const statusEl = document.getElementById('scan-status');
-                console.log('Elements:', btn, cancelBtn, progressEl, statusEl);
                 if (btn) btn.disabled = false;
                 if (cancelBtn) cancelBtn.style.display = 'none';
-                if (progressEl) progressEl.style.display = 'none';
+                if (overallProgressEl) overallProgressEl.style.display = 'none';
+                if (categoryProgressEl) categoryProgressEl.style.display = 'none';
                 if (statusEl) statusEl.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
                 // Скрыть сообщение через 3 секунды
                 setTimeout(() => {
@@ -959,7 +1101,8 @@ function cancelScan() {
                 }
                 scanBtn.disabled = false;
                 document.getElementById('cancel-scan-btn').style.display = 'none';
-                scanProgress.style.display = 'none';
+                document.getElementById('overall-progress').style.display = 'none';
+                document.getElementById('category-progress').style.display = 'none';
                 scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
             });
     } else {
@@ -969,7 +1112,8 @@ function cancelScan() {
         scanBtn.disabled = false;
         document.getElementById('cancel-scan-btn').style.display = 'none';
         scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
-        scanProgress.style.display = 'none';
+        document.getElementById('overall-progress').style.display = 'none';
+        document.getElementById('category-progress').style.display = 'none';
     }
 }
 </script>

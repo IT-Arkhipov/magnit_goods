@@ -107,6 +107,16 @@ class ScanJobResponse(BaseModel):
     items_updated: int = 0
     error_message: Optional[str] = None
     created_at: datetime
+    total_stores: int = 0
+    current_store_index: int = 0
+    current_store_code: Optional[str | int] = None
+    current_store_address: Optional[str] = None
+    total_categories: int = 0
+    current_category_index: int = 0
+    current_category_name: Optional[str] = None
+    current_category_magnit_id: Optional[int] = None
+    current_category_items_total: int = 0
+    current_category_items_loaded: int = 0
 
     model_config = {"from_attributes": True}
 

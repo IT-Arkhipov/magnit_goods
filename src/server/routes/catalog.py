@@ -604,6 +604,13 @@ def scan_all_stores(
                     bg_db.commit()
                     return
                 
+                # Обновляем прогресс по магазинам
+                job_db.total_stores = total_stores
+                job_db.current_store_index = idx + 1
+                job_db.current_store_code = store_code
+                job_db.current_store_address = address
+                job_db.total_categories = total_categories
+                
                 # Показать магазин ДО начала сканирования
                 job_db.progress_message = f"🏪 {store_code}: {address}<br>📁 Магазин {idx + 1}/{total_stores}"
                 bg_db.commit()
@@ -615,9 +622,25 @@ def scan_all_stores(
                     
                     # Сканируем по одной категории за раз для обновления прогресса
                     for cat_idx, cat_code in enumerate(cat_codes):
+                        # Обновляем прогресс по категориям
+                        job_db.current_category_index = cat_idx + 1
+                        
+                        # Получаем название категории
+                        cat_obj = bg_db.query(Category).filter(Category.magnit_id == cat_code).first()
+                        if cat_obj:
+                            job_db.current_category_name = cat_obj.name
+                            job_db.current_category_magnit_id = cat_obj.magnit_id
+                        
+                        bg_db.commit()
+                        
                         result = scanner.scan_products(
                             category_ids=[cat_code], tracked_only=tracked_only
                         )
+                        
+                        # Обновляем прогресс по товарам (после сканирования category)
+                        # Примечание: для точного прогресса нужен totalCount из API
+                        job_db.current_category_items_loaded = result.get("scanned", 0)
+                        job_db.current_category_items_total = result.get("scanned", 0)
                         
                         # После каждой категории обновляем прогресс
                         current_operation += 1

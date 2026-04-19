@@ -25,6 +25,18 @@ def list_jobs(
     return q.order_by(ScanJob.created_at.desc()).limit(limit).all()
 
 
+@router.get("/active", response_model=list[ScanJobResponse])
+def get_active_jobs(
+    job_type: str | None = None,
+    db: Session = Depends(get_db),
+):
+    """Список активных заданий (pending или running)."""
+    q = db.query(ScanJob).filter(ScanJob.status.in_(["pending", "running"]))
+    if job_type:
+        q = q.filter(ScanJob.job_type == job_type)
+    return q.order_by(ScanJob.created_at.desc()).all()
+
+
 @router.get("/{job_id}", response_model=ScanJobResponse)
 def get_job(job_id: int, db: Session = Depends(get_db)):
     """Статус конкретного задания."""

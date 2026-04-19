@@ -191,6 +191,35 @@ def migrate_add_last_scan_found():
 
 migrate_add_last_scan_found()
 
+# === Миграция: добавление полей прогресса в таблицу scan_jobs ===
+def migrate_add_scan_job_progress_fields():
+    """Добавить поля прогресса в таблицу scan_jobs."""
+    inspector = inspect(engine)
+    cols = [c["name"] for c in inspector.get_columns("scan_jobs")]
+    
+    new_fields = [
+        ("total_stores", "INTEGER DEFAULT 0"),
+        ("current_store_index", "INTEGER DEFAULT 0"),
+        ("current_store_code", "STRING"),
+        ("current_store_address", "STRING"),
+        ("total_categories", "INTEGER DEFAULT 0"),
+        ("current_category_index", "INTEGER DEFAULT 0"),
+        ("current_category_name", "STRING"),
+        ("current_category_magnit_id", "INTEGER"),
+        ("current_category_items_total", "INTEGER DEFAULT 0"),
+        ("current_category_items_loaded", "INTEGER DEFAULT 0"),
+    ]
+    
+    for field_name, field_type in new_fields:
+        if field_name not in cols:
+            print(f"Миграция: добавление поля {field_name} в таблицу scan_jobs...", flush=True)
+            with engine.connect() as conn:
+                conn.execute(text(f"ALTER TABLE scan_jobs ADD COLUMN {field_name} {field_type}"))
+                conn.commit()
+            print(f"Поле {field_name} добавлено в таблицу scan_jobs", flush=True)
+
+migrate_add_scan_job_progress_fields()
+
 # === Очистка зависших заданий от предыдущего запуска ===
 from src.server.routes.stores import _mark_all_running_failed_on_startup
 
