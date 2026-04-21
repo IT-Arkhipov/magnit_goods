@@ -9,6 +9,8 @@
   },
   "permission": {
     "*": "ask",
-    "bash": "allow"
+    "bash": "allow",
+    "read": "allow",
+    "edit": "allow"
   }  
 }
