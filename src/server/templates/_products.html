@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 
-{% block title %}Товары - Магнит Goods{% endblock %}
+{% block title %}Товары - М.Косметик{% endblock %}
 
 {% block content %}
 <!-- Панель выбора магазинов для сравнения (Фаза 1) -->
@@ -206,25 +206,29 @@
     border-color: #999;
 }
 
+/* Fix for dropdown width shift when scrollbar appears */
 .category-dropdown {
-    scrollbar-width: thin;
-    -ms-overflow-style: scrollbar;
+    /* Reserve space for scrollbar to prevent layout shift */
+    scrollbar-width: thin; /* Firefox */
+    -ms-overflow-style: scrollbar; /* IE and Edge */
+    /* Always reserve space for scrollbar to prevent layout shift */
     overflow-y: scroll !important;
 }
 .category-dropdown::-webkit-scrollbar {
-    width: 8px;
+    width: 8px; /* WebKit */
 }
 .category-dropdown::-webkit-scrollbar-track {
-    background: #f1f1f1;
+    background: #f1f1f1; 
 }
 .category-dropdown::-webkit-scrollbar-thumb {
-    background: #888;
+    background: #888; 
     border-radius: 4px;
 }
 .category-dropdown::-webkit-scrollbar-thumb:hover {
-    background: #555;
+    background: #555; 
 }
 
+/* Ensure consistent width regardless of scrollbar */
 .category-dropdown-container {
     width: 100%;
     box-sizing: border-box;
@@ -245,8 +249,8 @@
                 <div id="categoryDropdown" class="category-dropdown" style="display: none; position: absolute; top: 100%; left: 0; width: 100%; max-height: 400px; overflow-y: scroll; background: white; border: 1px solid #ddd; border-radius: 4px; z-index: 1000; margin-top: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
                     <div style="padding: 4px 12px;">
                         <span id="selectedCount" style="color: #666; font-size: 14px;">Выбрано: 0</span>
-                        <button id="selectAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="selectAllCategories(); return false;" style="margin-left: 8px; padding: 2px 8px;">Выбрать все</button>
-                        <button id="deselectAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="deselectAllCategories(); return false;" style="padding: 2px 8px;">Снять все</button>
+                        <button class="btn btn-sm btn-secondary" onclick="selectAllCategories(); return false;" style="margin-left: 8px; padding: 2px 8px;">Выбрать все</button>
+                        <button class="btn btn-sm btn-secondary" onclick="deselectAllCategories(); return false;" style="padding: 2px 8px;">Снять все</button>
                     </div>
                     <div id="categoryTree" style="padding: 8px;">
                         <p style="color: #666;">Загрузка категорий...</p>
@@ -291,15 +295,15 @@
             <label>Цена до</label>
             <input type="number" id="maxPrice" placeholder="1000" min="0" disabled style="width: 100%;">
         </div>
-        <div class="form-group">
-            <label>Экономия (%)</label>
-            <select id="savingsFilter">
-                <option value="">-</option>
-                <option value="10">10%</option>
-                <option value="20">20%</option>
-                <option value="30">30%</option>
-            </select>
-        </div>
+<div class="form-group">
+<label>Экономия (%)</label>
+<select id="savingsFilter">
+<option value="">-</option>
+<option value="20">20%</option>
+<option value="40">40%</option>
+<option value="60">60%</option>
+</select>
+</div>
     </div>
 </div>
 
@@ -327,6 +331,27 @@
     </div>
 </div>
 
+<!-- Кнопка прокрутки наверх -->
+<button id="scrollToTopBtn" onclick="scrollToTop()" style="
+    display: none;
+    position: fixed;
+    bottom: 20px;
+    right: 20px;
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: #6f42c1;
+    color: white;
+    border: none;
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.2);
+    z-index: 999;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+">▲</button>
+
 <script>
 // Маппинг числовых кодов типов магазинов на API коды
 const SHOP_TYPE_TO_API_CODE = {
@@ -340,17 +365,20 @@ const SHOP_TYPE_TO_API_CODE = {
     9: "MC",        // Моя цена
 };
 
+// Функция для открытия ссылки на товар
+function openProductLink(url, storeCode, shopType) {
+    // Просто открываем ссылку напрямую
+    // Пользователь сам выберет магазин на сайте Магнита
+    window.open(url, '_blank');
+}
+
 // Глобальные переменные для работы с категориями
 let selectedCategoryIds = [];
 let categoryTreeData = null;
 
 // Глобальные переменные для отслеживания изменений
 let lastSelectedCategoryIds = [];
-
-// Функция для открытия ссылки на товар
-function openProductLink(url, storeCode, shopType) {
-    window.open(url, '_blank');
-}
+let lastSavingsValue = '';
 
 // Функции для работы с dropdown категорий
 function toggleCategoryDropdown() {
@@ -363,24 +391,29 @@ function toggleCategoryDropdown() {
     }
 }
 
+// Закрытие dropdown при клике вне его — только при реальном изменении списка категорий
 document.addEventListener('click', function(event) {
     const dropdown = document.getElementById('categoryDropdown');
     const button = document.getElementById('categoryDropdownButton');
     if (dropdown && button && !dropdown.contains(event.target) && !button.contains(event.target)) {
         if (dropdown.style.display !== 'none') {
+            // Сравниваем с предыдущим состоянием
             const currentIdsJSON = JSON.stringify(selectedCategoryIds);
             const prevIdsJSON = JSON.stringify(lastSelectedCategoryIds);
             
             if (currentIdsJSON !== prevIdsJSON) {
+                // Список категорий изменился — загружаем товары
                 loadProducts();
             }
             
+            // Обновляем последнее состояние
             lastSelectedCategoryIds = [...selectedCategoryIds];
             dropdown.style.display = 'none';
         }
     }
 });
 
+// Загрузка дерева категорий
 async function loadCategoryTree() {
     const categoryTree = document.getElementById('categoryTree');
     try {
@@ -389,7 +422,6 @@ async function loadCategoryTree() {
         renderCategoryTree(categoryTreeData);
         updateCheckboxes();
         updateSelectedCount();
-        updateCategoryButtons();
         return categoryTreeData;
     } catch (error) {
         categoryTree.innerHTML = '<p style="color: #dc3545;">Ошибка загрузки категорий</p>';
@@ -397,10 +429,12 @@ async function loadCategoryTree() {
     }
 }
 
+// Рендеринг дерева категорий
 function renderCategoryTree(categories, parentId = null) {
     const container = document.getElementById('categoryTree');
     let html = '';
     
+    // Функция для подсчёта общего количества товаров в категории и её детях
     function getTotalProductCount(cat) {
         let count = cat.product_count || 0;
         if (cat.children) {
@@ -416,6 +450,8 @@ function renderCategoryTree(categories, parentId = null) {
         const hasChildren = category.children && category.children.length > 0;
         const isChecked = selectedCategoryIds.includes(category.id);
         const trackedClass = category.is_tracked ? 'category-tracked' : '';
+        
+        // Используем общее количество для категорий с детьми
         const totalCount = getTotalProductCount(category);
         
         html += `
@@ -442,20 +478,25 @@ function renderCategoryTree(categories, parentId = null) {
     container.innerHTML = html;
 }
 
+// Обработчик чекбокса категории
 function toggleCategoryCheckbox(checkbox) {
     const categoryId = parseInt(checkbox.value);
     
     if (checkbox.checked) {
+        // Добавляем эту категорию и все её дочерние
         addCategoryAndChildren(categoryId);
     } else {
+        // Убираем эту категорию и все её дочерние
         removeCategoryAndChildren(categoryId);
     }
     
     updateSelectedCount();
     updateDropdownText();
     updateCheckboxes();
+    // Обновление товаров происходит при закрытии dropdown
 }
 
+// Добавляем категорию и все её дочерние в выбранные
 function addCategoryAndChildren(categoryId) {
     if (!categoryTreeData) return;
     
@@ -479,6 +520,7 @@ function addCategoryAndChildren(categoryId) {
     traverseAndAdd(categoryTreeData);
 }
 
+// Убираем категорию и все её дочерние из выбранных
 function removeCategoryAndChildren(categoryId) {
     if (!categoryTreeData) return;
     
@@ -499,6 +541,7 @@ function removeCategoryAndChildren(categoryId) {
     traverseAndRemove(categoryTreeData);
 }
 
+// Проверяем, является ли категория родителем другой
 function isParentOf(parentId, childId) {
     if (!categoryTreeData) return false;
     
@@ -506,8 +549,10 @@ function isParentOf(parentId, childId) {
         for (let i = 0; i < categories.length; i++) {
             const cat = categories[i];
             if (cat.id === parentId) {
+                // Проверяем прямых детей
                 for (let j = 0; j < cat.children.length; j++) {
                     if (cat.children[j].id === childId) return true;
+                    // Рекурсивно проверяем внуков
                     if (isParentOfRecursive(cat.children[j].id, childId, cat.children)) {
                         return true;
                     }
@@ -523,6 +568,7 @@ function isParentOf(parentId, childId) {
     return traverse(categoryTreeData);
 }
 
+// Рекурсивная проверка родительско-дочерних отношений
 function isParentOfRecursive(currentId, targetId, categories) {
     for (let i = 0; i < categories.length; i++) {
         const cat = categories[i];
@@ -541,6 +587,9 @@ function isParentOfRecursive(currentId, targetId, categories) {
     return false;
 }
 
+
+
+// Обновление всех чекбоксов
 function updateCheckboxes() {
     if (!categoryTreeData) return;
     
@@ -548,22 +597,27 @@ function updateCheckboxes() {
         categories.forEach(cat => {
             const checkbox = document.getElementById(`cat-${cat.id}`);
             if (checkbox) {
+                // Для категорий с детьми проверяем состояние дочерних
                 if (cat.children && cat.children.length > 0) {
                     const childCheckedCount = cat.children.filter(child => 
                         selectedCategoryIds.includes(child.id)).length;
                     const totalChildren = cat.children.length;
                     
                     if (childCheckedCount === totalChildren) {
+                        // Все дочерние выбраны
                         checkbox.checked = true;
                         checkbox.indeterminate = false;
                     } else if (childCheckedCount === 0) {
+                        // Ни один дочерний не выбран
                         checkbox.checked = false;
                         checkbox.indeterminate = false;
                     } else {
+                        // Некоторые дочерние выбраны
                         checkbox.checked = false;
                         checkbox.indeterminate = true;
                     }
                 } else {
+                    // Листовая категория
                     checkbox.checked = selectedCategoryIds.includes(cat.id);
                     checkbox.indeterminate = false;
                 }
@@ -577,6 +631,7 @@ function updateCheckboxes() {
     updateNodeChecks(categoryTreeData);
 }
 
+// Выбрать все категории
 function selectAllCategories() {
     if (!categoryTreeData) return;
     
@@ -595,60 +650,23 @@ function selectAllCategories() {
     updateCheckboxes();
     updateSelectedCount();
     updateDropdownText();
-    updateCategoryButtons();
+    // Обновление товаров происходит при закрытии dropdown
 }
 
+// Снять все категории
 function deselectAllCategories() {
     selectedCategoryIds = [];
     updateCheckboxes();
     updateSelectedCount();
     updateDropdownText();
-    updateCategoryButtons();
+    // Обновление товаров происходит при закрытии dropdown
 }
 
-function updateCategoryButtons() {
-    const selectBtn = document.getElementById('selectAllCategoriesBtn');
-    const deselectBtn = document.getElementById('deselectAllCategoriesBtn');
-    if (!selectBtn || !deselectBtn) return;
-    
-    const totalChildCount = getTotalChildCount();
-    const childCount = getSelectedChildCount();
-    
-    selectBtn.disabled = childCount === totalChildCount;
-    deselectBtn.disabled = childCount === 0;
-}
-
-function getTotalChildCount() {
-    let count = 0;
-    if (categoryTreeData) {
-        function countChild(categories) {
-            categories.forEach(cat => {
-                if (cat.parent_id !== null) count++;
-                if (cat.children) countChild(cat.children);
-            });
-        }
-        countChild(categoryTreeData);
-    }
-    return count;
-}
-
-function getSelectedChildCount() {
-    let count = 0;
-    if (categoryTreeData) {
-        function countChild(categories) {
-            categories.forEach(cat => {
-                if (cat.parent_id !== null && selectedCategoryIds.includes(cat.id)) count++;
-                if (cat.children) countChild(cat.children);
-            });
-        }
-        countChild(categoryTreeData);
-    }
-    return count;
-}
-
+// Обновление счетчика выбранных категорий
 function updateSelectedCount() {
     const countElement = document.getElementById('selectedCount');
     if (countElement) {
+        // Считаем только дочерние категории (где parent_id не null) для согласованности с каталогом
         let childCount = 0;
         if (categoryTreeData) {
             function countChildCategories(categories) {
@@ -665,12 +683,14 @@ function updateSelectedCount() {
         }
         countElement.textContent = `Выбрано: ${childCount}`;
     }
-    updateCategoryButtons();
+    saveFilterState();
 }
 
+// Обновление текста на кнопке dropdown
 function updateDropdownText() {
     const textElement = document.getElementById('categoryDropdownText');
     
+    // Считаем только дочерние категории (где parent_id не null) для согласованности с каталогом
     let childCount = 0;
     let totalChildCount = 0;
     
@@ -698,12 +718,15 @@ function updateDropdownText() {
     } else {
         textElement.textContent = `Выбрано: ${childCount}`;
     }
+    saveFilterState();
 }
 
+// Сохранение состояния фильтров в localStorage
 function saveFilterState() {
     localStorage.setItem('categoryFilter_selectedIds', JSON.stringify(selectedCategoryIds));
 }
 
+// Загрузка состояния фильтров из localStorage
 function loadFilterState() {
     const savedIds = localStorage.getItem('categoryFilter_selectedIds');
     
@@ -712,27 +735,44 @@ function loadFilterState() {
     }
 }
 
-async function loadProducts() {
-    const storeCode = document.getElementById('storeCode')?.value || '';
-    const search = document.getElementById('searchFilter')?.value || '';
-    const sort = document.getElementById('sortFilter')?.value || 'name';
+// Применение фильтра категорий
+function applyCategoryFilter() {
+    document.getElementById('categoryDropdown').style.display = 'none';
+    saveFilterState();
+    loadProducts();
+}
 
+async function loadProducts() {
+    const storeCodeEl = document.getElementById('storeCode');
+    const storeCode = storeCodeEl ? storeCodeEl.value : '';
+    const categoryEl = document.getElementById('categoryFilter');
+    const category = categoryEl ? categoryEl.value : '';
+    const searchEl = document.getElementById('searchFilter');
+    const search = searchEl ? searchEl.value : '';
+    const sortEl = document.getElementById('sortFilter');
+    const sort = sortEl ? sortEl.value : 'name';
+
+    // Получаем выбранные магазины для сравнения
     const selectedStores = getSelectedStores();
+    
+    // Если нет выбранного магазина в поле, берём первый из выбранных для сравнения
     const activeStoreCode = storeCode || (selectedStores.length > 0 ? selectedStores[0] : null);
 
     if (!activeStoreCode) {
         const listDiv = document.getElementById('products-list');
-        listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения или укажите код магазина</p>';
+        if (listDiv) listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения или укажите код магазина</p>';
         return;
     }
 
     const listDiv = document.getElementById('products-list');
+    if (!listDiv) return;
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
-    try {
+try {
         let url = `/api/products?store_code=${encodeURIComponent(activeStoreCode)}&sort_by=${sort}&limit=100`;
         
         if (selectedCategoryIds.length > 0) {
+            // Используем выбранные категории через чекбоксы
             url += `&category_ids=${selectedCategoryIds.join(',')}`;
         }
         
@@ -765,7 +805,7 @@ async function loadProducts() {
             });
             
             for (const storeCode of otherStores) {
-                const resp = await fetch(`/api/products?store_code=${storeCode}&limit=500`);
+                const resp = await fetch(`/api/products?store_code=${storeCode}&limit=0`);
                 const prods = await resp.json();
                 const priceMap = {};
                 prods.forEach(p => priceMap[p.product_id] = p.price);
@@ -842,7 +882,7 @@ async function loadProducts() {
             `;
 
             catData.products.forEach(p => {
-                const promoBadge = '';
+                const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция до ${p.promo_discount ? p.promo_discount + '%' : ''}">🔥 Акция</span> ` : '';
                 const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
                 const qtyBadge = p.quantity !== undefined ? `<span style="font-size:12px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
                 
@@ -888,6 +928,27 @@ async function loadProducts() {
         listDiv.innerHTML = html;
     } catch (e) {
         listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+async function loadCategories() {
+    const selectedStores = getSelectedStores();
+    if (selectedStores.length === 0) return;
+    
+    const storeCode = selectedStores[0];
+
+    try {
+        const response = await fetch(`/api/categories?store_code=${encodeURIComponent(storeCode)}`);
+        const categories = await response.json();
+
+        const select = document.getElementById('categoryFilter');
+        if (!select) return;
+        select.innerHTML = '<option value="">Все категории</option>';
+        categories.forEach(cat => {
+            select.innerHTML += `<option value="${cat.id}">${cat.name} (${cat.product_count || 0})</option>`;
+        });
+    } catch (e) {
+        console.error('Ошибка загрузки категорий:', e);
     }
 }
 
@@ -968,6 +1029,23 @@ function escapeHtml(text) {
     div.textContent = text;
     return div.innerHTML;
 }
+
+// Прокрутка наверх
+function scrollToTop() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+
+// Показ/скрытие кнопки прокрутки наверх
+window.addEventListener('scroll', function() {
+    const btn = document.getElementById('scrollToTopBtn');
+    if (btn) {
+        if (window.scrollY > 200) {
+            btn.style.display = 'block';
+        } else {
+            btn.style.display = 'none';
+        }
+    }
+});
 
 async function compareInStores(productId, currentStoreCode, productName) {
     const modal = document.getElementById('compareModal');
@@ -1250,7 +1328,7 @@ function applyStoreComparison() {
     localStorage.setItem('compareStores', JSON.stringify(selected));
     
     // Загружаем категории и товары
-    loadFilterState();
+    loadCategories();
     loadProducts();
     
     // Раскрываем/сворачиваем категории в зависимости от выбора экономии
@@ -1299,19 +1377,19 @@ document.addEventListener('DOMContentLoaded', () => {
                     // Если нет валидных магазинов, очищаем localStorage
                     localStorage.removeItem('compareStores');
                     // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                    loadCategories();
+                    loadProducts();
                 } else if (validSavedStores.length < savedStores.length) {
                     // Если некоторые магазины невалидны, обновляем localStorage
                     localStorage.setItem('compareStores', JSON.stringify(validSavedStores));
                     // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                    loadCategories();
+                    loadProducts();
                 } else {
                     // Все магазины валидны
                     // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                    loadCategories();
+                    loadProducts();
                 }
             })
             .catch(err => {
@@ -1337,15 +1415,29 @@ document.addEventListener('DOMContentLoaded', () => {
                     }, 100);
                 }
                 // Загружаем товары
-                loadFilterState();
+                loadCategories();
                 loadProducts();
             })
             .catch(err => {
                 console.error('Ошибка выбора первого магазина:', err);
-                loadFilterState();
+                loadCategories();
                 loadProducts();
             });
     }
+});
+
+// Инициализация переменных для отслеживания изменений после загрузки категорий
+document.addEventListener('DOMContentLoaded', () => {
+    // Дожидаемся загрузки категорий
+    setTimeout(() => {
+        if (typeof loadCategoryTree === 'function') {
+            loadCategoryTree().then(() => {
+                lastSelectedCategoryIds = [...selectedCategoryIds];
+                const savingsFilterEl = document.getElementById('savingsFilter');
+                lastSavingsValue = savingsFilterEl ? savingsFilterEl.value : '';
+            });
+        }
+    }, 100);
 });
 
 // Поиск первого магазина с товарами
@@ -1407,8 +1499,12 @@ async function loadProductStats() {
 
 // Улучшенная функция loadProducts с поддержкой новых фильтров
 async function loadProductsEnhanced() {
-    const search = document.getElementById('searchFilter')?.value || '';
-    const sort = document.getElementById('sortFilter')?.value || 'name';
+    const categoryEl = document.getElementById('categoryFilter');
+    const category = categoryEl ? categoryEl.value : '';
+    const searchEl = document.getElementById('searchFilter');
+    const search = searchEl ? searchEl.value : '';
+    const sortEl = document.getElementById('sortFilter');
+    const sort = sortEl ? sortEl.value : 'name';
     const stockFilter = document.getElementById('stockFilter')?.value || '';
     const promoFilter = document.getElementById('promoFilter')?.value || '';
     const minPrice = document.getElementById('minPrice')?.value || '';
@@ -1419,14 +1515,27 @@ async function loadProductsEnhanced() {
 
     if (selectedStores.length === 0) {
         const listDiv = document.getElementById('products-list');
-        listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения</p>';
+        if (listDiv) listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения</p>';
         return;
     }
 
     const listDiv = document.getElementById('products-list');
+    if (!listDiv) return;
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
 
     try {
+        // Определяем категории для фильтрации
+        let categoryIdsToUse = [];
+        if (selectedCategoryIds.length > 0) {
+            // Используем выбранные пользователем категории
+            categoryIdsToUse = selectedCategoryIds;
+        } else {
+            // Используем отслеживаемые категории как запасной вариант
+            const trackedResp = await fetch('/api/categories?tracked=true');
+            const trackedCategories = await trackedResp.json();
+            categoryIdsToUse = trackedCategories.filter(c => c.parent_id).map(c => c.id);
+        }
+        
         // Загружаем товары из всех выбранных магазинов
         let allProducts = [];
         const productMap = {}; // Для дедупликации по product_id
@@ -1436,9 +1545,11 @@ async function loadProductsEnhanced() {
             let hasMore = true;
             
             while (hasMore) {
-                let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=500&offset=${offset}`;
-                if (selectedCategoryIds.length > 0) {
-                    url += `&category_ids=${selectedCategoryIds.join(',')}`;
+                let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=0&offset=${offset}`;
+                if (category) {
+                    url += `&category_id=${category}`;
+                } else if (categoryIdsToUse.length > 0) {
+                    url += `&category_ids=${categoryIdsToUse.join(',')}`;
                 }
                 if (search) url += `&search=${encodeURIComponent(search)}`;
                 if (minPrice) url += `&min_price=${minPrice}`;
@@ -1451,6 +1562,7 @@ async function loadProductsEnhanced() {
                     if (products.length === 0) {
                         hasMore = false;
                     } else {
+                        offset += products.length;
                         // Объединяем товары, избегая дубликатов
                         products.forEach(p => {
                             if (!productMap[p.product_id]) {
@@ -1458,7 +1570,6 @@ async function loadProductsEnhanced() {
                                 allProducts.push(p);
                             }
                         });
-                        offset += products.length;
                     }
                 } catch (e) {
                     console.error(`Ошибка загрузки товаров из магазина ${storeCode} (offset=${offset}):`, e);
@@ -1708,7 +1819,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                     `;
                     
                      catData.products.forEach(p => {
-                         const promoBadge = '';
+                         const promoBadge = p.is_promotion ? `<span class="badge badge-warning" title="Акция">🔥</span> ` : '';
                          
                          // Сбор цен из всех выбранных магазинов
                          const productPrices = {};
@@ -1750,10 +1861,10 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
-                                // Создаем ссылку на товар в Магните
-                                const seoCode = priceInfo.seo_code;
-                                const shopType = priceInfo.shop_type;
-                                const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+          // Создаем ссылку на товар в М.Косметик
+          const seoCode = priceInfo.seo_code;
+          const shopType = priceInfo.shop_type;
+          const productUrl = seoCode && shopType ? `https://cosmetic.magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
                                 const priceLink = productUrl 
                                     ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                                     : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
@@ -1851,10 +1962,10 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                           const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                           const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                           
-                          // Создаем ссылку на товар в Магните
-                          const seoCode = priceInfo.seo_code;
-                          const shopType = priceInfo.shop_type;
-                          const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+          // Создаем ссылку на товар в М.Косметик
+          const seoCode = priceInfo.seo_code;
+          const shopType = priceInfo.shop_type;
+          const productUrl = seoCode && shopType ? `https://cosmetic.magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
                           const priceLink = productUrl 
                               ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                               : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
@@ -1868,7 +1979,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
               const activePriceInfo = productPrices[activeStoreCode];
               const activeShopType = activePriceInfo?.shop_type;
               const activeSeoCode = activePriceInfo?.seo_code;
-              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}` : null;
+              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://cosmetic.magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}` : null;
               const activePriceLink = activeProductUrl 
                   ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeStoreCode}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
                   : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
@@ -1879,7 +1990,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
     listDiv.innerHTML = html;
 }
 
-// Переключение родительской категории
+// Переключение родительской категории (только UI, без загрузки товаров)
 function toggleParentCategory(id) {
     const el = document.getElementById('parent-' + id);
     const arrow = el.previousElementSibling.querySelector('.parent-arrow');
@@ -1892,7 +2003,7 @@ function toggleParentCategory(id) {
     }
 }
 
-// Переключение дочерней категории
+// Переключение дочерней категории (только UI, без загрузки товаров)
 function toggleChildCategory(id) {
     const el = document.getElementById('child-' + id);
     const arrow = el.previousElementSibling.querySelector('.child-arrow');
@@ -1903,6 +2014,41 @@ function toggleChildCategory(id) {
         el.style.display = 'none';
         arrow.style.transform = 'rotate(0deg)';
     }
+}
+
+// Состояние для отслеживания, развёрнуты ли все категории
+let allCategoriesExpanded = false;
+// Список раскрытых категорий для восстановления после обновления
+let expandedCategories = [];
+
+// Функция для сбора списка раскрытых категорий
+function getExpandedCategories() {
+    const expanded = [];
+    document.querySelectorAll('.parent-content').forEach(el => {
+        if (el.style.display === 'block') {
+            expanded.push(el.id);
+        }
+    });
+    document.querySelectorAll('.child-content').forEach(el => {
+        if (el.style.display === 'block') {
+            expanded.push(el.id);
+        }
+    });
+    return expanded;
+}
+
+// Функция для восстановления раскрытых категорий
+function restoreExpandedCategories(expandedList) {
+    expandedList.forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.style.display = 'block';
+            const arrow = el.previousElementSibling.querySelector('.parent-arrow, .child-arrow');
+            if (arrow) {
+                arrow.style.transform = 'rotate(90deg)';
+            }
+        }
+    });
 }
 
 // Развернуть/свернуть все
@@ -1970,9 +2116,6 @@ function getSavingsFontSize(savingsPercent) {
     const fontSizeIncrease = Math.floor(savingsPercent / 10);
     return `${fontSizeIncrease}px`;
 }
-
-// Состояние для отслеживания, развёрнуты ли все категории
-let allCategoriesExpanded = false;
 
 // Переключение состояния всех категорий
 function toggleAllCategoriesState() {
@@ -2044,17 +2187,27 @@ document.addEventListener('DOMContentLoaded', () => {
         const savedSavings = localStorage.getItem('savingsFilter');
         if (savedSavings) {
             savingsFilterEl.value = savedSavings;
+            lastSavingsValue = savedSavings;
         }
         
         savingsFilterEl.addEventListener('change', () => {
+            // Проверяем, изменилось ли значение
+            if (savingsFilterEl.value === lastSavingsValue) {
+                return; // Значение не изменилось - не обновляем товары
+            }
+            
             // Сохраняем выбранный процент в localStorage
+            lastSavingsValue = savingsFilterEl.value;
             localStorage.setItem('savingsFilter', savingsFilterEl.value);
+            
+            // Сохраняем текущее состояние раскрытия перед обновлением
+            expandedCategories = getExpandedCategories();
+            
             loadProducts();
-            // Раскрываем все категории если выбран процент, иначе сворачиваем
-            if (savingsFilterEl.value !== '') {
-                setTimeout(expandAllCategories, 1000);
-            } else {
-                setTimeout(collapseAllButFirst, 1000);
+            
+            // Восстанавливаем состояние раскрытия после загрузки товаров
+            if (expandedCategories.length > 0) {
+                setTimeout(() => restoreExpandedCategories(expandedCategories), 1000);
             }
         });
     }
@@ -2072,29 +2225,30 @@ document.addEventListener('DOMContentLoaded', () => {
          });
      }
      
-     // Применяем сохранённый процент экономии при загрузке страницы
-     const savedSavings = localStorage.getItem('savingsFilter');
-     if (savedSavings && savingsFilterEl) {
-         savingsFilterEl.value = savedSavings;
-         // Загружаем товары с применённым фильтром
-         setTimeout(() => {
-             loadProducts();
-             // Раскрываем категории если выбран процент (не "-")
-             if (savedSavings !== '') {
-                 // Пытаемся раскрыть категории с несколькими попытками
-                 setTimeout(expandAllCategories, 1500);
-                 setTimeout(expandAllCategories, 2500);
-             } else {
-                 setTimeout(collapseAllButFirst, 1500);
-             }
-         }, 100);
-     }
-     
-     // Загружаем товары при загрузке страницы если есть выбранные магазины
-     const selectedStores = getSelectedStores();
-     if (selectedStores.length > 0) {
-         setTimeout(loadProducts, 500);
-     }
+// Применяем сохранённый процент экономии при загрузке страницы
+       const savedSavings = localStorage.getItem('savingsFilter');
+       if (savedSavings && savingsFilterEl) {
+           savingsFilterEl.value = savedSavings;
+       }
+       
+// Загружаем состояние фильтров категорий
+        loadFilterState();
+        
+        // Инициализируем переменные для отслеживания изменений
+        lastSelectedCategoryIds = [...selectedCategoryIds];
+        lastSavingsValue = savingsFilterEl ? savingsFilterEl.value : '';
+        
+        // Загружаем дерево категорий для отображения количества выбранных
+        // и обновляем текст dropdown после загрузки
+        loadCategoryTree().then(() => {
+            updateDropdownText();
+        });
+       
+// Загружаем товары при загрузке страницы если есть выбранные магазины или категории
+        const selectedStores = getSelectedStores();
+        if (selectedStores.length > 0 || selectedCategoryIds.length > 0) {
+            setTimeout(loadProducts, 500);
+        }
 });
 </script>
 {% endblock %}
