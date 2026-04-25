@@ -1127,19 +1127,12 @@ async function loadProductsEnhanced() {
 
         // Загружаем цены из всех выбранных магазинов для сравнения
         let allStorePrices = {};
-        const seoCodes = products.map(p => p.seo_code).filter(Boolean);
-        if (seoCodes.length > 0 && selectedStores.length > 0) {
+        const productIds = products.map(p => p.product_id).join(',');
+        if (productIds && selectedStores.length > 0) {
             try {
-                const maxCodes = 200;
-                for (let i = 0; i < seoCodes.length; i += maxCodes) {
-                    const batch = seoCodes.slice(i, i + maxCodes);
-                    const pricesUrl = `/api/products/multi-prices?seo_codes=${batch.join(',')}&store_codes=${selectedStores.join(',')}`;
-                    const pricesResp = await fetch(pricesUrl);
-                    if (pricesResp.ok) {
-                        const data = await pricesResp.json();
-                        Object.assign(allStorePrices, data);
-                    }
-                }
+                const pricesUrl = `/api/products/multi-prices?product_ids=${productIds}&store_codes=${selectedStores.join(',')}`;
+                const pricesResp = await fetch(pricesUrl);
+                allStorePrices = await pricesResp.json();
             } catch (e) {
                 console.error('Ошибка загрузки цен из магазинов:', e);
             }
@@ -1188,10 +1181,6 @@ async function loadProductsEnhanced() {
             });
         }
 
-        // DEBUG
-        console.log('allStorePrices keys:', Object.keys(allStorePrices).length);
-        if (products[0]) console.log('first product seo_code:', products[0].seo_code, 'in allStorePrices:', !!allStorePrices[products[0].seo_code]);
-        
         // Используем существующую логику рендеринга
         renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv);
         
@@ -1316,7 +1305,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                          // Сбор цен из всех выбранных магазинов
                          const productPrices = {};
                          selectedStores.forEach(storeCode => {
-const priceInfo = allStorePrices[p.seo_code]?.[storeCode];
+                             const priceInfo = allStorePrices[p.product_id]?.[storeCode];
                              if (priceInfo) {
                                  productPrices[storeCode] = priceInfo;
                              }
@@ -1352,7 +1341,6 @@ const priceInfo = allStorePrices[p.seo_code]?.[storeCode];
                                 const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
-                                console.log('tooltip p.seo_code:', p.seo_code, 'productPrices:', Object.keys(productPrices), 'tooltipText:', tooltipText);
                                 
                                 // Создаем ссылку на товар в Магните
                                 const seoCode = priceInfo.seo_code;
