@@ -259,7 +259,7 @@ def list_products(
     min_price: Optional[float] = Query(None),
     max_price: Optional[float] = Query(None),
     sort_by: str = Query("name", pattern="^(name|price|discount|last_seen)$"),
-    limit: int = Query(100, le=500),
+    limit: Optional[int] = Query(None, le=2000),
     offset: int = Query(0),
     db: Session = Depends(get_db),
 ):
@@ -283,41 +283,11 @@ def list_products(
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
     
-    # Фильтруем товары, которые были найдены при последнем сканировании категории
-    # Показываем только товары, обновленные не позднее 1 часа от последнего обновления категории
-    if store_code:
-        from datetime import timedelta
-        
-        # Получаем максимальное время last_scan_found для каждой категории в этом магазине
-        from sqlalchemy import func
-        
-        max_scan_times = db.query(
-            Product.category_id,
-            func.max(Product.last_scan_found).label('max_scan_time')
-        ).filter(
-            Product.store_code == store_code,
-            Product.last_scan_found.isnot(None)
-        ).group_by(Product.category_id).all()
-        
-        # Создаем словарь с максимальным временем для каждой категории
-        scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
-        
-        if scan_times_dict:
-            # Для каждой категории показываем товары, обновленные не позднее 1 часа от последнего обновления
-            # ИЛИ товары, у которых last_scan_found не установлен (старые товары)
-            conditions = []
-            for cat_id, max_time in scan_times_dict.items():
-                cutoff_time = max_time - timedelta(hours=1)
-                conditions.append(
-                    (Product.category_id == cat_id) & 
-                    (
-                        ((Product.last_scan_found >= cutoff_time) & (Product.last_scan_found <= max_time)) |
-                        (Product.last_scan_found.is_(None))
-                    )
-                )
-            
-            from sqlalchemy import or_
-            query = query.filter(or_(*conditions))
+    # Фильтруем товары по времени сканирования (ОТКЛЮЧЕНО - показываем все товары)
+    # Раскомментируйте если нужно показывать только свежие товары:
+    # if store_code:
+    #     from datetime import timedelta
+    #     ...
     
     if sort_by == "price":
         query = query.order_by(Product.price.asc())
@@ -330,7 +300,11 @@ def list_products(
     else:
         query = query.order_by(Product.name.asc())
 
-    products = query.offset(offset).limit(limit).all()
+    # Если лимит не указан - загружаем все товары
+    if limit:
+        products = query.offset(offset).limit(limit).all()
+    else:
+        products = query.offset(offset).all()
 
     result = []
     for p in products:
@@ -403,42 +377,71 @@ def get_products_stats(
 
 @router.get("/products/multi-prices")
 def get_multi_store_prices(
-    product_ids: str = Query(..., description="Comma-separated product IDs"),
+    product_ids: str = Query(None, description="Comma-separated product IDs (deprecated, use seo_codes)"),
+    seo_codes: str = Query(None, description="Comma-separated SEO codes for cross-store matching"),
     store_codes: str = Query(..., description="Comma-separated store codes"),
     db: Session = Depends(get_db),
 ):
-    """Получение цен товаров из нескольких магазинов."""
+    """Получение цен товаров из нескольких магазинов.
+    
+    Работает в двух режимах:
+    1. По seo_codes - ищет товары по seo_code (одинаковый для одного товара во всех магазинах)
+    2. По product_ids - ищет товары по product_id (работает только в одном магазине)
+    """
     from src.server.models import Store
     
-    pid_list = [int(x.strip()) for x in product_ids.split(',') if x.strip().isdigit()]
     store_list = [x.strip() for x in store_codes.split(',') if x.strip()]
     
-    if not pid_list or not store_list:
+    if not store_list:
         return {}
     
-    # Получаем информацию о магазинах (shop_type)
     stores = db.query(Store).filter(Store.store_code.in_(store_list)).all()
     store_shop_type_map = {s.store_code: s.shop_type for s in stores}
     
-    products = db.query(Product).filter(
-        Product.product_id.in_(pid_list),
-        Product.store_code.in_(store_list)
-    ).all()
-    
     result = {}
-    for p in products:
-        if p.product_id not in result:
-            result[p.product_id] = {}
-        result[p.product_id][p.store_code] = {
-            "price": p.price,
-            "old_price": p.old_price,
-            "in_stock": p.in_stock,
-            "discount_percent": p.discount_percent,
-            "quantity": p.quantity,
-            "last_seen": p.last_seen.isoformat() if p.last_seen else None,
-            "seo_code": p.seo_code,
-            "shop_type": store_shop_type_map.get(p.store_code),
-        }
+    
+    if seo_codes:
+        seo_list = [x.strip() for x in seo_codes.split(',') if x.strip()]
+        if seo_list:
+            products = db.query(Product).filter(
+                Product.seo_code.in_(seo_list),
+                Product.store_code.in_(store_list)
+            ).all()
+            
+            for p in products:
+                if p.seo_code not in result:
+                    result[p.seo_code] = {}
+                result[p.seo_code][p.store_code] = {
+                    "price": p.price,
+                    "old_price": p.old_price,
+                    "in_stock": p.in_stock,
+                    "discount_percent": p.discount_percent,
+                    "quantity": p.quantity,
+                    "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+                    "seo_code": p.seo_code,
+                    "shop_type": store_shop_type_map.get(p.store_code),
+                }
+    elif product_ids:
+        pid_list = [int(x.strip()) for x in product_ids.split(',') if x.strip().isdigit()]
+        if pid_list:
+            products = db.query(Product).filter(
+                Product.product_id.in_(pid_list),
+                Product.store_code.in_(store_list)
+            ).all()
+            
+            for p in products:
+                if p.product_id not in result:
+                    result[p.product_id] = {}
+                result[p.product_id][p.store_code] = {
+                    "price": p.price,
+                    "old_price": p.old_price,
+                    "in_stock": p.in_stock,
+                    "discount_percent": p.discount_percent,
+                    "quantity": p.quantity,
+                    "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+                    "seo_code": p.seo_code,
+                    "shop_type": store_shop_type_map.get(p.store_code),
+                }
     
     return result
 
