@@ -1489,6 +1489,13 @@ async function loadProductsEnhanced() {
         listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения</p>';
         return;
     }
+    
+    // Проверка: если категории не выбраны, показываем сообщение
+    if (selectedCategoryIds.length === 0) {
+        const listDiv = document.getElementById('products-list');
+        listDiv.innerHTML = '<p style="color: #666;">Выберите категории для отображения товаров</p>';
+        return;
+    }
 
     const listDiv = document.getElementById('products-list');
     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
