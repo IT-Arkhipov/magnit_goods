@@ -768,10 +768,16 @@ async function loadProducts() {
                 const resp = await fetch(`/api/products?store_code=${storeCode}&limit=500`);
                 const prods = await resp.json();
                 const priceMap = {};
-                prods.forEach(p => priceMap[p.product_id] = p.price);
+                const oldPriceMap = {};
+                prods.forEach(p => {
+                    priceMap[p.product_id] = p.price;
+                    oldPriceMap[p.product_id] = p.old_price;
+                });
                 products.forEach(p => {
                     if (!p.otherPrices) p.otherPrices = {};
+                    if (!p.otherOldPrices) p.otherOldPrices = {};
                     p.otherPrices[storeCode] = priceMap[p.product_id];
+                    p.otherOldPrices[storeCode] = oldPriceMap[p.product_id];
                 });
             }
         }
@@ -832,8 +838,6 @@ async function loadProducts() {
                                     <th>Название</th>
                                     ${compareStoresInfo.length > 0 ? compareStoresInfo.map(s => `<th style="font-size:11px;">${s.name.substring(0,15)}...</th>`).join('') : ''}
                                     <th>Цена</th>
-                                    <th>Старая цена</th>
-                                    <th>Скидка</th>
                                     <th>Наличие</th>
                                     <th>Действия</th>
                                 </tr>
@@ -853,8 +857,28 @@ async function loadProducts() {
                     const minPrice = Math.min(...allPrices);
                     compareStoresInfo.forEach(s => {
                         const price = p.otherPrices?.[s.code];
+                        const oldPrice = p.otherOldPrices?.[s.code];
                         if (price) {
-                            otherPricesHtml += `<td style="font-size:13px;font-weight:bold;${price === minPrice ? 'color:#e31e25;' : 'color:#333;'}">${price} ₽</td>`;
+                            // Расчёт скидки
+                            const discount = oldPrice && oldPrice > price 
+                                ? Math.round(((oldPrice - price) / oldPrice) * 100) 
+                                : 0;
+                            
+                            // Формирование текста цены
+                            const priceText = discount > 0 
+                                ? `${price} ₽ <span style="color:#28a745;">(-${discount}%)</span>` 
+                                : `${price} ₽`;
+                            
+                            // Tooltip
+                            const tooltipHtml = oldPrice 
+                                ? `<span class="price-tooltip">Старая цена: ${oldPrice} ₽</span>` 
+                                : '';
+                            
+                            // Цвет
+                            const isMinPrice = price === minPrice;
+                            const priceColor = (discount > 0 || isMinPrice) ? '#e31e25' : '#333';
+                            
+                            otherPricesHtml += `<td class="price-cell" style="font-size:13px;font-weight:bold;color:${priceColor};">${priceText}${tooltipHtml}</td>`;
                         } else {
                             otherPricesHtml += `<td style="color:#999;">-</td>`;
                         }
@@ -865,9 +889,20 @@ async function loadProducts() {
                     <tr>
                         <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
                         ${otherPricesHtml}
-                        <td><span class="price-current">${p.price} ₽</span></td>
-                        <td>${p.old_price ? `<span class="price-old">${p.old_price} ₽</span>` : '-'}</td>
-                        <td>${p.discount_percent ? `<span class="discount-badge">-${p.discount_percent}%</span>` : (p.promo_discount ? `<span class="discount-badge">-${p.promo_discount}%</span>` : '-')}</td>
+                        <td class="price-cell">
+                            ${(() => {
+                                const discount = p.old_price && p.old_price > p.price 
+                                    ? Math.round(((p.old_price - p.price) / p.old_price) * 100) 
+                                    : 0;
+                                const priceText = discount > 0 
+                                    ? `${p.price} ₽ <span style="color:#28a745;">(-${discount}%)</span>` 
+                                    : `${p.price} ₽`;
+                                const tooltipHtml = p.old_price 
+                                    ? `<span class="price-tooltip">Старая цена: ${p.old_price} ₽</span>` 
+                                    : '';
+                                return `<span class="price-current">${priceText}</span>${tooltipHtml}`;
+                            })()}
+                        </td>
                         <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
                         <td>
                             <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
@@ -1559,6 +1594,20 @@ async function loadProductsEnhanced() {
                     }
                 });
                 
+                // Проверка 1: Скидка от старой цены >= minSavingsPercent (в любом магазине)
+                const hasGoodDiscount = Object.values(productPrices).some(priceInfo => {
+                    if (priceInfo.old_price && priceInfo.old_price > priceInfo.price) {
+                        const discount = Math.round(((priceInfo.old_price - priceInfo.price) / priceInfo.old_price) * 100);
+                        return discount >= minSavingsPercent;
+                    }
+                    return false;
+                });
+                
+                if (hasGoodDiscount) {
+                    return true; // Показываем товар, если есть хорошая скидка
+                }
+                
+                // Проверка 2: Экономия между магазинами >= minSavingsPercent
                 const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
                 if (allPrices.length < 2) {
                     return false; // Нет достаточно цен для сравнения
@@ -1567,9 +1616,6 @@ async function loadProductsEnhanced() {
                 const minPrice = Math.min(...allPrices);
                 const allEqual = allPrices.every(x => x === minPrice);
                 
-                // Показываем товар только если:
-                // 1. Его цена - минимальная среди всех выбранных магазинов
-                // 2. Процент экономии >= выбранному
                 if (allEqual) {
                     return false; // Все цены одинаковые
                 }
@@ -1739,24 +1785,33 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                               if (!priceInfo) {
                                   return `<td style="text-align:center;color:#999;">-</td>`;
                               }
+                               // Расчёт скидки от старой цены
+                               const discount = priceInfo.old_price && priceInfo.old_price > priceInfo.price
+                                   ? Math.round(((priceInfo.old_price - priceInfo.price) / priceInfo.old_price) * 100)
+                                   : 0;
+                               
                                // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                               // Также выделяем красным, если есть скидка
                                 const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                                const discountText = discount > 0 ? ` <span style="color:#28a745;">(-${discount}%)</span>` : '';
                                 const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
                                 const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
                                 const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
                                 
+                                // Tooltip со старой ценой
+                                const oldPriceText = priceInfo.old_price ? `Старая цена: ${priceInfo.old_price} ₽<br>` : '';
                                 // Информация для tooltip
                                 const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
-                                const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                                const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
                                 // Создаем ссылку на товар в Магните
                                 const seoCode = priceInfo.seo_code;
                                 const shopType = priceInfo.shop_type;
                                 const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
                                 const priceLink = productUrl 
-                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
-                                    : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
+                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${savingsText}</span></a>`
+                                    : `<span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${savingsText}</span>`;
                                 
                                 return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                           }).join('');
