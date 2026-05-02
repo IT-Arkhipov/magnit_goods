@@ -483,6 +483,7 @@ function toggleCategoryCheckbox(checkbox) {
     updateSelectedCount();
     updateDropdownText();
     updateCheckboxes();
+    saveSelectedCategoriesToLocalStorage();
 }
 
 function addCategoryAndChildren(categoryId) {
@@ -625,6 +626,7 @@ function selectAllCategories() {
     updateSelectedCount();
     updateDropdownText();
     updateCategoryButtons();
+    saveSelectedCategoriesToLocalStorage();
 }
 
 function deselectAllCategories() {
@@ -633,6 +635,7 @@ function deselectAllCategories() {
     updateSelectedCount();
     updateDropdownText();
     updateCategoryButtons();
+    saveSelectedCategoriesToLocalStorage();
 }
 
 function updateCategoryButtons() {
@@ -2202,7 +2205,33 @@ document.addEventListener('DOMContentLoaded', () => {
      
      // Синхронизация чекбоксов списка покупок при загрузке
      syncCheckboxesFromLocalStorage();
+     
+     // Восстановление выбранных категорий из localStorage
+     loadSelectedCategoriesFromLocalStorage();
 });
+
+// ============================================
+// Функции для сохранения/загрузки категорий и фильтров
+// ============================================
+
+function saveSelectedCategoriesToLocalStorage() {
+    localStorage.setItem('selectedCategoryIds', JSON.stringify(selectedCategoryIds));
+}
+
+function loadSelectedCategoriesFromLocalStorage() {
+    const saved = localStorage.getItem('selectedCategoryIds');
+    if (saved) {
+        try {
+            selectedCategoryIds = JSON.parse(saved);
+            updateCheckboxes();
+            updateSelectedCount();
+            updateDropdownText();
+            updateCategoryButtons();
+        } catch (e) {
+            console.error('Ошибка загрузки категорий из localStorage:', e);
+        }
+    }
+}
 
 // ============================================
 // Функции для работы со списком покупок
