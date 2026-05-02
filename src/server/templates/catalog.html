@@ -270,7 +270,7 @@
                 <strong>Выбрать все</strong>
             </label>
             <span id="selected-count" style="color: #666; font-size: 14px; margin-left: auto;">Выбрано: 0 из 0</span>
-            <button class="btn btn-sm btn-secondary" onclick="fetchMagnitCategoryIds()" style="padding: 2px 8px;">Обновить каталог</button>
+            <button class="btn btn-sm btn-secondary" onclick="fetchMagnitCategoryIds(this)" style="padding: 2px 8px;">Обновить каталог</button>
             <button class="btn btn-sm btn-secondary" onclick="saveSelectedCategories()" style="padding: 2px 8px;">Сохранить выбор</button>
         </div>
     </div>
@@ -834,9 +834,8 @@ async function startScanProducts() {
     }
 }
 
-async function fetchMagnitCategoryIds() {
+async function fetchMagnitCategoryIds(updateBtn) {
     const updateStatus = document.getElementById('update-status');
-    const updateBtn = event.target;
     
     updateBtn.disabled = true;
     updateStatus.innerHTML = '<div class="badge badge-info">⏳ Запуск обновления каталога...</div>';
