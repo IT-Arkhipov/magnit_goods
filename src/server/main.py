@@ -330,6 +330,15 @@ async def page_jobs(request: Request, db: Session = Depends(get_db)):
     )
 
 
+@app.get("/shopping-list", response_class=HTMLResponse)
+async def page_shopping_list(request: Request):
+    """Страница списка покупок."""
+    return render_template(
+        "shopping_list.html",
+        {"request": request, "page": "shopping-list"},
+    )
+
+
 # Заглушки для HTMX POST
 @app.post("/api/stores")
 async def create_store_htmx(

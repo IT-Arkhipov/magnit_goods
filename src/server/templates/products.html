@@ -34,6 +34,26 @@
     </div>
 </div>
 
+<!-- Панель списка покупок -->
+<div class="card" style="background: #f0f8ff; border-left: 4px solid #2196f3;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h3 style="margin: 0 0 4px 0;">Список покупок</h3>
+            <span id="shoppingListCounter" style="color: #666; font-size: 14px;">
+                Выбрано: 0 товаров из 0 магазинов
+            </span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <a href="/shopping-list" class="btn" style="background: #28a745; color: white;">
+                Просмотреть список
+            </a>
+            <button class="btn btn-secondary" onclick="clearShoppingList()">
+                Очистить всё
+            </button>
+        </div>
+    </div>
+</div>
+
 <!-- Панель статистики (временно скрыта)
 <div class="card" style="display: none;">
     <h3>Статистика товаров</h3>
@@ -88,6 +108,15 @@
 }
 #selectAllStores, #storesTableBody input[type="checkbox"] {
     cursor: pointer;
+}
+.shopping-list-checkbox {
+    cursor: pointer;
+}
+.shopping-list-checkbox:checked + span {
+    background: #d4edda;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 2px solid #28a745;
 }
 .price-cell {
     position: relative;
@@ -1813,7 +1842,27 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                     ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${savingsText}</span></a>`
                                     : `<span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${savingsText}</span>`;
                                 
-                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                                // Чекбокс для добавления в список покупок
+                                const checkboxId = `cb-${p.product_id}-${storeCode}`;
+                                const checkbox = `<label style="display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                                    <input 
+                                        type="checkbox" 
+                                        class="shopping-list-checkbox"
+                                        id="${checkboxId}"
+                                        data-product-id="${p.product_id}"
+                                        data-product-name="${escapeHtml(p.name)}"
+                                        data-store-code="${storeCode}"
+                                        data-price="${priceInfo.price}"
+                                        data-old-price="${priceInfo.old_price || ''}"
+                                        data-category-name="${escapeHtml(catData.name)}"
+                                        data-image-url="${escapeHtml(p.image_url || '')}"
+                                        onchange="toggleShoppingListItem(this)"
+                                        style="margin: 0; width: 16px; height: 16px;"
+                                    >
+                                    <span>${priceLink}</span>
+                                </label>`;
+                                
+                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell">${checkbox}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                           }).join('');
                          
                           html += `
@@ -2150,6 +2199,72 @@ document.addEventListener('DOMContentLoaded', () => {
      if (selectedStores.length > 0) {
          setTimeout(loadProducts, 500);
      }
+     
+     // Синхронизация чекбоксов списка покупок при загрузке
+     syncCheckboxesFromLocalStorage();
 });
+
+// ============================================
+// Функции для работы со списком покупок
+// ============================================
+
+function toggleShoppingListItem(checkbox) {
+    const item = {
+        product_id: parseInt(checkbox.dataset.productId),
+        product_name: checkbox.dataset.productName,
+        store_code: checkbox.dataset.storeCode,
+        price: parseFloat(checkbox.dataset.price),
+        old_price: checkbox.dataset.oldPrice ? parseFloat(checkbox.dataset.oldPrice) : null,
+        category_name: checkbox.dataset.categoryName,
+        image_url: checkbox.dataset.imageUrl || null,
+        added_at: new Date().toISOString()
+    };
+    
+    let list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    
+    if (checkbox.checked) {
+        list.push(item);
+    } else {
+        list = list.filter(x => 
+            !(x.product_id === item.product_id && x.store_code === item.store_code)
+        );
+    }
+    
+    localStorage.setItem('shoppingList', JSON.stringify(list));
+    updateShoppingListCounter();
+}
+
+function updateShoppingListCounter() {
+    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const uniqueStores = new Set(list.map(x => x.store_code)).size;
+    const counter = document.getElementById('shoppingListCounter');
+    if (counter) {
+        counter.textContent = `Выбрано: ${list.length} товаров из ${uniqueStores} магазинов`;
+    }
+}
+
+function syncCheckboxesFromLocalStorage() {
+    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    list.forEach(item => {
+        const checkbox = document.querySelector(
+            `input.shopping-list-checkbox[data-product-id="${item.product_id}"][data-store-code="${item.store_code}"]`
+        );
+        if (checkbox) {
+            checkbox.checked = true;
+        }
+    });
+    updateShoppingListCounter();
+}
+
+function clearShoppingList() {
+    if (confirm('Вы уверены, что хотите удалить все товары из списка покупок?')) {
+        localStorage.removeItem('shoppingList');
+        document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
+            cb.checked = false;
+        });
+        updateShoppingListCounter();
+    }
+}
+
 </script>
 {% endblock %}
