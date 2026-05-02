@@ -227,8 +227,6 @@
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
          <h2 style="margin: 0;">Категории товаров</h2>
          <div style="display: flex; gap: 8px;">
-             <button class="btn btn-info" onclick="fetchMagnitCategoryIds()">Обновить каталог</button>
-<button class="btn" style="background: #007bff; color: white;" onclick="saveSelectedCategories()">Сохранить выбор</button>
               <button class="btn btn-success" id="scan-btn" onclick="startScanProducts()">Сканировать товары</button>
               <button class="btn btn-danger" id="cancel-scan-btn" onclick="cancelScan()" style="display: none;">Остановить</button>
          </div>
@@ -266,12 +264,14 @@
     </div>
 
     <div style="margin-bottom: 12px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #e0e0e0;">
-        <div style="display: flex; gap: 16px; align-items: center;">
+        <div style="display: flex; gap: 8px; align-items: center;">
             <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
                 <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)">
                 <strong>Выбрать все</strong>
             </label>
             <span id="selected-count" style="color: #666; font-size: 14px; margin-left: auto;">Выбрано: 0 из 0</span>
+            <button class="btn btn-sm btn-secondary" onclick="fetchMagnitCategoryIds()" style="padding: 2px 8px;">Обновить каталог</button>
+            <button class="btn btn-sm btn-secondary" onclick="saveSelectedCategories()" style="padding: 2px 8px;">Сохранить выбор</button>
         </div>
     </div>
 
