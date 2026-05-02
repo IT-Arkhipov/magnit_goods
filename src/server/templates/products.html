@@ -83,6 +83,15 @@
 -->
 
 <style>
+.category-content table td {
+    text-align: left !important;
+}
+.category-content table th {
+    text-align: left !important;
+}
+.category-content table th.store-header {
+    text-align: left !important;
+}
 .stat-card {
     background: #f8f9fa;
     padding: 16px;
@@ -121,6 +130,8 @@
 .price-cell {
     position: relative;
     cursor: help;
+    padding-left: 8px;
+    word-break: break-word;
 }
 .price-tooltip {
     position: absolute;
@@ -401,6 +412,7 @@ document.addEventListener('click', function(event) {
             const prevIdsJSON = JSON.stringify(lastSelectedCategoryIds);
             
             if (currentIdsJSON !== prevIdsJSON) {
+                saveSelectedCategoriesToLocalStorage();
                 loadProducts();
             }
             
@@ -732,16 +744,37 @@ function updateDropdownText() {
     }
 }
 
-function saveFilterState() {
-    localStorage.setItem('categoryFilter_selectedIds', JSON.stringify(selectedCategoryIds));
+function saveSelectedCategoriesToLocalStorage() {
+    localStorage.setItem('productsPageCategoryIds', JSON.stringify(selectedCategoryIds));
 }
 
-function loadFilterState() {
-    const savedIds = localStorage.getItem('categoryFilter_selectedIds');
+async function loadFilterState() {
+    const savedIds = localStorage.getItem('productsPageCategoryIds');
     
     if (savedIds) {
         selectedCategoryIds = JSON.parse(savedIds);
+    } else {
+        // Если нет сохранённых категорий, загружаем отслеживаемые из БД
+        try {
+            const response = await fetch('/api/categories?tracked=true');
+            const trackedCategories = await response.json();
+            // Выбираем только дочерние категории (с parent_id)
+            selectedCategoryIds = trackedCategories
+                .filter(cat => cat.parent_id !== null)
+                .map(cat => cat.id);
+            saveSelectedCategoriesToLocalStorage();
+        } catch (error) {
+            console.error('Ошибка загрузки отслеживаемых категорий:', error);
+        }
     }
+    
+    // Загружаем дерево категорий для корректного отображения
+    if (!categoryTreeData) {
+        await loadCategoryTree();
+    }
+    
+    // Обновляем текст dropdown после загрузки
+    updateDropdownText();
 }
 
 async function loadProducts() {
@@ -797,7 +830,11 @@ async function loadProducts() {
             });
             
             for (const storeCode of otherStores) {
-                const resp = await fetch(`/api/products?store_code=${storeCode}&limit=500`);
+                let otherUrl = `/api/products?store_code=${storeCode}&limit=500`;
+                if (selectedCategoryIds.length > 0) {
+                    otherUrl += `&category_ids=${selectedCategoryIds.join(',')}`;
+                }
+                const resp = await fetch(otherUrl);
                 const prods = await resp.json();
                 const priceMap = {};
                 const oldPriceMap = {};
@@ -864,14 +901,14 @@ async function loadProducts() {
                         border-radius: 0 0 4px 4px;
                         overflow-x: auto;
                     ">
-                        <table style="min-width: 600px;">
+                        <table style="min-width: 600px; table-layout: fixed; width: 100%;">
                             <thead>
                                 <tr>
-                                    <th>Название</th>
-                                    ${compareStoresInfo.length > 0 ? compareStoresInfo.map(s => `<th style="font-size:11px;">${s.name.substring(0,15)}...</th>`).join('') : ''}
-                                    <th>Цена</th>
-                                    <th>Наличие</th>
-                                    <th>Действия</th>
+                                    <th style="text-align: left;">Название</th>
+                                    ${compareStoresInfo.length > 0 ? compareStoresInfo.map(s => `<th style="font-size:11px; width: 140px;" class="store-header">${s.name.substring(0,15)}...</th>`).join('') : ''}
+                                    <th style="text-align: left; width: 140px;">Цена</th>
+                                    <th style="text-align: left;">Наличие</th>
+                                    <th style="text-align: left;">Действия</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -910,9 +947,9 @@ async function loadProducts() {
                             const isMinPrice = price === minPrice;
                             const priceColor = (discount > 0 || isMinPrice) ? '#e31e25' : '#333';
                             
-                            otherPricesHtml += `<td class="price-cell" style="font-size:13px;font-weight:bold;color:${priceColor};">${priceText}${tooltipHtml}</td>`;
+                            otherPricesHtml += `<td style="font-size:13px;font-weight:bold;color:${priceColor};text-align:left;">${priceText}${tooltipHtml}</td>`;
                         } else {
-                            otherPricesHtml += `<td style="color:#999;">-</td>`;
+                            otherPricesHtml += `<td style="color:#999;text-align:left;">-</td>`;
                         }
                     });
                 }
@@ -921,7 +958,7 @@ async function loadProducts() {
                     <tr>
                         <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
                         ${otherPricesHtml}
-                        <td class="price-cell">
+                        <td class="price-cell" style="font-size:13px;font-weight:bold;text-align:left;">
                             ${(() => {
                                 const discount = p.old_price && p.old_price > p.price 
                                     ? Math.round(((p.old_price - p.price) / p.old_price) * 100) 
@@ -935,8 +972,8 @@ async function loadProducts() {
                                 return `<span class="price-current">${priceText}</span>${tooltipHtml}`;
                             })()}
                         </td>
-                        <td>${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-                        <td>
+                        <td style="text-align: center;">${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+                        <td style="text-align: center;">
                             <button class="btn btn-sm btn-primary" onclick="showPriceHistory(${p.product_id})">История цен</button>
                             ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
                         </td>
@@ -1365,20 +1402,17 @@ document.addEventListener('DOMContentLoaded', () => {
                 if (validSavedStores.length === 0) {
                     // Если нет валидных магазинов, очищаем localStorage
                     localStorage.removeItem('compareStores');
-                    // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                // Загружаем товары
+                loadFilterState().then(() => loadProducts());
                 } else if (validSavedStores.length < savedStores.length) {
                     // Если некоторые магазины невалидны, обновляем localStorage
                     localStorage.setItem('compareStores', JSON.stringify(validSavedStores));
                     // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                    loadFilterState().then(() => loadProducts());
                 } else {
                     // Все магазины валидны
                     // Загружаем товары
-                    loadFilterState();
-    loadProducts();
+                    loadFilterState().then(() => loadProducts());
                 }
             })
             .catch(err => {
@@ -1390,7 +1424,7 @@ document.addEventListener('DOMContentLoaded', () => {
         // Если нет сохранённых магазинов, автоматически выбираем первый
         fetch('/api/stores?is_active=true&limit=1')
             .then(r => r.json())
-            .then(stores => {
+            .then(async stores => {
                 if (stores.length > 0) {
                     // Выбираем первый магазин
                     localStorage.setItem('compareStores', JSON.stringify([stores[0].store_code]));
@@ -1404,13 +1438,12 @@ document.addEventListener('DOMContentLoaded', () => {
                     }, 100);
                 }
                 // Загружаем товары
-                loadFilterState();
+                await loadFilterState();
                 loadProducts();
             })
             .catch(err => {
                 console.error('Ошибка выбора первого магазина:', err);
-                loadFilterState();
-                loadProducts();
+                loadFilterState().then(() => loadProducts());
             });
     }
 });
@@ -1734,7 +1767,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             const storeHeaders = selectedStores.length > 0 
                 ? selectedStores.map(s => {
                     const storeName = storeInfoMap[s] || s;  // Fallback на код магазина если нет информации
-                    return `<th style="padding:8px;text-align:center;font-size:11px;">${escapeHtml(storeName)}</th>`;
+                    return `<th style="padding:8px;text-align:left;font-size:11px;width:140px;">${escapeHtml(storeName)}</th>`;
                 }).join('')
                 : '';
             
@@ -1822,7 +1855,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                           const storeCells = selectedStores.map(storeCode => {
                               const priceInfo = productPrices[storeCode];
                               if (!priceInfo) {
-                                  return `<td style="text-align:center;color:#999;">-</td>`;
+                                   return `<td style="color:#999;text-align:left;">-</td>`;
                               }
                                // Расчёт скидки от старой цены
                                const discount = priceInfo.old_price && priceInfo.old_price > priceInfo.price
@@ -1854,7 +1887,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 
                                 // Чекбокс для добавления в список покупок
                                 const checkboxId = `cb-${p.product_id}-${storeCode}`;
-                                const checkbox = `<label style="display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+                                const checkbox = `<label style="display: flex; align-items: flex-start; justify-content: flex-start; gap: 6px; cursor: pointer;">
                                     <input 
                                         type="checkbox" 
                                         class="shopping-list-checkbox"
@@ -1867,12 +1900,12 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                         data-category-name="${escapeHtml(catData.name)}"
                                         data-image-url="${escapeHtml(p.image_url || '')}"
                                         onchange="toggleShoppingListItem(this)"
-                                        style="margin: 0; width: 16px; height: 16px;"
+                                        style="margin: 2px 0 0 0; width: 16px; height: 16px;"
                                     >
                                     <span>${priceLink}</span>
                                 </label>`;
                                 
-                                return `<td style="text-align:center;font-weight:bold;color:${color};" class="price-cell">${checkbox}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                                return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${checkbox}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                           }).join('');
                          
                           html += `
@@ -1973,7 +2006,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                               ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                               : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
                           
-                          return `<td style="font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                          return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
                   }).join('')
                   : '';
              
@@ -2213,32 +2246,7 @@ document.addEventListener('DOMContentLoaded', () => {
      // Синхронизация чекбоксов списка покупок при загрузке
      syncCheckboxesFromLocalStorage();
      
-     // Восстановление выбранных категорий из localStorage
-     loadSelectedCategoriesFromLocalStorage();
 });
-
-// ============================================
-// Функции для сохранения/загрузки категорий и фильтров
-// ============================================
-
-function saveSelectedCategoriesToLocalStorage() {
-    localStorage.setItem('selectedCategoryIds', JSON.stringify(selectedCategoryIds));
-}
-
-function loadSelectedCategoriesFromLocalStorage() {
-    const saved = localStorage.getItem('selectedCategoryIds');
-    if (saved) {
-        try {
-            selectedCategoryIds = JSON.parse(saved);
-            updateCheckboxes();
-            updateSelectedCount();
-            updateDropdownText();
-            updateCategoryButtons();
-        } catch (e) {
-            console.error('Ошибка загрузки категорий из localStorage:', e);
-        }
-    }
-}
 
 // ============================================
 // Функции для работы со списком покупок

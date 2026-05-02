@@ -338,3 +338,137 @@ async function fetchMagnitCategoryIds(updateBtn) {
 - ✅ Логичное расположение кнопок на странице Каталог
 - ✅ Функционал списка покупок с выбором товаров по магазинам
 - ✅ Группировка и экспорт списка покупок
+
+---
+
+## 4. Исправление выравнивания цен в таблице товаров
+
+**Дата:** 2026-05-02  
+**Коммит:** `5ebf452`
+
+### Что было изменено:
+
+#### Проблема:
+- Цены в колонках магазинов были выровнены по центру
+- Чекбоксы и цены визуально смещались из-за разной длины текста и процентов скидок
+- Label с чекбоксом имел `align-items: center`, что центрировал содержимое
+- Наименования магазинов в заголовках были отцентрованы
+
+#### Решение:
+1. Добавлен CSS-класс `.price-cell` с выравниванием по левому краю
+2. Добавлен inline-стиль `text-align:left` во все ячейки с ценами
+3. Изменён label с чекбоксом: `align-items: center` → `align-items: flex-start`
+4. Изменён label с чекбоксом: `justify-content: center` → `justify-content: flex-start`
+5. Заголовки магазинов изменены с `text-align: center` на `text-align: left`
+6. Добавлен вертикальный отступ для чекбокса: `margin-top: 2px`
+
+#### Файлы изменены:
+- `src/server/templates/products.html` (+143 строк, -58 строк)
+
+### Изменения в коде:
+
+#### 1. CSS для заголовков магазинов (строка 92-94):
+
+**Было:**
+```css
+.category-content table th.store-header {
+    text-align: center !important;
+}
+```
+
+**Стало:**
+```css
+.category-content table th.store-header {
+    text-align: left !important;
+}
+```
+
+#### 2. Label с чекбоксом (строка 1890):
+
+**Было:**
+```javascript
+const checkbox = `<label style="display: flex; align-items: center; justify-content: center; gap: 6px; cursor: pointer;">
+```
+
+**Стало:**
+```javascript
+const checkbox = `<label style="display: flex; align-items: flex-start; justify-content: flex-start; gap: 6px; cursor: pointer;">
+```
+
+#### 3. Стиль чекбокса (строка 1903):
+
+**Было:**
+```javascript
+style="margin: 0; width: 16px; height: 16px;"
+```
+
+**Стало:**
+```javascript
+style="margin: 2px 0 0 0; width: 16px; height: 16px;"
+```
+
+#### 4. Заголовки магазинов в таблице (строка 1770):
+
+**Было:**
+```javascript
+return `<th style="padding:8px;text-align:center;font-size:11px;width:140px;">${escapeHtml(storeName)}</th>`;
+```
+
+**Стало:**
+```javascript
+return `<th style="padding:8px;text-align:left;font-size:11px;width:140px;">${escapeHtml(storeName)}</th>`;
+```
+
+#### 5. Ячейки с ценами (строка 2009):
+
+**Было:**
+```javascript
+return `<td style="font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+```
+
+**Стало:**
+```javascript
+return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+```
+
+### Результат:
+
+#### Заголовки таблицы:
+```
+| Название товара | Магазин 1 (влево) | Магазин 2 (влево) | Магазин 3 (влево) |
+```
+
+#### Ячейки с ценами:
+```
+| Молоко 1л | ☐ 89.99 ₽ (-5%) | ☐ 95.00 ₽ | ☐ 92.50 ₽ (-3%) |
+              ↑ выровнено по левому краю
+```
+
+### Особенности:
+- ✅ Чекбоксы и цены на одном уровне
+- ✅ Нет смещения из-за процентов скидок
+- ✅ Заголовки магазинов выровнены влево
+- ✅ Все цены выровнены по левому краю
+- ✅ Чекбокс сдвинут вниз на 2px для лучшего визуального выравнивания
+
+---
+
+## Итого
+
+### Коммиты:
+1. `3613da1` - refactor: переместить кнопки на странице Каталог
+2. `2da3c70` - fix: исправить работу кнопки 'Обновить каталог'
+3. `b347102` - feat: добавить отображение старой цены и улучшить фильтр
+4. (новый) - feat: добавить функционал "Список покупок"
+5. (новый) - fix: исправить выравнивание цен в таблице товаров
+
+### Основные улучшения:
+- ✅ Более компактный интерфейс (убрали лишние колонки)
+- ✅ Информация о старой цене доступна в tooltip
+- ✅ Процент скидки отображается зелёным цветом
+- ✅ Улучшен фильтр "Экономия" (теперь учитывает скидки)
+- ✅ Лучше видны выгодные предложения (красное выделение)
+- ✅ Логичное расположение кнопок на странице Каталог
+- ✅ Функционал списка покупок с выбором товаров по магазинам
+- ✅ Группировка и экспорт списка покупок
+- ✅ Правильное выравнивание цен в таблице товаров
