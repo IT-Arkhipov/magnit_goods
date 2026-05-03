@@ -530,6 +530,7 @@ class CatalogScanner:
                         "name": product_data.get("name", existing.name),
                         "price": new_price_val,
                         "old_price": current_old_price,
+                        "category_id": db_category_id,  # Обновляем категорию (товар мог переместиться)
                         "sku": product_data.get("sku", existing.sku),
                         "unit": product_data.get("unit", existing.unit),
                         "image_url": product_data.get("image_url", existing.image_url),

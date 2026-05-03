@@ -453,14 +453,161 @@ return `<td style="text-align:left;font-weight:bold;color:${color};" class="pric
 
 ---
 
+## 5. Сохранение выбранных категорий в localStorage
+
+**Дата:** 2026-05-02  
+**Коммит:** `0908414`
+
+### Что было изменено:
+
+- Выбранные категории на странице Товары теперь сохраняются в localStorage
+- При перезагрузке страницы выбор автоматически восстанавливается
+- Синхронизация между localStorage и состоянием UI
+
+#### Файлы изменены:
+- `src/server/templates/products.html` (+29 строк)
+
+---
+
+## 6. Защита от загрузки товаров без выбранных категорий
+
+**Дата:** 2026-05-02  
+**Коммит:** `56636ae`
+
+### Что было изменено:
+
+- Добавлена проверка перед загрузкой товаров
+- Если категории не выбраны, товары не загружаются
+- Предотвращает пустые запросы к API
+
+#### Файлы изменены:
+- `src/server/templates/products.html` (+7 строк)
+
+---
+
+## 7. Управление базой данных товаров (незакоммичено)
+
+**Дата:** 2026-05-03  
+**Статус:** Не закоммичено
+
+### Что было добавлено:
+
+#### 1. Новые API endpoints (catalog.py)
+
+**DELETE /api/products/clear**
+- Удаляет все товары из БД
+- Возвращает количество удалённых записей
+
+**DELETE /api/products/clear-by-categories**
+- Удаляет товары для выбранных категорий
+- Параметр: `category_ids` (comma-separated)
+
+**DELETE /api/products/clear-by-store**
+- Удаляет все товары конкретного магазина
+- Параметр: `store_code`
+
+#### 2. UI для управления товарами (catalog.html)
+
+Новый блок "Управление базой данных товаров":
+- Кнопка "Очистить товары выбранных категорий"
+- Кнопка "Очистить все товары из базы"
+- Подтверждение перед удалением
+- Инструкция о необходимости пересканирования
+
+#### 3. Синхронизация выбора категорий (catalog.html)
+
+**Логика загрузки:**
+1. Сначала проверяется localStorage
+2. Если localStorage пуст, загружаются отслеживаемые категории из БД
+3. Выбор сохраняется в localStorage при нажатии "Сохранить выбор"
+
+**Проверка перед сканированием:**
+- Проверяется наличие выбранных категорий на странице
+- Если категории не выбраны, показывается предупреждение
+
+#### 4. Улучшение фильтрации товаров (catalog.py)
+
+- При получении статистики товаров учитывается фильтр `category_ids`
+- Запрос `max_scan_times` теперь фильтрует по выбранным категориям
+- Более точная статистика для выбранных категорий
+
+#### 5. Обновление категории товара (catalog_scanner.py)
+
+- При обновлении товара теперь обновляется `category_id`
+- Товар может переместиться в другую категорию
+
+#### 6. Активация страницы "Задания" (base.html)
+
+- Ссылка "Задания" в навигации теперь активна (была disabled)
+
+#### Файлы изменены:
+- `src/server/routes/catalog.py` (+71 строка)
+- `src/server/templates/catalog.html` (+125 строк, -28 строк)
+- `src/server/services/catalog_scanner.py` (+1 строка)
+- `src/server/templates/base.html` (+1 строка, -1 строка)
+- `AGENTS.md` (+3 строки)
+- `.opencode/opencode.json` (+6 строк)
+
+### Примеры кода:
+
+#### API endpoint для удаления товаров по категориям:
+
+```python
+@router.delete("/products/clear-by-categories")
+def clear_products_by_categories(
+    category_ids: str = Query(..., description="Comma-separated category IDs"),
+    db: Session = Depends(get_db)
+):
+    try:
+        cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
+        if not cat_id_list:
+            raise HTTPException(status_code=400, detail="Неверный формат category_ids")
+        
+        count = db.query(Product).filter(Product.category_id.in_(cat_id_list)).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} товаров из {len(cat_id_list)} категорий",
+            "deleted_count": count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+```
+
+#### Синхронизация с localStorage:
+
+```javascript
+async function loadCategoriesTree() {
+    const savedIds = localStorage.getItem('categoryFilter_selectedIds');
+    
+    selectedCategories.clear();
+    if (savedIds) {
+        // Восстанавливаем из localStorage
+        const savedArray = JSON.parse(savedIds);
+        savedArray.forEach(id => selectedCategories.add(id));
+    } else {
+        // Если localStorage пуст, загружаем из БД
+        const trackedResponse = await fetch('/api/categories?tracked=true');
+        const trackedCategories = await trackedResponse.json();
+        trackedCategories.forEach(cat => selectedCategories.add(cat.id));
+    }
+}
+```
+
+---
+
 ## Итого
 
 ### Коммиты:
 1. `3613da1` - refactor: переместить кнопки на странице Каталог
 2. `2da3c70` - fix: исправить работу кнопки 'Обновить каталог'
 3. `b347102` - feat: добавить отображение старой цены и улучшить фильтр
-4. (новый) - feat: добавить функционал "Список покупок"
-5. (новый) - fix: исправить выравнивание цен в таблице товаров
+4. `926a24c` - feat: добавить функционал "Список покупок"
+5. `5619cb0` - fix: исправить выравнивание цен в таблице товаров
+6. `0908414` - feat: добавить сохранение выбранных категорий в localStorage
+7. `56636ae` - fix: не загружать товары когда категории не выбраны
+8. (незакоммичено) - feat: добавить управление базой данных товаров
 
 ### Основные улучшения:
 - ✅ Более компактный интерфейс (убрали лишние колонки)
@@ -472,3 +619,7 @@ return `<td style="text-align:left;font-weight:bold;color:${color};" class="pric
 - ✅ Функционал списка покупок с выбором товаров по магазинам
 - ✅ Группировка и экспорт списка покупок
 - ✅ Правильное выравнивание цен в таблице товаров
+- ✅ Сохранение выбора категорий в localStorage
+- ✅ Защита от пустых запросов
+- ✅ Управление БД товаров (очистка по категориям/магазинам)
+- ✅ Синхронизация выбора категорий между localStorage и БД

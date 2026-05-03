@@ -291,13 +291,22 @@ def list_products(
         # Получаем максимальное время last_scan_found для каждой категории в этом магазине
         from sqlalchemy import func
         
-        max_scan_times = db.query(
+        # Если указаны category_ids, фильтруем только по ним
+        scan_query = db.query(
             Product.category_id,
             func.max(Product.last_scan_found).label('max_scan_time')
         ).filter(
             Product.store_code == store_code,
             Product.last_scan_found.isnot(None)
-        ).group_by(Product.category_id).all()
+        )
+        
+        # Применяем фильтр по category_ids если он был указан
+        if category_ids:
+            cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
+            if cat_id_list:
+                scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
+        
+        max_scan_times = scan_query.group_by(Product.category_id).all()
         
         # Создаем словарь с максимальным временем для каждой категории
         scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
@@ -856,3 +865,61 @@ def get_fetch_status():
         "error_count": len(_catalog_update_status["errors"]),
         "errors": _catalog_update_status["errors"][:10],  # Первые 10 ошибок
     }
+
+
+@router.delete("/products/clear")
+def clear_all_products(db: Session = Depends(get_db)):
+    """Удалить все товары из БД."""
+    try:
+        count = db.query(Product).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} товаров",
+            "deleted_count": count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/products/clear-by-categories")
+def clear_products_by_categories(
+    category_ids: str = Query(..., description="Comma-separated category IDs"),
+    db: Session = Depends(get_db)
+):
+    """Удалить товары для конкретных категорий."""
+    try:
+        cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
+        if not cat_id_list:
+            raise HTTPException(status_code=400, detail="Неверный формат category_ids")
+        
+        count = db.query(Product).filter(Product.category_id.in_(cat_id_list)).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} товаров из {len(cat_id_list)} категорий",
+            "deleted_count": count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/products/clear-by-store")
+def clear_products_by_store(
+    store_code: str = Query(..., description="Код магазина"),
+    db: Session = Depends(get_db)
+):
+    """Удалить все товары для конкретного магазина."""
+    try:
+        count = db.query(Product).filter(Product.store_code == store_code).delete()
+        db.commit()
+        return {
+            "status": "success",
+            "message": f"Удалено {count} товаров для магазина {store_code}",
+            "deleted_count": count
+        }
+    except Exception as e:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=str(e))

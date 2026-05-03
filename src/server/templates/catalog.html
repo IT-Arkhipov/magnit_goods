@@ -280,6 +280,24 @@
      </div>
 </div>
 
+<div class="card" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+    <h3 style="margin-top: 0;">Управление базой данных товаров</h3>
+    <p style="color: #666; margin-bottom: 12px;">Используйте эти функции для очистки некорректных данных товаров:</p>
+    
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="btn btn-warning" onclick="clearProductsForSelectedCategories()" style="background: #ff9800; color: white;">
+            Очистить товары выбранных категорий
+        </button>
+        <button class="btn btn-danger" onclick="clearAllProductsConfirm()" style="background: #dc3545;">
+            Очистить все товары из базы
+        </button>
+    </div>
+    
+    <p style="color: #999; font-size: 12px; margin-top: 12px;">
+        После очистки нужно пересканировать товары через кнопку "Сканировать товары" выше.
+    </p>
+</div>
+
 <script>
 let categoriesData = [];
 let selectedCategories = new Set();
@@ -292,17 +310,25 @@ async function loadCategoriesTree() {
         categoriesData = await response.json();
         console.log('loadCategoriesTree: received', categoriesData.length, 'root categories');
 
-        // Загружаем отслеживаемые категории из базы
-        const trackedResponse = await fetch('/api/categories?tracked=true');
-        const trackedCategories = await trackedResponse.json();
-
-        console.log('Loaded tracked categories:', trackedCategories.length);
-        console.log('Tracked IDs:', trackedCategories.map(c => c.id));
-
+        // Загружаем выбор из localStorage
+        const savedIds = localStorage.getItem('categoryFilter_selectedIds');
+        
         selectedCategories.clear();
-        trackedCategories.forEach(cat => {
-            selectedCategories.add(cat.id);
-        });
+        if (savedIds) {
+            // Восстанавливаем из localStorage
+            const savedArray = JSON.parse(savedIds);
+            savedArray.forEach(id => selectedCategories.add(id));
+            console.log('Loaded from localStorage:', Array.from(selectedCategories));
+        } else {
+            // Если localStorage пуст, загружаем отслеживаемые категории из БД
+            const trackedResponse = await fetch('/api/categories?tracked=true');
+            const trackedCategories = await trackedResponse.json();
+            
+            console.log('Loaded tracked categories from DB:', trackedCategories.length);
+            trackedCategories.forEach(cat => {
+                selectedCategories.add(cat.id);
+            });
+        }
 
         console.log('selectedCategories after load:', Array.from(selectedCategories));
 
@@ -634,7 +660,10 @@ async function saveSelectedCategories() {
     statusDiv.innerHTML = '<div class="badge badge-info">Сохранение...</div>';
 
     try {
-        // Отправляем все выбранные категории (включая родителей)
+        // Сохраняем в localStorage
+        localStorage.setItem('categoryFilter_selectedIds', JSON.stringify(Array.from(selectedCategories)));
+        
+        // Отправляем все выбранные категории в БД (включая родителей)
         const response = await fetch('/api/categories/update-tracking', {
             method: 'POST',
             headers: {
@@ -665,7 +694,13 @@ async function startScanProducts() {
     const scanStatus = document.getElementById('scan-status');
 
     try {
-        // Сначала сохраняем текущий выбор категорий
+        // Проверяем, выбраны ли категории на странице
+        if (selectedCategories.size === 0) {
+            scanStatus.innerHTML = '<div class="badge badge-warning">Ошибка: выберите категории для сканирования</div>';
+            return;
+        }
+        
+        // Сначала сохраняем текущий выбор категорий в БД
         scanStatus.innerHTML = '<div class="badge badge-info">Сохранение выбора категорий...</div>';
         
         const saveResponse = await fetch('/api/categories/update-tracking', {
@@ -682,15 +717,6 @@ async function startScanProducts() {
         
         scanStatus.innerHTML = `<div class="badge badge-success">Сохранено ${saveResult.tracked_count} категорий. Запуск сканирования...</div>`;
         
-        // Проверяем, есть ли отслеживаемые категории
-        const trackedResponse = await fetch('/api/categories?tracked=true');
-        const trackedCategories = await trackedResponse.json();
-
-        if (!trackedCategories || trackedCategories.length === 0) {
-            scanStatus.innerHTML = '<div class="badge badge-warning">Ошибка: не выбраны категории для сканирования</div>';
-            return;
-        }
-
         // Получаем кол-во магазинов для отображения
         const storesResponse = await fetch('/api/stores?limit=1000');
         const stores = await storesResponse.json();
@@ -702,7 +728,7 @@ async function startScanProducts() {
 
         scanBtn.disabled = true;
         document.getElementById('cancel-scan-btn').style.display = 'inline-block';
-        scanStatus.innerHTML = `<div class="badge badge-info">Запуск сканирования ${stores.length} магазинов, ${trackedCategories.length} категорий...</div>`;
+        scanStatus.innerHTML = `<div class="badge badge-info">Запуск сканирования ${stores.length} магазинов, ${selectedCategories.size} категорий...</div>`;
 
         // Запускаем фоновое задание
         const response = await fetch(`/api/catalog/scan-all-stores?tracked_only=true`, {
@@ -1113,6 +1139,61 @@ function cancelScan() {
         scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
         document.getElementById('overall-progress').style.display = 'none';
         document.getElementById('category-progress').style.display = 'none';
+    }
+}
+
+async function clearProductsForSelectedCategories() {
+    if (selectedCategories.size === 0) {
+        alert('Выберите категории для удаления товаров');
+        return;
+    }
+    
+    const categoryNames = Array.from(selectedCategories)
+        .map(id => {
+            const cat = findCategory(categoriesData, id);
+            return cat ? cat.name : `ID: ${id}`;
+        })
+        .join(', ');
+    
+    if (!confirm(`Удалить товары из следующих категорий?\n\n${categoryNames}`)) {
+        return;
+    }
+    
+    try {
+        const categoryIds = Array.from(selectedCategories).join(',');
+        const response = await fetch(`/api/products/clear-by-categories?category_ids=${encodeURIComponent(categoryIds)}`, { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`Успешно удалено ${result.deleted_count} товаров из выбранных категорий`);
+        } else {
+            alert(`Ошибка: ${result.detail}`);
+        }
+    } catch (e) {
+        alert(`Ошибка: ${e.message}`);
+    }
+}
+
+async function clearAllProductsConfirm() {
+    if (!confirm('Вы уверены? Это удалит ВСЕ товары из базы данных.')) {
+        return;
+    }
+    
+    if (!confirm('Это действие необратимо. Подтвердите еще раз.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/products/clear', { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`Успешно удалено ${result.deleted_count} товаров\n\nТеперь нажмите "Сканировать товары" для пересканирования.`);
+        } else {
+            alert(`Ошибка: ${result.detail}`);
+        }
+    } catch (e) {
+        alert(`Ошибка: ${e.message}`);
     }
 }
 </script>
