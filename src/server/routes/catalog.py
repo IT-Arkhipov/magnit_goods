@@ -283,15 +283,10 @@ def list_products(
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
     
-    # Фильтруем товары, которые были найдены при последнем сканировании категории
-    # Показываем только товары, обновленные не позднее 1 часа от последнего обновления категории
     if store_code:
         from datetime import timedelta
-        
-        # Получаем максимальное время last_scan_found для каждой категории в этом магазине
         from sqlalchemy import func
         
-        # Если указаны category_ids, фильтруем только по ним
         scan_query = db.query(
             Product.category_id,
             func.max(Product.last_scan_found).label('max_scan_time')
@@ -300,11 +295,12 @@ def list_products(
             Product.last_scan_found.isnot(None)
         )
         
-        # Применяем фильтр по category_ids если он был указан
         if category_ids:
             cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
             if cat_id_list:
                 scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
+        elif category_id:
+            scan_query = scan_query.filter(Product.category_id == category_id)
         
         max_scan_times = scan_query.group_by(Product.category_id).all()
         
@@ -344,8 +340,23 @@ def list_products(
     result = []
     for p in products:
         discount = None
-        if p.old_price and p.old_price > 0:
-            discount = round((p.old_price - p.price) / p.old_price * 100, 1)
+        old_price = p.old_price
+        
+        if not old_price:
+            from src.server.models import PriceHistory
+            yesterday = datetime.utcnow().date() - timedelta(days=1)
+            yesterday_price = db.query(PriceHistory).filter(
+                PriceHistory.product_id == p.product_id,
+                PriceHistory.store_code == p.store_code,
+                PriceHistory.recorded_at >= datetime.combine(yesterday, datetime.min.time()),
+                PriceHistory.recorded_at < datetime.combine(yesterday + timedelta(days=1), datetime.min.time())
+            ).order_by(PriceHistory.recorded_at.desc()).first()
+            
+            if yesterday_price:
+                old_price = yesterday_price.price
+        
+        if old_price and old_price > 0:
+            discount = round((old_price - p.price) / old_price * 100, 1)
         result.append(
             {
                 "product_id": p.product_id,
