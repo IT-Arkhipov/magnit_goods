@@ -1665,47 +1665,111 @@ async function loadProductsEnhanced() {
     }
 
     const listDiv = document.getElementById('products-list');
-    listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
+    const storeWord = selectedStores.length === 1 ? 'магазина' : 'магазинов';
+    listDiv.innerHTML = `
+        <p style="color: #666;">
+            Загрузка товаров из ${selectedStores.length} ${storeWord}...
+            <br>
+            <span id="load-progress" style="font-weight: bold; color: #1976d2;">0/${selectedStores.length}</span>
+        </p>
+    `;
 
     try {
-        // Загружаем товары из всех выбранных магазинов
+        // Загружаем товары из всех выбранных магазинов параллельно
+        const loadStartTime = performance.now();
         let allProducts = [];
         const productMap = {}; // Для дедупликации по product_id
-        
-        for (const storeCode of selectedStores) {
+        let completedStores = 0;
+        const failedStores = [];
+
+        const updateProgress = (storeCode, success = true) => {
+            completedStores++;
+            if (!success) {
+                failedStores.push(storeCode);
+            }
+            const progressEl = document.getElementById('load-progress');
+            if (progressEl) {
+                const statusText = failedStores.length > 0 
+                    ? ` (${failedStores.length} ошибок)` 
+                    : '';
+                progressEl.textContent = `${completedStores}/${selectedStores.length}${statusText}`;
+                progressEl.style.color = failedStores.length > 0 ? '#f57c00' : '#1976d2';
+            }
+        };
+
+        // Создаём Promise для каждого магазина
+        const storeLoadPromises = selectedStores.map(async (storeCode) => {
+            const storeProducts = [];
             let offset = 0;
             let hasMore = true;
             
-            while (hasMore) {
-                let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=500&offset=${offset}`;
-                if (selectedCategoryIds.length > 0) {
-                    url += `&category_ids=${selectedCategoryIds.join(',')}`;
-                }
-                if (search) url += `&search=${encodeURIComponent(search)}`;
-                if (minPrice) url += `&min_price=${minPrice}`;
-                if (maxPrice) url += `&max_price=${maxPrice}`;
+            try {
+                while (hasMore) {
+                    let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=500&offset=${offset}`;
+                    if (selectedCategoryIds.length > 0) {
+                        url += `&category_ids=${selectedCategoryIds.join(',')}`;
+                    }
+                    if (search) url += `&search=${encodeURIComponent(search)}`;
+                    if (minPrice) url += `&min_price=${minPrice}`;
+                    if (maxPrice) url += `&max_price=${maxPrice}`;
 
-                try {
                     const response = await fetch(url);
                     const products = await response.json();
                     
                     if (products.length === 0) {
                         hasMore = false;
                     } else {
-                        // Объединяем товары, избегая дубликатов
-                        products.forEach(p => {
-                            if (!productMap[p.product_id]) {
-                                productMap[p.product_id] = p;
-                                allProducts.push(p);
-                            }
-                        });
+                        storeProducts.push(...products);
                         offset += products.length;
                     }
-                } catch (e) {
-                    console.error(`Ошибка загрузки товаров из магазина ${storeCode} (offset=${offset}):`, e);
-                    hasMore = false;
                 }
+                
+                updateProgress(storeCode, true);
+                return { storeCode, products: storeProducts, success: true };
+                
+            } catch (e) {
+                console.error(`Ошибка загрузки товаров из магазина ${storeCode}:`, e);
+                updateProgress(storeCode, false);
+                return { storeCode, products: storeProducts, success: false, error: e.message };
             }
+        });
+
+        // Ждём завершения всех загрузок параллельно
+        const storeResults = await Promise.all(storeLoadPromises);
+
+        // Объединяем результаты и дедуплицируем
+        storeResults.forEach(({ storeCode, products, success }) => {
+            if (success || products.length > 0) {
+                products.forEach(p => {
+                    if (!productMap[p.product_id]) {
+                        productMap[p.product_id] = p;
+                        allProducts.push(p);
+                    }
+                });
+            }
+        });
+
+        // Логируем метрики производительности
+        const loadEndTime = performance.now();
+        const totalTime = Math.round(loadEndTime - loadStartTime);
+        const successCount = storeResults.filter(r => r.success).length;
+        const totalProducts = allProducts.length;
+        console.log(`📊 Загрузка завершена за ${totalTime}ms`);
+        console.log(`   Магазинов: ${successCount}/${selectedStores.length}`);
+        console.log(`   Товаров: ${totalProducts}`);
+        if (totalTime > 0) {
+            console.log(`   Скорость: ${Math.round(totalProducts / (totalTime / 1000))} товаров/сек`);
+        }
+
+        // Показываем предупреждение если были ошибки
+        if (failedStores.length > 0) {
+            console.warn(`Не удалось загрузить товары из магазинов: ${failedStores.join(', ')}`);
+            const warningMsg = document.createElement('div');
+            warningMsg.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;';
+            const storeWord2 = failedStores.length === 1 ? 'магазина' : 'магазинов';
+            warningMsg.innerHTML = `⚠️ Не удалось загрузить товары из ${failedStores.length} ${storeWord2}. Показаны частичные результаты.`;
+            listDiv.innerHTML = '';
+            listDiv.appendChild(warningMsg);
         }
         
         let products = allProducts;
