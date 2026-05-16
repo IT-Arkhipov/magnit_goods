@@ -2275,7 +2275,7 @@ function expandAllCategories() {
         const parentId = header.parentElement.querySelector('.parent-content').id.replace('parent-', '');
         const parentContent = document.getElementById(`parent-${parentId}`);
         const arrow = header.querySelector('.parent-arrow');
-        if (parentContent && parentContent.style.display === 'none') {
+        if (parentContent) {
             parentContent.style.display = 'block';
             if (arrow) arrow.style.transform = 'rotate(90deg)';
         }
@@ -2286,7 +2286,7 @@ function expandAllCategories() {
     childHeaders.forEach(header => {
         const childContent = header.nextElementSibling;
         const arrow = header.querySelector('.child-arrow');
-        if (childContent && childContent.style.display === 'none') {
+        if (childContent) {
             childContent.style.display = 'block';
             if (arrow) arrow.style.transform = 'rotate(90deg)';
         }
