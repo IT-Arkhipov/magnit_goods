@@ -1764,12 +1764,6 @@ async function loadProductsEnhanced() {
         // Показываем предупреждение если были ошибки
         if (failedStores.length > 0) {
             console.warn(`Не удалось загрузить товары из магазинов: ${failedStores.join(', ')}`);
-            const warningMsg = document.createElement('div');
-            warningMsg.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;';
-            const storeWord2 = failedStores.length === 1 ? 'магазина' : 'магазинов';
-            warningMsg.innerHTML = `⚠️ Не удалось загрузить товары из ${failedStores.length} ${storeWord2}. Показаны частичные результаты.`;
-            listDiv.innerHTML = '';
-            listDiv.appendChild(warningMsg);
         }
         
         let products = allProducts;
@@ -1900,6 +1894,15 @@ async function loadProductsEnhanced() {
 
         // Используем существующую логику рендеринга
         renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv);
+        
+        // Показываем предупреждение если были ошибки загрузки
+        if (failedStores.length > 0) {
+            const warningMsg = document.createElement('div');
+            warningMsg.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;';
+            const storeWord2 = failedStores.length === 1 ? 'магазина' : 'магазинов';
+            warningMsg.innerHTML = `⚠️ Не удалось загрузить товары из ${failedStores.length} ${storeWord2}. Показаны частичные результаты.`;
+            listDiv.insertBefore(warningMsg, listDiv.firstChild);
+        }
         
         // Обновляем статистику после загрузки товаров
         loadProductStats();
