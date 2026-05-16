@@ -39,48 +39,48 @@ def get_historical_old_price(
     """
     cutoff_date = datetime.utcnow() - timedelta(days=days_back)
     
-    # Шаг 1: Ищем в PriceHistory
+    # Ищем в PriceHistory самую раннюю запись за период
     old_record = (
         db.query(PriceHistory)
         .filter(
             PriceHistory.product_id == product_id,
             PriceHistory.store_code == store_code,
-            PriceHistory.recorded_at >= cutoff_date,
-            PriceHistory.price != current_price,
-            PriceHistory.price > current_price  # Только если была дороже
+            PriceHistory.recorded_at >= cutoff_date
         )
-        .order_by(PriceHistory.recorded_at.desc())
+        .order_by(PriceHistory.recorded_at.asc())
         .first()
     )
     
-    if old_record:
-        discount = round((old_record.price - current_price) / old_record.price * 100, 1)
+    # Если нашли запись и цена изменилась - возвращаем изменение
+    if old_record and old_record.price != current_price:
+        change_percent = round((current_price - old_record.price) / old_record.price * 100, 1)
         return {
             "old_price": old_record.price,
-            "discount_percent": discount,
+            "discount_percent": abs(change_percent),
+            "is_increase": change_percent > 0,  # True если цена выросла
             "price_date": old_record.recorded_at.isoformat(),
             "source": "price_history"
         }
     
-    # Шаг 2: Ищем в DailyPriceSnapshot
+    # Шаг 2: Ищем в DailyPriceSnapshot самую раннюю запись за период
     snapshot = (
         db.query(DailyPriceSnapshot)
         .filter(
             DailyPriceSnapshot.product_id == product_id,
             DailyPriceSnapshot.store_code == store_code,
-            DailyPriceSnapshot.snapshot_date >= cutoff_date.date(),
-            DailyPriceSnapshot.price != current_price,
-            DailyPriceSnapshot.price > current_price
+            DailyPriceSnapshot.snapshot_date >= cutoff_date.date()
         )
-        .order_by(DailyPriceSnapshot.snapshot_date.desc())
+        .order_by(DailyPriceSnapshot.snapshot_date.asc())
         .first()
     )
     
-    if snapshot:
-        discount = round((snapshot.price - current_price) / snapshot.price * 100, 1)
+    # Если нашли запись и цена изменилась - возвращаем изменение
+    if snapshot and snapshot.price != current_price:
+        change_percent = round((current_price - snapshot.price) / snapshot.price * 100, 1)
         return {
             "old_price": snapshot.price,
-            "discount_percent": discount,
+            "discount_percent": abs(change_percent),
+            "is_increase": change_percent > 0,  # True если цена выросла
             "price_date": snapshot.snapshot_date.isoformat(),
             "source": "daily_snapshot"
         }
@@ -116,6 +116,8 @@ def get_bulk_historical_prices(
             db,
             days_back
         )
-        result[str(p["product_id"])] = hist_data
+        # Используем комбинированный ключ: product_id:store_code
+        key = f"{p['product_id']}:{p['store_code']}"
+        result[key] = hist_data
     
     return result

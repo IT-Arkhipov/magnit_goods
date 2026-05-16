@@ -1,7 +1,7 @@
 """
 Маршруты для работы с ценами, историей и уведомлениями.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Body
 from sqlalchemy.orm import Session
 from typing import Optional
 from datetime import datetime, date, timedelta
@@ -243,3 +243,57 @@ def get_daily_price_history(
         }
         for s in snapshots
     ]
+
+
+@router.post("/historical-bulk")
+def get_historical_prices_bulk(
+    request: dict = Body(...),
+    db: Session = Depends(get_db),
+):
+    """
+    Получить исторические цены для множества товаров (bulk-запрос).
+    
+    Body:
+    {
+        "products": [
+            {"product_id": 123, "store_code": "992104", "current_price": 79.99},
+            {"product_id": 456, "store_code": "992104", "current_price": 89.99}
+        ],
+        "days_back": 14  # optional, default 14
+    }
+    
+    Response:
+    {
+        "123": {
+            "old_price": 89.99,
+            "discount_percent": 11.1,
+            "price_date": "2026-05-10T12:00:00",
+            "source": "price_history"
+        },
+        "456": null
+    }
+    """
+    from src.server.services.price_calculator import get_bulk_historical_prices
+    
+    products = request.get("products", [])
+    days_back = request.get("days_back", 14)
+    
+    if not products:
+        raise HTTPException(status_code=400, detail="products list is required")
+    
+    if not isinstance(products, list):
+        raise HTTPException(status_code=400, detail="products must be a list")
+    
+    # Валидация данных
+    for p in products:
+        if not all(k in p for k in ["product_id", "store_code", "current_price"]):
+            raise HTTPException(
+                status_code=400,
+                detail="Each product must have product_id, store_code, and current_price"
+            )
+    
+    try:
+        result = get_bulk_historical_prices(products, db, days_back)
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error calculating historical prices: {str(e)}")

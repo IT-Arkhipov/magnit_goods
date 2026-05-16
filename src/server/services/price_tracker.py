@@ -273,11 +273,9 @@ class PriceTracker:
 
         alerts = []
         for history, product in changes:
-            # Находим предыдущую цену
-            if history.change_type == "decreased" and history.price > 0:
-                # Для decreased: history.price — это СТАРАЯ цена, product.price — НОВАЯ
-                current_price = product.price
-                previous_price = history.price
+            if history.change_type == "decreased" and history.old_price and history.old_price > 0:
+                current_price = history.price
+                previous_price = history.old_price
                 change_percent = round(
                     (previous_price - current_price) / previous_price * 100, 1
                 )

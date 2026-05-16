@@ -935,7 +935,7 @@ async function loadProducts() {
                         const price = p.otherPrices?.[s.code];
                         if (price) {
                             // Используем только историческую скидку (зеленая)
-                            const histDiscount = getHistoricalDiscount(p.product_id);
+                            const histDiscount = getHistoricalDiscount(p.product_id, s.code);
                             const historicalDiscountText = histDiscount 
                                 ? ` <span style="color:#28a745;">(-${histDiscount.discount_percent}%)</span>` 
                                 : '';
@@ -976,12 +976,15 @@ async function loadProducts() {
                         <td class="price-cell" style="font-size:13px;font-weight:bold;text-align:left;">
                             ${(() => {
                                 // Используем только историческую скидку из БД
-                                const histDiscount = getHistoricalDiscount(p.product_id);
+                                const histDiscount = getHistoricalDiscount(p.product_id, p.store_code);
                                 const discount = histDiscount ? histDiscount.discount_percent : 0;
+                                const isIncrease = histDiscount ? histDiscount.is_increase : false;
                                 const oldPrice = histDiscount ? histDiscount.old_price : null;
                                 
                                 const priceText = discount > 0 
-                                    ? `${p.price} ₽ <span style="color:#28a745;">(-${discount}%)</span>` 
+                                    ? (isIncrease 
+                                        ? `${p.price} ₽ <span style="color:#9c27b0;">(+${discount}%)</span>` 
+                                        : `${p.price} ₽ <span style="color:#28a745;">(-${discount}%)</span>`)
                                     : `${p.price} ₽`;
                                 
                                 const tooltipHtml = oldPrice 
@@ -1108,9 +1111,17 @@ async function loadHistoricalDiscounts(products, storeCode) {
         return {};
     }
     
-    // Проверяем кэш в sessionStorage
-    const cacheKey = `historical_discounts_${storeCode}`;
+    // Проверяем кэш в sessionStorage с версионированием
+    const cacheVersion = 'v7';
+    const cacheKey = `historical_discounts_${storeCode}_${cacheVersion}`;
     const cached = sessionStorage.getItem(cacheKey);
+    
+    // Очищаем старые версии кэша
+    Object.keys(sessionStorage).forEach(key => {
+        if (key.startsWith('historical_discounts_') && !key.endsWith(`_${cacheVersion}`)) {
+            sessionStorage.removeItem(key);
+        }
+    });
     
     if (cached) {
         try {
@@ -1126,7 +1137,7 @@ async function loadHistoricalDiscounts(products, storeCode) {
     // Формируем запрос для bulk API
     const productsData = products.map(p => ({
         product_id: p.product_id,
-        store_code: storeCode,
+        store_code: p.store_code,
         current_price: p.price
     }));
     
@@ -1168,8 +1179,9 @@ async function loadHistoricalDiscounts(products, storeCode) {
 /**
  * Получить историческую скидку для товара из кэша.
  */
-function getHistoricalDiscount(productId) {
-    const discount = historicalDiscountsCache[String(productId)];
+function getHistoricalDiscount(productId, storeCode) {
+    const key = `${productId}:${storeCode}`;
+    const discount = historicalDiscountsCache[key];
     return discount || null;
 }
 
@@ -1705,8 +1717,8 @@ async function loadProductsEnhanced() {
 
         if (promoFilter === 'discount') {
             products = products.filter(p => {
-                const histDiscount = getHistoricalDiscount(p.product_id);
-                return histDiscount && histDiscount.discount_percent > 0;
+                const histDiscount = getHistoricalDiscount(p.product_id, p.store_code);
+                return histDiscount && !histDiscount.is_increase && histDiscount.discount_percent > 0;
             });
         } else if (promoFilter === 'promotion') {
             products = products.filter(p => p.is_promotion);
@@ -1781,9 +1793,9 @@ async function loadProductsEnhanced() {
         if (savingsFilter && selectedStores.length > 0) {
             const minSavingsPercent = parseInt(savingsFilter);
             products = products.filter(p => {
-                // Проверка 1: Историческая скидка >= minSavingsPercent
-                const histDiscount = getHistoricalDiscount(p.product_id);
-                if (histDiscount && histDiscount.discount_percent >= minSavingsPercent) {
+                // Проверка 1: Историческая скидка >= minSavingsPercent (только снижение, не увеличение)
+                const histDiscount = getHistoricalDiscount(p.product_id, p.store_code);
+                if (histDiscount && !histDiscount.is_increase && histDiscount.discount_percent >= minSavingsPercent) {
                     return true;
                 }
                 
@@ -1799,10 +1811,16 @@ async function loadProductsEnhanced() {
                     
                     if (prices.length > 1) {
                         const minPrice = Math.min(...prices);
-                        const maxPrice = Math.max(...prices);
-                        const savingsPercent = Math.round(((maxPrice - minPrice) / maxPrice) * 100);
-                        if (savingsPercent >= minSavingsPercent) {
-                            return true;
+                        const allEqual = prices.every(x => x === minPrice);
+                        
+                        if (!allEqual) {
+                            // Используем ту же формулу, что и при отображении: средняя цена остальных магазинов
+                            const otherPrices = prices.filter(x => x !== minPrice);
+                            const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                            const savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+                            if (savingsPercent >= minSavingsPercent) {
+                                return true;
+                            }
                         }
                     }
                 }
@@ -1962,13 +1980,20 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                    return `<td style="color:#999;text-align:left;">-</td>`;
                               }
                                // Расчёт скидки от старой цены
-                                // Используем только историческую скидку (зеленая)
-                                const histDiscount = getHistoricalDiscount(p.product_id);
+                                // Используем историческую скидку/увеличение (зеленая/фиолетовая)
+                                const histDiscount = getHistoricalDiscount(p.product_id, storeCode);
                                 const discount = histDiscount ? histDiscount.discount_percent : 0;
+                                const isIncrease = histDiscount ? histDiscount.is_increase : false;
                                 
                                 // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
                                 const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
-                                const discountText = discount > 0 ? ` <span style="color:#28a745;">(-${discount}%)</span>` : '';
+                                
+                                // Зелёная скидка или фиолетовое увеличение
+                                const discountText = discount > 0 
+                                    ? (isIncrease 
+                                        ? ` <span style="color:#9c27b0;">(+${discount}%)</span>` 
+                                        : ` <span style="color:#28a745;">(-${discount}%)</span>`)
+                                    : '';
                                 
                                 // Красная разница между магазинами
                                 const storeSavingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>` : '';
