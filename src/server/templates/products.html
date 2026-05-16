@@ -1914,6 +1914,9 @@ async function loadProductsEnhanced() {
 
 // Вспомогательная функция для рендеринга списка товаров в иерархическом виде
 function renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv) {
+    // Очищаем контейнер от индикатора загрузки
+    listDiv.innerHTML = '';
+    
     // Загружаем дерево категорий для иерархии
     fetch('/api/categories/tree')
         .then(r => r.json())
