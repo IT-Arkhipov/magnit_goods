@@ -869,6 +869,11 @@ async function loadProducts() {
             grouped[catId].products.push(p);
         });
 
+        // Сортировка товаров внутри каждой категории по алфавиту
+        Object.values(grouped).forEach(category => {
+            category.products.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+        });
+
         // Сортировка категорий по имени
         const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
 
@@ -2085,6 +2090,12 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
         if (!grouped[catId]) grouped[catId] = { name: catName, products: [] };
         grouped[catId].products.push(p);
     });
+    
+    // Сортировка товаров внутри каждой категории по алфавиту
+    Object.values(grouped).forEach(category => {
+        category.products.sort((a, b) => a.name.localeCompare(b.name, 'ru'));
+    });
+    
     const sorted = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
     
     // Заголовки колонок для цен других магазинов
