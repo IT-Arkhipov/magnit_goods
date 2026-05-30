@@ -611,6 +611,7 @@ class CatalogScanner:
                         # Исторические данные - используем текущее изменение цены
                         # Для уменьшения: отрицательное значение (-X%)
                         # Для увеличения: положительное значение (+X%)
+                        # Сохраняем предыдущую цену (от последнего сканирования), а не историческую
                         "historical_discount_percent": price_change_percent if change_type else None,
                         "historical_old_price": old_price_val if change_type else None,
                         "historical_price_date": now if change_type else None,
