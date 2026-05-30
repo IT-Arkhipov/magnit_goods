@@ -1104,10 +1104,14 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
          });
       }
 
-      const discount = p.discount_percent !== null && p.discount_percent !== undefined ? p.discount_percent : 0;
       const isIncrease = p.is_price_increase === true;
       const oldPrice = p.historical_old_price || null;
       const priceDate = p.historical_price_date || null;
+      
+      // Используем историческую скидку если цена выросла, иначе промо-скидку от API
+      const discount = isIncrease 
+          ? (p.historical_discount_percent !== null && p.historical_discount_percent !== undefined ? p.historical_discount_percent : 0)
+          : (p.discount_percent !== null && p.discount_percent !== undefined ? p.discount_percent : 0);
       
       const priceText = discount > 0 
           ? (isIncrease 
