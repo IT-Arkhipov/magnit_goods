@@ -545,79 +545,50 @@ class CatalogScanner:
                             "change_type": change_type,
                         }
                     )
+                else:
+                    # Цена не изменилась, но сохраняем 0% изменение
+                    price_change_percent = 0
 
                 # Обновляем поля
-                to_update.append(
-                    {
-                        "id": existing.id,
-                        "name": product_data.get("name", existing.name),
-                        "price": new_price_val,
-                        "old_price": current_old_price,
-                        "category_id": db_category_id,  # Обновляем категорию (товар мог переместиться)
-                        "sku": product_data.get("sku", existing.sku),
-                        "unit": product_data.get("unit", existing.unit),
-                        "image_url": product_data.get("image_url", existing.image_url),
-                        "in_stock": product_data.get("in_stock", existing.in_stock),
-                        "last_seen": now,
-                        "last_scan_found": now,  # Обновляем время последнего сканирования
-                        # Остатки
-                        "quantity": product_data.get("quantity", existing.quantity),
-                        "is_low_stock": product_data.get(
-                            "is_low_stock", existing.is_low_stock
-                        ),
-                        "pickup_only": product_data.get(
-                            "pickup_only", existing.pickup_only
-                        ),
-                        # Акции
-                        "is_promotion": product_data.get(
-                            "is_promotion", existing.is_promotion
-                        ),
-                        # Используем процент изменения цены при сканировании, если цена изменилась
-                        # Для уменьшения: отрицательное значение (-X%)
-                        # Для увеличения: положительное значение (+X%)
-                        "discount_percent": price_change_percent if change_type else product_data.get(
-                            "discount_percent", existing.discount_percent
-                        ),
-                        "promo_end_date": promo_end,
-                        # Рейтинги
-                        "rating": product_data.get("rating", existing.rating),
-                        "scores_count": product_data.get(
-                            "scores_count", existing.scores_count
-                        ),
-                        "comments_count": product_data.get(
-                            "comments_count", existing.comments_count
-                        ),
-                        # SEO
-                        "seo_code": product_data.get("seo_code", existing.seo_code),
-                        "service": product_data.get("service", existing.service),
-                        "catalog_type": product_data.get(
-                            "catalog_type", existing.catalog_type
-                        ),
-                        # Параметры заказа
-                        "min_order_qty": product_data.get(
-                            "min_order_qty", existing.min_order_qty
-                        ),
-                        "order_step_qty": product_data.get(
-                            "order_step_qty", existing.order_step_qty
-                        ),
-                        # Весовые
-                        "is_weighted": product_data.get(
-                            "is_weighted", existing.is_weighted
-                        ),
-                        "unit_price": product_data.get("unit_price", existing.unit_price),
-                        "last_price_change": now
-                        if abs(old_price_val - new_price_val) > 0.01
-                        else existing.last_price_change,
-                        # Исторические данные - используем текущее изменение цены
-                        # Для уменьшения: отрицательное значение (-X%)
-                        # Для увеличения: положительное значение (+X%)
-                        # Сохраняем предыдущую цену (от последнего сканирования), а не историческую
-                        "historical_discount_percent": price_change_percent if change_type else None,
-                        "historical_old_price": old_price_val if change_type else None,
-                        "historical_price_date": now if change_type else None,
-                        "is_price_increase": change_type == "increased" if change_type else False,
-                    }
-                )
+                update_data = {
+                    "id": existing.id,
+                    "name": product_data.get("name", existing.name),
+                    "price": new_price_val,
+                    "old_price": current_old_price,
+                    "category_id": db_category_id,
+                    "sku": product_data.get("sku", existing.sku),
+                    "unit": product_data.get("unit", existing.unit),
+                    "image_url": product_data.get("image_url", existing.image_url),
+                    "in_stock": product_data.get("in_stock", existing.in_stock),
+                    "last_seen": now,
+                    "last_scan_found": now,
+                    "quantity": product_data.get("quantity", existing.quantity),
+                    "is_low_stock": product_data.get("is_low_stock", existing.is_low_stock),
+                    "pickup_only": product_data.get("pickup_only", existing.pickup_only),
+                    "is_promotion": product_data.get("is_promotion", existing.is_promotion),
+                    "promo_end_date": promo_end,
+                    "rating": product_data.get("rating", existing.rating),
+                    "scores_count": product_data.get("scores_count", existing.scores_count),
+                    "comments_count": product_data.get("comments_count", existing.comments_count),
+                    "seo_code": product_data.get("seo_code", existing.seo_code),
+                    "service": product_data.get("service", existing.service),
+                    "catalog_type": product_data.get("catalog_type", existing.catalog_type),
+                    "min_order_qty": product_data.get("min_order_qty", existing.min_order_qty),
+                    "order_step_qty": product_data.get("order_step_qty", existing.order_step_qty),
+                    "is_weighted": product_data.get("is_weighted", existing.is_weighted),
+                    "unit_price": product_data.get("unit_price", existing.unit_price),
+                    "last_price_change": now if abs(old_price_val - new_price_val) > 0.01 else existing.last_price_change,
+                }
+                
+                # Обновляем discount_percent и is_price_increase ТОЛЬКО если цена изменилась
+                if change_type:
+                    update_data["discount_percent"] = price_change_percent
+                    update_data["historical_discount_percent"] = price_change_percent
+                    update_data["historical_old_price"] = old_price_val
+                    update_data["historical_price_date"] = now
+                    update_data["is_price_increase"] = change_type == "increased"
+                
+                to_update.append(update_data)
             else:
                 # INSERT
                 # Получаем исторические данные для товара
