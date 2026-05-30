@@ -1108,13 +1108,14 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
       const oldPrice = p.historical_old_price || null;
       const priceDate = p.historical_price_date || null;
       
-      // discount_percent теперь содержит процент изменения цены при сканировании
+      // discount_percent содержит процент изменения цены со знаком:
+      // отрицательное (-X%) для уменьшения, положительное (+X%) для увеличения
       const discount = p.discount_percent !== null && p.discount_percent !== undefined ? p.discount_percent : 0;
       
-      const priceText = discount > 0 
-          ? (isIncrease 
+      const priceText = discount !== 0 
+          ? (discount > 0 
               ? `${p.price} ₽ <span style="color:#9c27b0;">(+${discount}%)</span>` 
-              : `${p.price} ₽ <span style="color:#28a745;">(-${discount}%)</span>`)
+              : `${p.price} ₽ <span style="color:#28a745;">(-${Math.abs(discount)}%)</span>`)
           : `${p.price} ₽`;
       
       const tooltipHtml = oldPrice && priceDate

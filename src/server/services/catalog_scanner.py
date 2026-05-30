@@ -573,7 +573,9 @@ class CatalogScanner:
                             "is_promotion", existing.is_promotion
                         ),
                         # Используем процент изменения цены при сканировании, если цена изменилась
-                        "discount_percent": abs(price_change_percent) if change_type else product_data.get(
+                        # Для уменьшения: отрицательное значение (-X%)
+                        # Для увеличения: положительное значение (+X%)
+                        "discount_percent": price_change_percent if change_type else product_data.get(
                             "discount_percent", existing.discount_percent
                         ),
                         "promo_end_date": promo_end,
@@ -607,7 +609,9 @@ class CatalogScanner:
                         if abs(old_price_val - new_price_val) > 0.01
                         else existing.last_price_change,
                         # Исторические данные - используем текущее изменение цены
-                        "historical_discount_percent": abs(price_change_percent) if change_type else None,
+                        # Для уменьшения: отрицательное значение (-X%)
+                        # Для увеличения: положительное значение (+X%)
+                        "historical_discount_percent": price_change_percent if change_type else None,
                         "historical_old_price": old_price_val if change_type else None,
                         "historical_price_date": now if change_type else None,
                         "is_price_increase": change_type == "increased" if change_type else False,
