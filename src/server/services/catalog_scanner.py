@@ -486,6 +486,19 @@ class CatalogScanner:
 
         now = datetime.utcnow()
 
+        # Bulk-расчет исторических скидок для всех товаров в порции
+        products_for_hist = [
+            {
+                "product_id": p["product_id"],
+                "store_code": self.store_code,
+                "current_price": p["price"]
+            }
+            for p in products
+        ]
+
+        from src.server.services.price_calculator import get_bulk_historical_prices
+        historical_data = get_bulk_historical_prices(products_for_hist, self.db, days_back=14)
+
         for product_data in products:
             product_id = product_data["product_id"]
             current_price = product_data["price"]
@@ -508,10 +521,20 @@ class CatalogScanner:
                 old_price_val = existing.price
                 new_price_val = current_price
 
+                # Рассчитываем процент изменения от предыдущей цены
+                price_change_percent = 0
+                change_type = None
+                
                 if abs(old_price_val - new_price_val) > 0.01:
                     change_type = (
                         "decreased" if new_price_val < old_price_val else "increased"
                     )
+                    # Рассчитываем процент: (новая - старая) / старая * 100
+                    if old_price_val > 0:
+                        price_change_percent = round(
+                            (new_price_val - old_price_val) / old_price_val * 100, 1
+                        )
+                    
                     price_history_records.append(
                         {
                             "product_id": product_id,
@@ -549,7 +572,8 @@ class CatalogScanner:
                         "is_promotion": product_data.get(
                             "is_promotion", existing.is_promotion
                         ),
-                        "discount_percent": product_data.get(
+                        # Используем процент изменения цены при сканировании, если цена изменилась
+                        "discount_percent": abs(price_change_percent) if change_type else product_data.get(
                             "discount_percent", existing.discount_percent
                         ),
                         "promo_end_date": promo_end,
@@ -582,10 +606,19 @@ class CatalogScanner:
                         "last_price_change": now
                         if abs(old_price_val - new_price_val) > 0.01
                         else existing.last_price_change,
+                        # Исторические данные - используем текущее изменение цены
+                        "historical_discount_percent": abs(price_change_percent) if change_type else None,
+                        "historical_old_price": old_price_val if change_type else None,
+                        "historical_price_date": now if change_type else None,
+                        "is_price_increase": change_type == "increased" if change_type else False,
                     }
                 )
             else:
                 # INSERT
+                # Получаем исторические данные для товара
+                hist_key = f"{product_id}:{self.store_code}"
+                hist_data = historical_data.get(hist_key)
+                
                 to_insert.append(
                     {
                         "product_id": product_id,
@@ -624,6 +657,11 @@ class CatalogScanner:
                         "first_seen": now,
                         "last_seen": now,
                         "last_scan_found": now,  # Устанавливаем время сканирования для новых товаров
+                        # Исторические данные
+                        "historical_discount_percent": hist_data["discount_percent"] if hist_data else None,
+                        "historical_old_price": hist_data["old_price"] if hist_data else None,
+                        "historical_price_date": datetime.fromisoformat(hist_data["price_date"]) if hist_data else None,
+                        "is_price_increase": hist_data.get("is_increase", False) if hist_data else False,
                     }
                 )
 
