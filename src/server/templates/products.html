@@ -340,6 +340,12 @@
                  <option value="30">30%</option>
              </select>
          </div>
+         <div style="margin-left: 24px; display: flex; align-items: center;">
+             <label style="margin: 0;">
+                 <input type="checkbox" id="newPriceMode" checked onchange="togglePriceMode()">
+                 Новая цена
+             </label>
+         </div>
     </div>
 </div>
 
@@ -377,6 +383,42 @@ let categoryTreeData = null;
 
 // Глобальные переменные для отслеживания изменений
 let lastSelectedCategoryIds = [];
+
+// Режим отображения цен
+let showNewPriceMode = true;
+
+// Загрузка состояния режима цен при загрузке страницы
+function loadPriceModeState() {
+    const saved = localStorage.getItem('showNewPriceMode');
+    if (saved !== null) {
+        showNewPriceMode = saved === 'true';
+    } else {
+        showNewPriceMode = true;
+    }
+    const checkbox = document.getElementById('newPriceMode');
+    if (checkbox) {
+        checkbox.checked = showNewPriceMode;
+    }
+}
+
+// Переключение режима отображения цен
+function togglePriceMode() {
+    showNewPriceMode = document.getElementById('newPriceMode').checked;
+    localStorage.setItem('showNewPriceMode', showNewPriceMode);
+    renderProductsList();
+}
+
+// Форматирование даты
+function formatDate(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
 
 // Функция для открытия ссылки на товар
 function openProductLink(url, storeCode, shopType) {
@@ -924,19 +966,25 @@ async function loadPricesFromOtherStores(products) {
 
 
 function renderProductsList() {
-     const listDiv = document.getElementById('products-list');
-     
-     let productsToRender = productsState.allProducts;
-     
-     const grouped = {};
-     productsToRender.forEach(p => {
-         const catId = p.category_id || 0;
-         const catName = p.category_name || 'Другое';
-         if (!grouped[catId]) {
-             grouped[catId] = { name: catName, products: [] };
-         }
-         grouped[catId].products.push(p);
-     });
+      const listDiv = document.getElementById('products-list');
+      
+      let productsToRender = productsState.allProducts;
+      
+      if (showNewPriceMode) {
+          productsToRender = productsToRender.filter(p => p.price_change_percent !== null && p.price_change_percent !== undefined);
+      } else {
+          productsToRender = productsToRender.filter(p => p.last_change_price !== null && p.last_change_price !== undefined);
+      }
+      
+      const grouped = {};
+      productsToRender.forEach(p => {
+          const catId = p.category_id || 0;
+          const catName = p.category_name || 'Другое';
+          if (!grouped[catId]) {
+              grouped[catId] = { name: catName, products: [] };
+          }
+          grouped[catId].products.push(p);
+      });
 
      const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
 
@@ -1059,33 +1107,60 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
          });
       }
 
-       const changePercent = p.price_change_percent !== null && p.price_change_percent !== undefined ? p.price_change_percent : 0;
-       const previousPrice = p.previous_price || null;
-       
-       // Вычисляем экономию от других магазинов (если есть сравнение)
-       let savingsFromOthersText = '';
-       if (compareStoresInfo.length > 0) {
-           const allPrices = [p.price];
-           compareStoresInfo.forEach(s => { if (p.otherPrices?.[s.code]) allPrices.push(p.otherPrices[s.code]); });
-           const minPrice = Math.min(...allPrices);
-           const allEqual = allPrices.every(x => x === minPrice);
-           const savingsPercent = !allEqual && p.price === minPrice && allPrices.length > 1
-               ? Math.round(((Math.max(...allPrices) - minPrice) / Math.max(...allPrices)) * 100)
-               : 0;
-           if (savingsPercent > 0) {
-               savingsFromOthersText = ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>`;
-           }
-       }
-       
-       const priceText = changePercent !== 0 
-           ? (changePercent > 0 
-               ? `${p.price} ₽ <span style="color:#28a745;">(↓${changePercent}%)</span>${savingsFromOthersText}` 
-               : `${p.price} ₽ <span style="color:#9c27b0;">(↑${Math.abs(changePercent)}%)</span>${savingsFromOthersText}`)
-           : `${p.price} ₽${savingsFromOthersText}`;
-       
-       const tooltipHtml = previousPrice
-           ? `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽ Остаток: ${p.quantity || 0}</span>` 
-           : '';
+        let changePercent, previousPrice, changeDate;
+        
+        if (showNewPriceMode) {
+            // Режим 1: изменение от предыдущего сканирования
+            changePercent = p.price_change_percent !== null && p.price_change_percent !== undefined ? p.price_change_percent : 0;
+            previousPrice = p.previous_price || null;
+            changeDate = p.last_price_change;
+        } else {
+            // Режим 2: последнее реальное изменение цены
+            if (p.last_change_price !== null && p.last_change_price !== undefined) {
+                changePercent = Math.round((p.last_change_price - p.price) / p.last_change_price * 1000) / 10;
+                previousPrice = p.last_change_price;
+                changeDate = p.last_change_date;
+            } else {
+                changePercent = 0;
+                previousPrice = null;
+                changeDate = null;
+            }
+        }
+        
+        // Вычисляем экономию от других магазинов (если есть сравнение)
+        let savingsFromOthersText = '';
+        if (compareStoresInfo.length > 0) {
+            const allPrices = [p.price];
+            compareStoresInfo.forEach(s => { if (p.otherPrices?.[s.code]) allPrices.push(p.otherPrices[s.code]); });
+            const minPrice = Math.min(...allPrices);
+            const allEqual = allPrices.every(x => x === minPrice);
+            const savingsPercent = !allEqual && p.price === minPrice && allPrices.length > 1
+                ? Math.round(((Math.max(...allPrices) - minPrice) / Math.max(...allPrices)) * 100)
+                : 0;
+            if (savingsPercent > 0) {
+                savingsFromOthersText = ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>`;
+            }
+        }
+        
+        const priceText = changePercent !== 0 
+            ? (changePercent > 0 
+                ? `${p.price} ₽ <span style="color:#28a745;">(↓${changePercent}%)</span>${savingsFromOthersText}` 
+                : `${p.price} ₽ <span style="color:#9c27b0;">(↑${Math.abs(changePercent)}%)</span>${savingsFromOthersText}`)
+            : `${p.price} ₽${savingsFromOthersText}`;
+        
+        // Тултип
+        let tooltipHtml;
+        if (showNewPriceMode) {
+            // Режим 1: всегда показываем остаток и дату последнего сканирования
+            tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
+        } else {
+            // Режим 2: если есть изменение - показываем предыдущую цену и дату изменения
+            if (previousPrice && changePercent !== 0) {
+                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата изменения: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
+            } else {
+                tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
+            }
+        }
 
      return `
          <tr>
@@ -1144,7 +1219,21 @@ async function compareInStores(productId, currentStoreCode, productName) {
                 const response = await fetch(`/api/products/${productId}?store_code=${encodeURIComponent(store.store_code)}`);
                 if (response.ok) {
                     const productData = await response.json();
-                    const changePercent = productData.price_change_percent;
+                    let changePercent, previousPrice;
+                    
+                    if (showNewPriceMode) {
+                        changePercent = productData.price_change_percent;
+                        previousPrice = productData.previous_price;
+                    } else {
+                        if (productData.last_change_price !== null && productData.last_change_price !== undefined) {
+                            changePercent = Math.round((productData.last_change_price - productData.price) / productData.last_change_price * 1000) / 10;
+                            previousPrice = productData.last_change_price;
+                        } else {
+                            changePercent = null;
+                            previousPrice = null;
+                        }
+                    }
+                    
                     const changeText = changePercent !== null && changePercent !== undefined && changePercent !== 0
                         ? (changePercent > 0 ? `↓${changePercent}%` : `↑${Math.abs(changePercent)}%`)
                         : '-';
@@ -1152,7 +1241,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
                         store_code: store.store_code,
                         name: store.name || store.store_code || 'Неизвестно',
                         price: productData.price !== null ? productData.price : 'N/A',
-                        previous_price: productData.previous_price !== null ? productData.previous_price : 'N/A',
+                        previous_price: previousPrice !== null ? previousPrice : 'N/A',
                         in_stock: productData.in_stock ? 'В наличии' : 'Нет в наличии',
                         change_text: changeText,
                         isCurrent: store.store_code === currentStoreCode
@@ -1431,6 +1520,7 @@ function getSelectedStores() {
 
 // Загрузка магазинов при загрузке страницы
 document.addEventListener('DOMContentLoaded', async () => {
+    loadPriceModeState();
     // Проверяем, есть ли сохранённые магазины для сравнения
     const savedStores = getSelectedStores();
     
@@ -1809,6 +1899,14 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
     // Очищаем контейнер от индикатора загрузки
     listDiv.innerHTML = '';
     
+    // Фильтруем товары по режиму цен
+    let filteredProducts = products;
+    if (showNewPriceMode) {
+        // Режим 1: показываем только товары с изменением цены от предыдущего сканирования
+        filteredProducts = products.filter(p => p.price_change_percent !== null && p.price_change_percent !== undefined);
+    }
+    // Режим 2: показываем все товары (без фильтрации)
+    
     // Загружаем дерево категорий для иерархии
     fetch('/api/categories/tree')
         .then(r => r.json())
@@ -1826,7 +1924,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             
             // Группировка по родительской категории
             const grouped = {};
-            products.forEach(p => {
+            filteredProducts.forEach(p => {
                 const catId = p.category_id || 0;
                 const cat = categoryMap[catId];
                 const parentId = cat && cat.parent ? cat.parent : (catId || 0);
@@ -1847,7 +1945,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             
             let html = `
                 <div style="margin-bottom: 12px; font-size: 14px; color: #666; display: flex; align-items: center; gap: 16px;">
-                    <span>Категорий: ${sortedParents.length}, Товаров: ${products.length}${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}</span>
+                    <span>Категорий: ${sortedParents.length}, Товаров: ${filteredProducts.length}${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}</span>
                     <button id="toggleAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="toggleAllCategoriesState()" style="margin: 0;">Раскрыть все</button>
                 </div>
             `;
