@@ -234,17 +234,6 @@ class MagnitAPIClient:
             if current_price:
                 current_price = current_price / 100
 
-            # Акция/скидка
-            promotion = item.get("promotion") or {}
-            old_price_raw = promotion.get("oldPrice") or item.get("oldPrice")
-            is_promotion = promotion.get("isPromotion", False)
-            discount_percent = promotion.get("discountPercent")
-            promo_end_date = promotion.get("endDate")  # ISO строка
-
-            # API всегда возвращает цены в копейках, делим на 100
-            if old_price_raw:
-                old_price_raw = old_price_raw / 100
-
             # Параметры заказа
             order_props = item.get("orderProperties") or {}
             min_order_qty = order_props.get("minOrderQuantity", 1)
@@ -278,7 +267,6 @@ class MagnitAPIClient:
                 "name": item.get("name") or item.get("title", "Без названия"),
                 "sku": item.get("sku") or item.get("article"),
                 "price": float(current_price) if current_price else 0.0,
-                "old_price": float(old_price_raw) if old_price_raw else None,
                 "currency": "₽",
                 "unit": item.get("unit") or item.get("measureUnit", "шт"),
                 "image_url": image_url,
@@ -287,10 +275,6 @@ class MagnitAPIClient:
                 "quantity": item.get("quantity", 0),
                 "is_low_stock": item.get("isLowStock"),
                 "pickup_only": item.get("pickupOnly", False),
-                # Акции
-                "is_promotion": is_promotion,
-                "discount_percent": discount_percent,
-                "promo_end_date": promo_end_date,
                 # Рейтинги
                 "rating": rating,
                 "scores_count": scores_count,

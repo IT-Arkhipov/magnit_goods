@@ -257,11 +257,11 @@ def list_products(
     category_ids: Optional[str] = Query(None, description="Comma-separated category IDs"),
     search: Optional[str] = Query(None),
     min_price: Optional[float] = Query(None),
-    max_price: Optional[float] = Query(None),
-    sort_by: str = Query("name", pattern="^(name|price|discount|last_seen)$"),
-    limit: int = Query(100, le=1000),
-    offset: int = Query(0),
-    db: Session = Depends(get_db),
+     max_price: Optional[float] = Query(None),
+     sort_by: str = Query("name", pattern="^(name|price|last_seen)$"),
+     limit: int = Query(100, le=1000),
+     offset: int = Query(0),
+     db: Session = Depends(get_db),
 ):
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
@@ -326,10 +326,6 @@ def list_products(
     
     if sort_by == "price":
         query = query.order_by(Product.price.asc(), Product.name.asc())
-    elif sort_by == "discount":
-        query = query.filter(Product.old_price.isnot(None)).order_by(
-            Product.price.asc(), Product.name.asc()
-        )
     elif sort_by == "last_seen":
         query = query.order_by(Product.last_seen.desc(), Product.name.asc())
     else:
@@ -339,31 +335,14 @@ def list_products(
 
     result = []
     for p in products:
-        discount = None
-        old_price = p.old_price
-        
-        if not old_price:
-            from src.server.models import PriceHistory
-            yesterday = datetime.utcnow().date() - timedelta(days=1)
-            yesterday_price = db.query(PriceHistory).filter(
-                PriceHistory.product_id == p.product_id,
-                PriceHistory.store_code == p.store_code,
-                PriceHistory.recorded_at >= datetime.combine(yesterday, datetime.min.time()),
-                PriceHistory.recorded_at < datetime.combine(yesterday + timedelta(days=1), datetime.min.time())
-            ).order_by(PriceHistory.recorded_at.desc()).first()
-            
-            if yesterday_price:
-                old_price = yesterday_price.price
-        
-        if old_price and old_price > 0:
-            discount = round((old_price - p.price) / old_price * 100, 1)
         result.append(
             {
                 "product_id": p.product_id,
                 "name": p.name,
                 "price": p.price,
-                "old_price": p.old_price,
-                "discount_percent": discount,
+                "previous_price": p.previous_price,
+                "price_change_percent": p.price_change_percent,
+                "last_price_change": p.last_price_change.isoformat() if p.last_price_change else None,
                 "currency": p.currency,
                 "unit": p.unit,
                 "image_url": p.image_url,
@@ -377,9 +356,6 @@ def list_products(
                 "quantity": p.quantity,
                 "is_low_stock": p.is_low_stock,
                 "pickup_only": p.pickup_only,
-                # Акции
-                "is_promotion": p.is_promotion,
-                "promo_discount": p.discount_percent,
                 # Рейтинги
                 "rating": p.rating,
                 "scores_count": p.scores_count,
@@ -389,6 +365,7 @@ def list_products(
                 # Весовые
                 "is_weighted": p.is_weighted,
                 "unit_price": p.unit_price,
+                "first_seen": p.first_seen.isoformat() if p.first_seen else None,
                 "last_seen": p.last_seen.isoformat() if p.last_seen else None,
             }
         )
@@ -407,16 +384,16 @@ def get_products_stats(
     
     total = query.count()
     in_stock = query.filter(Product.in_stock == True).count()  # noqa: E712
-    with_discount = query.filter(Product.old_price.isnot(None)).count()
-    with_promotion = query.filter(Product.is_promotion == True).count()
+    with_price_decrease = query.filter(Product.price_change_percent > 0).count()
+    with_price_increase = query.filter(Product.price_change_percent < 0).count()
     
     last_update = query.order_by(Product.last_seen.desc()).first()
     
     return {
         "total": total,
         "in_stock": in_stock,
-        "with_discount": with_discount,
-        "with_promotion": with_promotion,
+        "with_price_decrease": with_price_decrease,
+        "with_price_increase": with_price_increase,
         "last_update": last_update.last_seen.isoformat() if last_update and last_update.last_seen else None,
     }
 
@@ -451,9 +428,9 @@ def get_multi_store_prices(
             result[p.product_id] = {}
         result[p.product_id][p.store_code] = {
             "price": p.price,
-            "old_price": p.old_price,
+            "previous_price": p.previous_price,
+            "price_change_percent": p.price_change_percent,
             "in_stock": p.in_stock,
-            "discount_percent": p.discount_percent,
             "quantity": p.quantity,
             "last_seen": p.last_seen.isoformat() if p.last_seen else None,
             "seo_code": p.seo_code,
@@ -477,18 +454,12 @@ def get_product(
     if not product:
         raise HTTPException(status_code=404, detail="Товар не найден")
 
-    discount = None
-    if product.old_price and product.old_price > 0:
-        discount = round(
-            (product.old_price - product.price) / product.old_price * 100, 1
-        )
-
     return {
         "product_id": product.product_id,
         "name": product.name,
         "price": product.price,
-        "old_price": product.old_price,
-        "discount_percent": discount,
+        "previous_price": product.previous_price,
+        "price_change_percent": product.price_change_percent,
         "currency": product.currency,
         "unit": product.unit,
         "image_url": product.image_url,

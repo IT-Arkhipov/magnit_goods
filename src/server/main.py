@@ -312,13 +312,21 @@ async def page_products(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@app.get("/deals", response_class=HTMLResponse)
-async def page_deals(request: Request, db: Session = Depends(get_db)):
-    stores = db.query(Store).filter(Store.is_active == True).all()  # noqa: E712
+@app.get("/test-discount", response_class=HTMLResponse)
+async def page_test_discount(request: Request):
     return render_template(
-        "deals.html",
-        {"request": request, "page": "deals", "stores": stores},
+        "test_discount.html",
+        {"request": request},
     )
+
+
+@app.get("/test-stores-loading", response_class=HTMLResponse)
+async def page_test_stores_loading(request: Request):
+    return render_template(
+        "test_stores_loading.html",
+        {"request": request},
+    )
+
 
 
 @app.get("/jobs", response_class=HTMLResponse)

@@ -1,5 +1,5 @@
 """
-Маршруты для работы с ценами, историей и уведомлениями.
+Маршруты для работы с ценами.
 """
 from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Body
 from sqlalchemy.orm import Session
@@ -7,7 +7,7 @@ from typing import Optional
 from datetime import datetime, date, timedelta
 
 from src.server.database import get_db
-from src.server.models import ScanJob, DailyPriceSnapshot, Product
+from src.server.models import ScanJob, Product
 from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
@@ -16,80 +16,38 @@ router = APIRouter(prefix="/api/prices", tags=["Цены"])
 @router.get("/decreased", response_model=list[dict])
 def get_decreased_prices(
     store_code: Optional[str] = Query(None),
-    category_id: Optional[int] = Query(None),
-    min_discount_percent: float = Query(0.0, description="Минимальный процент скидки"),
-    limit: int = Query(100, le=500),
+    min_discount_percent: float = Query(10.0, description="Минимальный процент снижения"),
+    limit: int = Query(50, le=500),
     db: Session = Depends(get_db),
 ):
     """Товары со сниженными ценами."""
-    from src.server.services.price_tracker import PriceTracker
-
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
 
-    tracker = PriceTracker(db, store_code)
-    return tracker.get_decreased_prices(
-        category_id=category_id,
-        min_discount_percent=min_discount_percent,
-        limit=limit,
+    products = (
+        db.query(Product)
+        .filter(
+            Product.store_code == store_code,
+            Product.price_change_percent >= min_discount_percent,
+            Product.last_price_change.isnot(None),
+        )
+        .order_by(Product.price_change_percent.desc())
+        .limit(limit)
+        .all()
     )
 
-
-@router.get("/increased", response_model=list[dict])
-def get_increased_prices(
-    store_code: Optional[str] = Query(None),
-    category_id: Optional[int] = Query(None),
-    limit: int = Query(100, le=500),
-    db: Session = Depends(get_db),
-):
-    """Товары с выросшими ценами."""
-    from src.server.services.price_tracker import PriceTracker
-
-    if not store_code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    tracker = PriceTracker(db, store_code)
-    return tracker.get_increased_prices(
-        category_id=category_id,
-        limit=limit,
-    )
-
-
-@router.get("/alerts", response_model=list[dict])
-def get_price_alerts(
-    store_code: Optional[str] = Query(None),
-    min_discount_percent: float = Query(10.0, description="Минимальный процент изменения"),
-    days: int = Query(7, description="За сколько дней показывать"),
-    limit: int = Query(50, le=200),
-    db: Session = Depends(get_db),
-):
-    """Уведомления о значительных изменениях цен."""
-    from src.server.services.price_tracker import PriceTracker
-
-    if not store_code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    tracker = PriceTracker(db, store_code)
-    return tracker.get_alerts(
-        min_discount_percent=min_discount_percent,
-        days=days,
-        limit=limit,
-    )
-
-
-@router.get("/statistics", response_model=dict)
-def get_statistics(
-    store_code: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-):
-    """Общая статистика по изменениям цен."""
-    from src.server.services.price_tracker import PriceTracker
-
-    if not store_code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    tracker = PriceTracker(db, store_code)
-    return tracker.get_statistics()
+    return [
+        {
+            "product_id": p.product_id,
+            "name": p.name,
+            "price": p.price,
+            "previous_price": p.previous_price,
+            "change_percent": p.price_change_percent,
+            "last_price_change": p.last_price_change.isoformat(),
+            "image_url": p.image_url,
+        }
+        for p in products
+    ]
 
 
 @router.post("/update")
@@ -158,142 +116,3 @@ def update_prices(
     else:
         run_update()
         return {"job_id": job.id, "status": "completed"}
-
-
-@router.get("/report/daily", response_model=dict)
-def get_daily_report(
-    store_code: Optional[str] = Query(None),
-    db: Session = Depends(get_db),
-):
-    """Ежедневный отчёт об изменениях цен."""
-    from src.server.services.notifications import NotificationService
-
-    if not store_code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    notifier = NotificationService(db, store_code)
-    return notifier.generate_daily_report()
-
-
-@router.get("/history/{product_id}", response_model=dict)
-def get_product_price_history(
-    product_id: int,
-    store_code: Optional[str] = Query(None),
-    days: int = Query(30, description="Кол-во дней истории"),
-    db: Session = Depends(get_db),
-):
-    """История цен конкретного товара."""
-    from src.server.services.price_tracker import PriceTracker
-
-    if not store_code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    tracker = PriceTracker(db, store_code)
-    history = tracker.get_price_history(product_id, days)
-
-    if not history:
-        raise HTTPException(status_code=404, detail="Товар не найден")
-
-    return history
-
-
-@router.get("/daily-history/{product_id}", response_model=list[dict])
-def get_daily_price_history(
-    product_id: int,
-    store_code: Optional[str] = Query(None),
-    days: int = Query(30, le=31, description="Кол-во дней истории (макс 31)"),
-    db: Session = Depends(get_db),
-):
-    """
-    Ежедневная история цен товара из таблицы daily_price_snapshot.
-    Возвращает массив снимков за последние N дней.
-    """
-    code = store_code
-    if not code:
-        raise HTTPException(status_code=400, detail="Необходимо указать store_code")
-
-    # Проверяем что товар существует
-    product = (
-        db.query(Product)
-        .filter(Product.product_id == product_id, Product.store_code == code)
-        .first()
-    )
-    if not product:
-        raise HTTPException(status_code=404, detail="Товар не найден")
-
-    cutoff = date.today() - timedelta(days=days)
-
-    snapshots = (
-        db.query(DailyPriceSnapshot)
-        .filter(
-            DailyPriceSnapshot.product_id == product_id,
-            DailyPriceSnapshot.store_code == code,
-            DailyPriceSnapshot.snapshot_date >= cutoff,
-        )
-        .order_by(DailyPriceSnapshot.snapshot_date.asc())
-        .all()
-    )
-
-    return [
-        {
-            "date": s.snapshot_date.isoformat(),
-            "price": s.price,
-            "old_price": s.old_price,
-            "discount_percent": s.discount_percent,
-        }
-        for s in snapshots
-    ]
-
-
-@router.post("/historical-bulk")
-def get_historical_prices_bulk(
-    request: dict = Body(...),
-    db: Session = Depends(get_db),
-):
-    """
-    Получить исторические цены для множества товаров (bulk-запрос).
-    
-    Body:
-    {
-        "products": [
-            {"product_id": 123, "store_code": "992104", "current_price": 79.99},
-            {"product_id": 456, "store_code": "992104", "current_price": 89.99}
-        ],
-        "days_back": 14  # optional, default 14
-    }
-    
-    Response:
-    {
-        "123": {
-            "old_price": 89.99,
-            "discount_percent": 11.1,
-            "price_date": "2026-05-10T12:00:00",
-            "source": "price_history"
-        },
-        "456": null
-    }
-    """
-    from src.server.services.price_calculator import get_bulk_historical_prices
-    
-    products = request.get("products", [])
-    days_back = request.get("days_back", 14)
-    
-    if not products:
-        raise HTTPException(status_code=400, detail="products list is required")
-    
-    if not isinstance(products, list):
-        raise HTTPException(status_code=400, detail="products must be a list")
-    
-    # Валидация данных
-    for p in products:
-        if not all(k in p for k in ["product_id", "store_code", "current_price"]):
-            raise HTTPException(
-                status_code=400,
-                detail="Each product must have product_id, store_code, and current_price"
-            )
-    
-    try:
-        result = get_bulk_historical_prices(products, db, days_back)
-        return result
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error calculating historical prices: {str(e)}")

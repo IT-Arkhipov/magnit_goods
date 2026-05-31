@@ -12,9 +12,7 @@ import os
 from src.server.models import (
     Category,
     Product,
-    PriceHistory,
     ScanJob,
-    DailyPriceSnapshot,
 )
 from src.server.services.magnit_api import MagnitAPIClient
 
@@ -482,37 +480,11 @@ class CatalogScanner:
         # 2. Разделяем на INSERT и UPDATE
         to_insert = []
         to_update = []
-        price_history_records = []
-
         now = datetime.utcnow()
-
-        # Bulk-расчет исторических скидок для всех товаров в порции
-        products_for_hist = [
-            {
-                "product_id": p["product_id"],
-                "store_code": self.store_code,
-                "current_price": p["price"]
-            }
-            for p in products
-        ]
-
-        from src.server.services.price_calculator import get_bulk_historical_prices
-        historical_data = get_bulk_historical_prices(products_for_hist, self.db, days_back=14)
 
         for product_data in products:
             product_id = product_data["product_id"]
             current_price = product_data["price"]
-            current_old_price = product_data.get("old_price")
-
-            # Парсим promo_end_date из ISO строки
-            promo_end = None
-            if product_data.get("promo_end_date"):
-                try:
-                    promo_end = datetime.fromisoformat(
-                        product_data["promo_end_date"].replace("Z", "+00:00")
-                    )
-                except (ValueError, AttributeError):
-                    pass
 
             existing = existing_products.get(product_id)
 
@@ -521,40 +493,11 @@ class CatalogScanner:
                 old_price_val = existing.price
                 new_price_val = current_price
 
-                # Рассчитываем процент изменения от предыдущей цены
-                price_change_percent = 0
-                change_type = None
-                
-                if abs(old_price_val - new_price_val) > 0.01:
-                    change_type = (
-                        "decreased" if new_price_val < old_price_val else "increased"
-                    )
-                    # Рассчитываем процент: (новая - старая) / старая * 100
-                    if old_price_val > 0:
-                        price_change_percent = round(
-                            (new_price_val - old_price_val) / old_price_val * 100, 1
-                        )
-                    
-                    price_history_records.append(
-                        {
-                            "product_id": product_id,
-                            "store_code": self.store_code,
-                            "price": new_price_val,
-                            "old_price": current_old_price,
-                            "recorded_at": now,
-                            "change_type": change_type,
-                        }
-                    )
-                else:
-                    # Цена не изменилась, но сохраняем 0% изменение
-                    price_change_percent = 0
-
                 # Обновляем поля
                 update_data = {
                     "id": existing.id,
                     "name": product_data.get("name", existing.name),
                     "price": new_price_val,
-                    "old_price": current_old_price,
                     "category_id": db_category_id,
                     "sku": product_data.get("sku", existing.sku),
                     "unit": product_data.get("unit", existing.unit),
@@ -565,8 +508,6 @@ class CatalogScanner:
                     "quantity": product_data.get("quantity", existing.quantity),
                     "is_low_stock": product_data.get("is_low_stock", existing.is_low_stock),
                     "pickup_only": product_data.get("pickup_only", existing.pickup_only),
-                    "is_promotion": product_data.get("is_promotion", existing.is_promotion),
-                    "promo_end_date": promo_end,
                     "rating": product_data.get("rating", existing.rating),
                     "scores_count": product_data.get("scores_count", existing.scores_count),
                     "comments_count": product_data.get("comments_count", existing.comments_count),
@@ -577,80 +518,57 @@ class CatalogScanner:
                     "order_step_qty": product_data.get("order_step_qty", existing.order_step_qty),
                     "is_weighted": product_data.get("is_weighted", existing.is_weighted),
                     "unit_price": product_data.get("unit_price", existing.unit_price),
-                    "last_price_change": now if abs(old_price_val - new_price_val) > 0.01 else existing.last_price_change,
                 }
-                
-                # Обновляем discount_percent и is_price_increase ТОЛЬКО если цена изменилась
-                if change_type:
-                    update_data["discount_percent"] = price_change_percent
-                    update_data["historical_discount_percent"] = price_change_percent
-                    update_data["historical_old_price"] = old_price_val
-                    update_data["historical_price_date"] = now
-                    update_data["is_price_increase"] = change_type == "increased"
-                
+
+                # Проверяем изменение цены
+                if abs(old_price_val - new_price_val) > 0.01:
+                    # Цена изменилась!
+                    change_percent = round((old_price_val - new_price_val) / old_price_val * 100, 1)
+                    update_data["previous_price"] = old_price_val
+                    update_data["price_change_percent"] = change_percent
+                    update_data["last_price_change"] = now
+
                 to_update.append(update_data)
             else:
-                # INSERT
-                # Получаем исторические данные для товара
-                hist_key = f"{product_id}:{self.store_code}"
-                hist_data = historical_data.get(hist_key)
-                
-                to_insert.append(
-                    {
-                        "product_id": product_id,
-                        "name": product_data.get("name", "Без названия"),
-                        "sku": product_data.get("sku"),
-                        "category_id": db_category_id,
-                        "store_code": self.store_code,
-                        "price": current_price,
-                        "old_price": current_old_price,
-                        "currency": "₽",
-                        "unit": product_data.get("unit", "шт"),
-                        "image_url": product_data.get("image_url"),
-                        "in_stock": product_data.get("in_stock", True),
-                        # Остатки
-                        "quantity": product_data.get("quantity", 0),
-                        "is_low_stock": product_data.get("is_low_stock"),
-                        "pickup_only": product_data.get("pickup_only", False),
-                        # Акции
-                        "is_promotion": product_data.get("is_promotion", False),
-                        "discount_percent": product_data.get("discount_percent"),
-                        "promo_end_date": promo_end,
-                        # Рейтинги
-                        "rating": product_data.get("rating"),
-                        "scores_count": product_data.get("scores_count", 0),
-                        "comments_count": product_data.get("comments_count", 0),
-                        # SEO
-                        "seo_code": product_data.get("seo_code"),
-                        "service": product_data.get("service"),
-                        "catalog_type": product_data.get("catalog_type"),
-                        # Параметры заказа
-                        "min_order_qty": product_data.get("min_order_qty", 1),
-                        "order_step_qty": product_data.get("order_step_qty", 1),
-                        # Весовые
-                        "is_weighted": product_data.get("is_weighted", False),
-                        "unit_price": product_data.get("unit_price"),
-                        "first_seen": now,
-                        "last_seen": now,
-                        "last_scan_found": now,  # Устанавливаем время сканирования для новых товаров
-                        # Исторические данные
-                        "historical_discount_percent": hist_data["discount_percent"] if hist_data else None,
-                        "historical_old_price": hist_data["old_price"] if hist_data else None,
-                        "historical_price_date": datetime.fromisoformat(hist_data["price_date"]) if hist_data else None,
-                        "is_price_increase": hist_data.get("is_increase", False) if hist_data else False,
-                    }
-                )
-
-                price_history_records.append(
-                    {
-                        "product_id": product_id,
-                        "store_code": self.store_code,
-                        "price": current_price,
-                        "old_price": current_old_price,
-                        "recorded_at": now,
-                        "change_type": "initial",
-                    }
-                )
+                # INSERT: новый товар
+                to_insert.append({
+                    "product_id": product_id,
+                    "name": product_data.get("name", "Без названия"),
+                    "sku": product_data.get("sku"),
+                    "category_id": db_category_id,
+                    "store_code": self.store_code,
+                    "price": current_price,
+                    "currency": "₽",
+                    "unit": product_data.get("unit", "шт"),
+                    "image_url": product_data.get("image_url"),
+                    "in_stock": product_data.get("in_stock", True),
+                    # Остатки
+                    "quantity": product_data.get("quantity", 0),
+                    "is_low_stock": product_data.get("is_low_stock"),
+                    "pickup_only": product_data.get("pickup_only", False),
+                    # Рейтинги
+                    "rating": product_data.get("rating"),
+                    "scores_count": product_data.get("scores_count", 0),
+                    "comments_count": product_data.get("comments_count", 0),
+                    # SEO
+                    "seo_code": product_data.get("seo_code"),
+                    "service": product_data.get("service"),
+                    "catalog_type": product_data.get("catalog_type"),
+                    # Параметры заказа
+                    "min_order_qty": product_data.get("min_order_qty", 1),
+                    "order_step_qty": product_data.get("order_step_qty", 1),
+                    # Весовые
+                    "is_weighted": product_data.get("is_weighted", False),
+                    "unit_price": product_data.get("unit_price"),
+                    # Временные метки
+                    "first_seen": now,
+                    "last_seen": now,
+                    "last_scan_found": now,
+                    # Отслеживание цен
+                    "previous_price": None,
+                    "price_change_percent": None,
+                    "last_price_change": None,
+                })
 
         # 3. Bulk INSERT
         added = 0
@@ -666,72 +584,10 @@ class CatalogScanner:
             updated = len(to_update)
             print(f"DEBUG: Bulk updated {updated} products")
 
-        # 5. Bulk INSERT для истории цен
-        price_changes = 0
-        if price_history_records:
-            self.db.bulk_insert_mappings(PriceHistory, price_history_records)
-            price_changes = len(price_history_records)
-            print(f"DEBUG: Bulk inserted {price_changes} price history records")
-
-        # 6. Сохраняем снимки цен
-        for product_data in products:
-            self._save_price_snapshot(
-                product_id=product_data["product_id"],
-                price=product_data["price"],
-                old_price=product_data.get("old_price"),
-            )
-
-        # 7. Один COMMIT для всех операций
+        # 5. Один COMMIT для всех операций
         self.db.commit()
 
-        return added, updated, price_changes
-
-    def _save_price_snapshot(
-        self, product_id: int, price: float, old_price: float = None
-    ):
-        """
-        Записать ежедневный снимок цены товара.
-        Если снимок за сегодня уже есть — обновить его.
-        Удаляет записи старше 31 дня.
-        """
-        today = date.today()
-        cutoff_date = today - timedelta(days=31)
-
-        # Проверяем есть ли снимок за сегодня
-        existing_snapshot = (
-            self.db.query(DailyPriceSnapshot)
-            .filter(
-                DailyPriceSnapshot.product_id == product_id,
-                DailyPriceSnapshot.store_code == self.store_code,
-                DailyPriceSnapshot.snapshot_date == today,
-            )
-            .first()
-        )
-
-        discount = None
-        if old_price and old_price > 0 and price > 0:
-            discount = round((old_price - price) / old_price * 100, 1)
-
-        if existing_snapshot:
-            existing_snapshot.price = price
-            existing_snapshot.old_price = old_price
-            existing_snapshot.discount_percent = discount
-        else:
-            snapshot = DailyPriceSnapshot(
-                product_id=product_id,
-                store_code=self.store_code,
-                price=price,
-                old_price=old_price,
-                snapshot_date=today,
-                discount_percent=discount,
-            )
-            self.db.add(snapshot)
-
-        # Удаляем записи старше 31 дня
-        self.db.query(DailyPriceSnapshot).filter(
-            DailyPriceSnapshot.snapshot_date < cutoff_date,
-            DailyPriceSnapshot.store_code == self.store_code,
-        ).delete(synchronize_session=False)
+        return added, updated, 0
 
     def cleanup_stale_products(self, days_threshold: int = 7) -> int:
         """

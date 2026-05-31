@@ -97,7 +97,6 @@ class Product(Base):
     category = relationship("Category", backref="products")
 
     price = Column(Float, nullable=False, index=True)
-    old_price = Column(Float, nullable=True)
     currency = Column(String, default="₽")
     unit = Column(String, nullable=True)
     image_url = Column(String, nullable=True)
@@ -107,11 +106,6 @@ class Product(Base):
     quantity = Column(Integer, default=0)  # Остаток на складе
     is_low_stock = Column(Boolean, nullable=True)  # Мало ли осталось
     pickup_only = Column(Boolean, default=False)  # Только самовывоз
-
-    # Акции и скидки
-    is_promotion = Column(Boolean, default=False)  # Участвует ли в акции
-    discount_percent = Column(Integer, nullable=True)  # Процент скидки
-    promo_end_date = Column(DateTime, nullable=True)  # Дата окончания акции
 
     # Рейтинги и отзывы
     rating = Column(Float, nullable=True)  # Рейтинг товара
@@ -136,33 +130,9 @@ class Product(Base):
     last_price_change = Column(DateTime, nullable=True)
     last_scan_found = Column(DateTime, nullable=True)  # Дата последнего сканирования, когда товар был найден
 
-
-class PriceHistory(Base):
-    """История изменений цен."""
-
-    __tablename__ = "price_history"
-
-    id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, nullable=False, index=True)
-    store_code = Column(String, nullable=False)
-    price = Column(Float, nullable=False)
-    old_price = Column(Float, nullable=True)
-    recorded_at = Column(DateTime, default=datetime.utcnow, index=True)
-    change_type = Column(String, nullable=True)
-
-
-class DailyPriceSnapshot(Base):
-    """Ежедневный снимок цены товара."""
-
-    __tablename__ = "daily_price_snapshot"
-
-    id = Column(Integer, primary_key=True, index=True)
-    product_id = Column(Integer, nullable=False, index=True)
-    store_code = Column(String, nullable=False, index=True)
-    price = Column(Float, nullable=False)
-    old_price = Column(Float, nullable=True)
-    snapshot_date = Column(Date, nullable=False, index=True)
-    discount_percent = Column(Float, nullable=True)
+    # Отслеживание цен
+    previous_price = Column(Float, nullable=True)  # Предыдущая цена (из предыдущего сканирования)
+    price_change_percent = Column(Float, nullable=True, index=True)  # Процент изменения (+ снижение, - повышение)
 
 
 class ScanJob(Base):

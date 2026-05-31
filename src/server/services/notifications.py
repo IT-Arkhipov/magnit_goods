@@ -6,7 +6,7 @@ from sqlalchemy.orm import Session
 from datetime import datetime, timedelta
 from typing import Optional
 
-from src.server.models import Product, PriceHistory, Category
+from src.server.models import Product, Category
 
 
 class NotificationService:
@@ -31,19 +31,27 @@ class NotificationService:
         today = datetime.utcnow().date()
         yesterday = today - timedelta(days=1)
 
-        # Изменения за вчера
-        changes_query = self.db.query(PriceHistory).filter(
-            PriceHistory.recorded_at
-            >= datetime.combine(yesterday, datetime.min.time()),
-            PriceHistory.recorded_at < datetime.combine(today, datetime.min.time()),
+        # Изменения за вчера (по last_price_change)
+        decreased = (
+            self.db.query(Product)
+            .filter(
+                Product.store_code == self.store_code,
+                Product.price_change_percent > 0,
+                Product.last_price_change >= datetime.combine(yesterday, datetime.min.time()),
+                Product.last_price_change < datetime.combine(today, datetime.min.time()),
+            )
+            .count()
         )
-
-        decreased = changes_query.filter(
-            PriceHistory.change_type == "decreased"
-        ).count()
-        increased = changes_query.filter(
-            PriceHistory.change_type == "increased"
-        ).count()
+        increased = (
+            self.db.query(Product)
+            .filter(
+                Product.store_code == self.store_code,
+                Product.price_change_percent < 0,
+                Product.last_price_change >= datetime.combine(yesterday, datetime.min.time()),
+                Product.last_price_change < datetime.combine(today, datetime.min.time()),
+            )
+            .count()
+        )
 
         # Новые товары за вчера
         new_products_count = (
@@ -56,10 +64,17 @@ class NotificationService:
         )
 
         # Топ-5 скидок
-        tracker = __import__(
-            "src.server.services.price_tracker", fromlist=["PriceTracker"]
-        ).PriceTracker(self.db, self.store_code)
-        top_deals = tracker.get_decreased_prices(min_discount_percent=10.0, limit=5)
+        top_deals = (
+            self.db.query(Product)
+            .filter(
+                Product.store_code == self.store_code,
+                Product.price_change_percent >= 10.0,
+                Product.last_price_change.isnot(None),
+            )
+            .order_by(Product.price_change_percent.desc())
+            .limit(5)
+            .all()
+        )
 
         return {
             "date": yesterday.isoformat(),
@@ -69,7 +84,17 @@ class NotificationService:
                 "price_increases": increased,
                 "new_products": new_products_count,
             },
-            "top_deals": top_deals,
+            "top_deals": [
+                {
+                    "product_id": p.product_id,
+                    "name": p.name,
+                    "price": p.price,
+                    "previous_price": p.previous_price,
+                    "change_percent": p.price_change_percent,
+                    "image_url": p.image_url,
+                }
+                for p in top_deals
+            ],
         }
 
     def check_new_products_in_tracked_categories(self, days: int = 1) -> list[dict]:
@@ -148,27 +173,16 @@ class NotificationService:
         # Проверяем, были ли они ранее отсутствуют
         notifications = []
         for product in products:
-            # Ищем запись в истории где товар отсутствовал
-            was_out = (
-                self.db.query(PriceHistory)
-                .filter(
-                    PriceHistory.product_id == product.product_id,
-                    PriceHistory.recorded_at < cutoff,
-                )
-                .first()
-            )
-
             # Упрощённая логика — просто возвращаем товары в наличии
-            if was_out or True:  # Показываем все для простоты
-                notifications.append(
-                    {
-                        "product_id": product.product_id,
-                        "name": product.name,
-                        "price": product.price,
-                        "image_url": product.image_url,
-                        "last_seen": product.last_seen.isoformat(),
-                    }
-                )
+            notifications.append(
+                {
+                    "product_id": product.product_id,
+                    "name": product.name,
+                    "price": product.price,
+                    "image_url": product.image_url,
+                    "last_seen": product.last_seen.isoformat(),
+                }
+            )
 
         return notifications[:20]  # Ограничиваем
 
@@ -188,7 +202,7 @@ class NotificationService:
                 f"🔥 Скидка! {data['name']}\n"
                 f"Было: {data.get('previous_price', '?')}₽\n"
                 f"Стало: {data['current_price']}₽\n"
-                f"Экономия: {data['discount_percent']}%"
+                f"Экономия: {data.get('price_change_percent', 0)}%"
             )
         elif alert_type == "new_product":
             return f"🆕 Новый товар: {data['name']} — {data['price']}₽"

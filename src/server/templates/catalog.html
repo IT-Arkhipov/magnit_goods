@@ -756,6 +756,11 @@ async function startScanProducts() {
                 const jobResponse = await fetch(`/api/jobs/${jobId}`);
                 const job = await jobResponse.json();
 
+                // Обновляем сообщение статуса во время выполнения
+                if (job.status === 'running' && job.total_stores && job.total_categories) {
+                    scanStatus.innerHTML = `<div class="badge badge-info">Сканирование ${job.total_stores} магазинов, ${job.total_categories} категорий...</div>`;
+                }
+
                 // Обновляем общий прогресс (магазины и категории)
                 if (job.total_stores && job.total_categories) {
                     const totalOps = job.total_stores * job.total_categories;
@@ -809,8 +814,8 @@ async function startScanProducts() {
                     // Показываем результаты
                     let summary = `
                         ✓ Сканирование завершено!<br>
-                        Магазинов: ${stores.length}<br>
-                        Категорий: ${trackedCategories.length}<br>
+                        Магазинов: ${job.total_stores || stores.length}<br>
+                        Категорий: ${job.total_categories || selectedCategories.size}<br>
                         Товаров просканировано: ${job.items_scanned || 0}<br>
                         Товаров добавлено: ${job.items_added || 0}<br>
                         Товаров обновлено: ${job.items_updated || 0}

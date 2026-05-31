@@ -12,8 +12,6 @@ import logging
 from src.server.database import SessionLocal
 from src.server.models import ScanJob, Category
 from src.server.services.catalog_scanner import CatalogScanner
-from src.server.services.price_tracker import PriceTracker
-from src.server.services.notifications import NotificationService
 
 logger = logging.getLogger(__name__)
 
@@ -59,10 +57,7 @@ def update_prices_job(store_code: str, category_ids: list[int] = None):
         job.items_updated = result["updated"]
         db.commit()
 
-        # Генерируем уведомления
-        tracker = PriceTracker(db, store_code)
-        alerts = tracker.get_alerts(min_discount_percent=10.0, days=1)
-        logger.info(f"[Scheduler] Обновление цен завершено. Уведомления: {len(alerts)}")
+        logger.info(f"[Scheduler] Обновление цен завершено")
 
         scanner.close()
 
@@ -152,20 +147,6 @@ def scan_catalog_job(store_code: str):
         db.close()
 
 
-def generate_daily_report_job(store_code: str):
-    """
-    Задание: генерация ежедневного отчёта.
-    """
-    db = SessionLocal()
-    try:
-        notifier = NotificationService(db, store_code)
-        report = notifier.generate_daily_report()
-        logger.info(f"[Scheduler] Ежедневный отчёт: {report['summary']}")
-    except Exception as e:
-        logger.error(f"[Scheduler] Ошибка генерации отчёта: {e}")
-    finally:
-        db.close()
-
 
 def init_scheduler(store_code: str):
     """
@@ -217,14 +198,14 @@ def init_scheduler(store_code: str):
     )
 
     # Ежедневный отчёт — каждый день в 20:00
-    scheduler.add_job(
-        generate_daily_report_job,
-        CronTrigger(hour=20, minute=0),
-        args=[store_code],
-        id="daily_report",
-        name="Ежедневный отчёт",
-        replace_existing=True,
-    )
+    # scheduler.add_job(
+    #     generate_daily_report_job,
+    #     CronTrigger(hour=20, minute=0),
+    #     args=[store_code],
+    #     id="daily_report",
+    #     name="Ежедневный отчёт",
+    #     replace_existing=True,
+    # )
 
     scheduler.start()
     logger.info("[Scheduler] Планировщик запущен")

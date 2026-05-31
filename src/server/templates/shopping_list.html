@@ -229,11 +229,11 @@ function loadShoppingList() {
                     `;
                     
                     products.forEach(item => {
-                        const discount = item.old_price && item.old_price > item.price
-                            ? Math.round(((item.old_price - item.price) / item.old_price) * 100)
+                        const discount = item.previous_price && item.previous_price > item.price
+                            ? Math.round(((item.previous_price - item.price) / item.previous_price) * 100)
                             : 0;
-                        const savings = item.old_price && item.old_price > item.price
-                            ? (item.old_price - item.price).toFixed(2)
+                        const savings = item.previous_price && item.previous_price > item.price
+                            ? (item.previous_price - item.price).toFixed(2)
                             : 0;
                         
                         storeSum += item.price;
@@ -375,8 +375,8 @@ function exportToText() {
                     const products = categories[categoryName];
                     
                     products.forEach(item => {
-                        const savings = item.old_price && item.old_price > item.price
-                            ? (item.old_price - item.price).toFixed(2)
+                        const savings = item.previous_price && item.previous_price > item.price
+                            ? (item.previous_price - item.price).toFixed(2)
                             : 0;
                         storeSum += item.price;
                         storeSavings += parseFloat(savings);
