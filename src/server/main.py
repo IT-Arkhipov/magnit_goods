@@ -6,239 +6,44 @@ from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
 from typing import Optional
 import os
+import logging
 
-from src.server.database import engine, init_db, get_db
+from src.server.database import engine, init_db, get_db, SessionLocal
 from src.server.models import Store
 from src.server.schemas import StoreCreate
 from src.server.routes import stores, jobs, catalog, prices
 from src.server.scheduler import init_scheduler, shutdown_scheduler
 from sqlalchemy import text
-import os
 
 
-# === Инициализация БД ===
-init_db()
-
-# === Миграция: конвертация integer ID в хэш-идентификаторы ===
-from src.server.database import SessionLocal, engine
-from src.server.models import Store, Category, store_hash_id
-from sqlalchemy import inspect
-
-
-def migrate_store_ids():
-    """Конвертация integer ID в хэш-идентификаторы (однократно)."""
-    inspector = inspect(engine)
-    cols = [c["name"] for c in inspector.get_columns("stores")]
-    if "id" not in cols:
-        return  # таблица ещё не создана
-
-    col_info = next(
-        (c for c in inspector.get_columns("stores") if c["name"] == "id"), None
-    )
-    col_type = str(col_info["type"]).upper() if col_info else ""
-    if "INT" not in col_type:
-        return  # уже строка — миграция выполнена
-
-    print("Миграция: конвертация ID магазинов в хэш-формат...", flush=True)
-
-    # Чтение данных
-    s1 = SessionLocal()
-    try:
-        rows = s1.query(Store).all()
-        data = [
-            (s.store_code, s.store_type, s.city, s.address, s.full_address, s.name)
-            for s in rows
-        ]
-    finally:
-        s1.close()
-
-    # Пересоздание таблицы
-    Store.__table__.drop(engine, checkfirst=True)
-    Store.__table__.create(engine)
-
-    # Вставка
-    s2 = SessionLocal()
-    try:
-        from datetime import datetime as dt
-
-        now = dt.utcnow()
-        for sc, st, city, addr, fa, name in data:
-            new_id = store_hash_id(sc, st, fa)
-            s2.add(
-                Store(
-                    id=new_id,
-                    store_code=sc,
-                    store_type=st,
-                    city=city,
-                    address=addr,
-                    full_address=fa,
-                    name=name,
-                    created_at=now,
-                )
-            )
-        s2.commit()
-        print(f"Миграция завершена: {len(data)} магазинов", flush=True)
-    finally:
-        s2.close()
-
-
-migrate_store_ids()
-
-
-def migrate_categories():
-    """Обновить структуру таблицы категорий (добавить code, url, убрать category_id)."""
-    inspector = inspect(engine)
-
-    # Проверяем, есть ли таблица
-    if "categories" not in inspector.get_table_names():
-        return  # таблица ещё не создана
-
-    cols = [c["name"] for c in inspector.get_columns("categories")]
-
-    # Если структура уже правильная, ничего не делаем
-    if "code" in cols and "url" in cols and "parent_id" in cols:
-        return  # структура уже обновлена
-
-    # Если есть старое поле category_id, нужна миграция
-    if "category_id" in cols and "code" not in cols:
-        print("Миграция: обновление структуры категорий...", flush=True)
-
-        # Удаляем старую таблицу
-        Category.__table__.drop(engine, checkfirst=True)
-        Category.__table__.create(engine)
-
-        print("Структура категорий обновлена. Загрузите каталог из JSON.", flush=True)
-        return
-
-    # Если есть store_code, убираем его
-    if "store_code" in cols:
-        print("Миграция: удаление store_code из категорий...", flush=True)
-        Category.__table__.drop(engine, checkfirst=True)
-        Category.__table__.create(engine)
-        print("Миграция категорий завершена", flush=True)
-
-
-migrate_categories()
-
-# === Миграция: добавление поля shop_type в таблицу stores ===
-def migrate_add_shop_type():
-    """Добавить поле shop_type в таблицу stores (однократно)."""
-    inspector = inspect(engine)
-    cols = [c["name"] for c in inspector.get_columns("stores")]
-    
-    if "shop_type" not in cols:
-        print("Миграция: добавление поля shop_type в таблицу stores...", flush=True)
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE stores ADD COLUMN shop_type INTEGER"))
-            conn.commit()
-        print("Поле shop_type добавлено в таблицу stores", flush=True)
-
-migrate_add_shop_type()
-
-# === Миграция: заполнение поля shop_type для известных типов магазинов ===
-def migrate_fill_shop_type():
-    """Заполнить поле shop_type на основе store_type."""
-    db_session = SessionLocal()
-    try:
-        # Маппинг store_type на числовые коды (из magnit_api.py)
-        shop_type_mapping = {
-            "Магнит": 1,
-            "Мини": 2,
-            "М.Косметик": 3,
-            "Семейный": 5,
-            "Экстра": 6,
-            "Опт": 7,
-            "Заряд": 8,
-            "Моя цена": 9,
-        }
-        
-        # Проверяем, есть ли уже заполненные значения
-        filled_count = db_session.query(Store).filter(Store.shop_type != None).count()
-        if filled_count > 0:
-            return  # уже заполнено
-        
-        print("Миграция: заполнение поля shop_type...", flush=True)
-        
-        for store_type, shop_type_code in shop_type_mapping.items():
-            stores = db_session.query(Store).filter(Store.store_type == store_type).all()
-            for store in stores:
-                store.shop_type = shop_type_code
-            if len(stores) > 0:
-                print(f"  Обновлено {len(stores)} магазинов типа '{store_type}' -> код {shop_type_code}", flush=True)
-        
-        db_session.commit()
-        print("Поле shop_type успешно заполнено", flush=True)
-    except Exception as e:
-        print(f"Ошибка при заполнении shop_type: {e}", flush=True)
-        db_session.rollback()
-    finally:
-        db_session.close()
-
-migrate_fill_shop_type()
-
-# === Миграция: добавление поля last_scan_found в таблицу products ===
-def migrate_add_last_scan_found():
-    """Добавить поле last_scan_found в таблицу products (однократно)."""
-    inspector = inspect(engine)
-    cols = [c["name"] for c in inspector.get_columns("products")]
-    
-    if "last_scan_found" not in cols:
-        print("Миграция: добавление поля last_scan_found в таблицу products...", flush=True)
-        with engine.connect() as conn:
-            conn.execute(text("ALTER TABLE products ADD COLUMN last_scan_found DATETIME"))
-            conn.commit()
-        print("Поле last_scan_found добавлено в таблицу products", flush=True)
-
-migrate_add_last_scan_found()
-
-# === Миграция: добавление полей прогресса в таблицу scan_jobs ===
-def migrate_add_scan_job_progress_fields():
-    """Добавить поля прогресса в таблицу scan_jobs."""
-    inspector = inspect(engine)
-    cols = [c["name"] for c in inspector.get_columns("scan_jobs")]
-    
-    new_fields = [
-        ("total_stores", "INTEGER DEFAULT 0"),
-        ("current_store_index", "INTEGER DEFAULT 0"),
-        ("current_store_code", "STRING"),
-        ("current_store_address", "STRING"),
-        ("total_categories", "INTEGER DEFAULT 0"),
-        ("current_category_index", "INTEGER DEFAULT 0"),
-        ("current_category_name", "STRING"),
-        ("current_category_magnit_id", "INTEGER"),
-        ("current_category_items_total", "INTEGER DEFAULT 0"),
-        ("current_category_items_loaded", "INTEGER DEFAULT 0"),
-    ]
-    
-    for field_name, field_type in new_fields:
-        if field_name not in cols:
-            print(f"Миграция: добавление поля {field_name} в таблицу scan_jobs...", flush=True)
-            with engine.connect() as conn:
-                conn.execute(text(f"ALTER TABLE scan_jobs ADD COLUMN {field_name} {field_type}"))
-                conn.commit()
-            print(f"Поле {field_name} добавлено в таблицу scan_jobs", flush=True)
-
-migrate_add_scan_job_progress_fields()
-
-# === Очистка зависших заданий от предыдущего запуска ===
-from src.server.routes.stores import _mark_all_running_failed_on_startup
-
-db_session = SessionLocal()
-try:
-    _mark_all_running_failed_on_startup(db_session)
-finally:
-    db_session.close()
-
-# === Инициализация планировщика ===
-store_code = os.getenv("STORE_CODE")
-if store_code:
-    init_scheduler(store_code)
+# === Настройка логирования ===
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(name)s %(levelname)s %(message)s",
+)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Управление жизненным циклом приложения."""
+    # Инициализация БД и миграции
+    init_db()
+
+    # Очистка зависших заданий от предыдущего запуска
+    from src.server.routes.stores import _mark_all_running_failed_on_startup
+    db_session = SessionLocal()
+    try:
+        _mark_all_running_failed_on_startup(db_session)
+    finally:
+        db_session.close()
+
+    # Инициализация планировщика
+    store_code = os.getenv("STORE_CODE")
+    if store_code:
+        init_scheduler(store_code)
+
     yield
+
     # Завершение работы
     shutdown_scheduler()
 
@@ -251,9 +56,11 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+ALLOWED_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -404,7 +211,7 @@ async def open_product_in_browser(
 ):
     """Открыть товар в браузере с автоматическим выбором магазина через Playwright"""
     from src.server.services.product_opener import open_product_with_store
-    
+
     # Запускаем в фоне, чтобы не блокировать ответ
     import threading
     thread = threading.Thread(
@@ -412,7 +219,7 @@ async def open_product_in_browser(
         args=(product_url, store_code, store_type)
     )
     thread.start()
-    
+
     return {"status": "opening", "message": "Открываем товар в браузере..."}
 
 

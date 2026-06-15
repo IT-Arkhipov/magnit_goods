@@ -8,6 +8,7 @@ from datetime import datetime, date, timedelta
 from typing import Optional, Dict
 import time
 import os
+import logging
 
 from src.server.models import (
     Category,
@@ -15,6 +16,8 @@ from src.server.models import (
     ScanJob,
 )
 from src.server.services.magnit_api import MagnitAPIClient
+
+logger = logging.getLogger(__name__)
 
 
 class CatalogScanner:
@@ -101,7 +104,7 @@ class CatalogScanner:
 
         for i, root_cat in enumerate(root_categories):
             if not root_cat.magnit_id:
-                print(f"DEBUG: Пропуск корневой категории без magnit_id: {root_cat.name}")
+                logger.debug(f"DEBUG: Пропуск корневой категории без magnit_id: {root_cat.name}")
                 continue
 
             try:
@@ -109,7 +112,7 @@ class CatalogScanner:
                 api_data = self._fetch_category_data(root_cat.magnit_id)
 
                 if not api_data or "category" not in api_data:
-                    print(f"WARN: Нет данных для категории {root_cat.name}")
+                    logger.warning(f"WARN: Нет данных для категории {root_cat.name}")
                     continue
 
                 cat_info = api_data["category"]
@@ -118,7 +121,6 @@ class CatalogScanner:
                 # Обновляем название корневой категории если изменилось
                 if root_cat.name != cat_info.get("title", root_cat.name):
                     root_cat.name = cat_info["title"]
-                    self.db.commit()
                     updated += 1
 
                 # Получаем текущие подкатегории из БД
@@ -133,11 +135,9 @@ class CatalogScanner:
                 # Удаляем подкатегории, которых нет в API
                 for magnit_id, child in current_ids.items():
                     if magnit_id not in api_ids:
-                        print(f"DEBUG: Удалена подкатегория: {child.name} (magnit_id={magnit_id})")
+                        logger.debug(f"DEBUG: Удалена подкатегория: {child.name} (magnit_id={magnit_id})")
                         self.db.delete(child)
                         deleted += 1
-
-                self.db.commit()
 
                 # Добавляем или обновляем подкатегории из API
                 for sub in subcats_from_api:
@@ -149,7 +149,6 @@ class CatalogScanner:
                         child = current_ids[sub_id]
                         if child.name != sub_name:
                             child.name = sub_name
-                            self.db.commit()
                             updated += 1
                     else:
                         # Добавляем новую подкатегорию
@@ -161,7 +160,7 @@ class CatalogScanner:
                         )
                         self.db.add(new_child)
                         added += 1
-                        print(f"DEBUG: Добавлена подкатегория: {sub_name} (magnit_id={sub_id})")
+                        logger.debug(f"DEBUG: Добавлена подкатегория: {sub_name} (magnit_id={sub_id})")
 
                 self.db.commit()
                 total_processed += 1
@@ -172,7 +171,7 @@ class CatalogScanner:
                     )
 
             except Exception as e:
-                print(f"ERROR: Ошибка обновления категории {root_cat.name}: {e}")
+                logger.error(f"ERROR: Ошибка обновления категории {root_cat.name}: {e}")
 
         result = {
             "scanned": total_processed,
@@ -204,7 +203,7 @@ class CatalogScanner:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Error fetching category {category_id}: {e}")
+            logger.error(f"Error fetching category {category_id}: {e}")
             return None
 
     def scan_products(
@@ -232,21 +231,21 @@ class CatalogScanner:
                 if tracked_only:
                     query = query.filter(Category.is_tracked == True)  # noqa: E712
                 categories = query.all()
-                print(f"DEBUG: Found {len(categories)} tracked categories")
+                logger.debug(f"DEBUG: Found {len(categories)} tracked categories")
                 if categories:
-                    print(
+                    logger.debug(
                         f"DEBUG: First category: id={categories[0].id}, magnit_id={categories[0].magnit_id}, name={categories[0].name}"
                     )
                 category_ids = [cat.magnit_id for cat in categories]
-                print(f"DEBUG: category_ids (first 5): {category_ids[:5]}")
+                logger.debug(f"DEBUG: category_ids (first 5): {category_ids[:5]}")
             except Exception as e:
-                print(f"ERROR in category_ids extraction: {e}")
+                logger.error(f"ERROR in category_ids extraction: {e}")
                 import traceback
 
-                print(traceback.format_exc())
+                logger.exception("Traceback")
                 raise
         else:
-            print(
+            logger.debug(
                 f"DEBUG: Using provided category_ids: {category_ids[:5] if len(category_ids) > 5 else category_ids}"
             )
 
@@ -270,7 +269,7 @@ class CatalogScanner:
             if self.job_id:
                 job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
                 if job and job.status == "cancelled":
-                    print(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                    logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
                     return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
                 
                 # Показать магазин и категорию
@@ -293,11 +292,11 @@ class CatalogScanner:
                     if self.job_id:
                         job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
                         if job and job.status == "cancelled":
-                            print(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                            logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
                             return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
                     
                     try:
-                        print(
+                        logger.debug(
                             f"DEBUG: Calling search with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
                         )
                         result = self.api.search(
@@ -306,7 +305,7 @@ class CatalogScanner:
                             limit=32,
                             offset=offset,
                         )
-                        print(
+                        logger.debug(
                             f"DEBUG: search returned {len(result.get('items', []))} products"
                         )
                         break  # Успешно, выходим из retry цикла
@@ -317,25 +316,24 @@ class CatalogScanner:
                             wait_time = (
                                 2**retry_count
                             )  # Exponential backoff: 2, 4, 8 секунд
-                            print(
+                            logger.warning(
                                 f"WARN: Ошибка получения товаров (попытка {retry_count}/{max_retries}): {e}"
                             )
-                            print(
+                            logger.debug(
                                 f"DEBUG: Ожидание {wait_time} секунд перед повтором..."
                             )
                             time.sleep(wait_time)
                         else:
                             err_msg = str(e)
                             if "invalid_service_pair" in err_msg or "service not found" in err_msg:
-                                print(
+                                logger.warning(
                                     f"WARN: Категория {cat_magnit_id} недоступна для типа магазина {self.store_type} — пропускаем"
                                 )
                             else:
-                                print(
+                                logger.error(
                                     f"ERROR: Ошибка получения товаров после {max_retries} попыток (категория {cat_magnit_id}): {e}"
                                 )
-                            import traceback
-                            print(traceback.format_exc())
+                            logger.exception("Traceback")
 
                 # Если все попытки исчерпаны, пропускаем эту категорию
                 if retry_count >= max_retries and last_error:
@@ -344,9 +342,9 @@ class CatalogScanner:
                         msg = f"⚠️ Категория {cat_name} недоступна для {self.store_type}"
                         if self.job_id:
                             self._update_job_progress(msg)
-                        print(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
+                        logger.warning(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
                     else:
-                        print(
+                        logger.warning(
                             f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
                         )
                     break
@@ -364,17 +362,17 @@ class CatalogScanner:
                     )
                 
                 # Логируем пагинацию для отладки
-                print(f"DEBUG: Pagination - offset={offset}, items_count={len(products)}, has_more={has_more}, next_offset={next_offset}, total={total_count}")
+                logger.debug(f"DEBUG: Pagination - offset={offset}, items_count={len(products)}, has_more={has_more}, next_offset={next_offset}, total={total_count}")
                 
                 # Если нет товаров, выходим из цикла (даже если hasMore=True)
                 if not products:
-                    print(f"DEBUG: No products returned, breaking pagination loop")
+                    logger.debug(f"DEBUG: No products returned, breaking pagination loop")
                     break
                 
                 # Если next_offset не определён, но есть товары, вычисляем сами
                 if next_offset is None and has_more:
                     next_offset = offset + len(products)
-                    print(f"DEBUG: Calculated next_offset={next_offset}")
+                    logger.debug(f"DEBUG: Calculated next_offset={next_offset}")
                 
                 offset = next_offset if next_offset is not None else offset + len(products)
 
@@ -455,14 +453,14 @@ class CatalogScanner:
                 .first()
             )
             db_category_id = cat.id if cat else None
-            print(
+            logger.debug(
                 f"DEBUG _save_products: category_magnit_id={category_magnit_id}, cat={cat}, db_category_id={db_category_id}"
             )
         except Exception as e:
-            print(f"ERROR in _save_products finding category: {e}")
+            logger.error(f"ERROR in _save_products finding category: {e}")
             import traceback
 
-            print(traceback.format_exc())
+            logger.exception("Traceback")
             raise
 
         # 1. Получаем все существующие товары ОДНИМ запросом
@@ -522,11 +520,14 @@ class CatalogScanner:
 
                 # Проверяем изменение цены
                 if abs(old_price_val - new_price_val) > 0.01:
-                    # Цена изменилась!
-                    change_percent = round((old_price_val - new_price_val) / old_price_val * 100, 1)
+                    # Цена изменилась — сохраняем предыдущую цену
                     update_data["previous_price"] = old_price_val
+                    change_percent = round((old_price_val - new_price_val) / old_price_val * 100, 1)
                     update_data["price_change_percent"] = change_percent
                     update_data["last_price_change"] = now
+                    update_data["last_change_price"] = old_price_val
+                    # Дата предыдущего скана, когда старая цена была ещё актуальна
+                    update_data["last_change_date"] = existing.last_seen or now
 
                 to_update.append(update_data)
             else:
@@ -565,9 +566,11 @@ class CatalogScanner:
                     "last_seen": now,
                     "last_scan_found": now,
                     # Отслеживание цен
-                    "previous_price": None,
+                    "previous_price": current_price,
                     "price_change_percent": None,
                     "last_price_change": None,
+                    "last_change_price": None,
+                    "last_change_date": None,
                 })
 
         # 3. Bulk INSERT
@@ -575,14 +578,14 @@ class CatalogScanner:
         if to_insert:
             self.db.bulk_insert_mappings(Product, to_insert)
             added = len(to_insert)
-            print(f"DEBUG: Bulk inserted {added} products")
+            logger.debug(f"DEBUG: Bulk inserted {added} products")
 
         # 4. Bulk UPDATE
         updated = 0
         if to_update:
             self.db.bulk_update_mappings(Product, to_update)
             updated = len(to_update)
-            print(f"DEBUG: Bulk updated {updated} products")
+            logger.debug(f"DEBUG: Bulk updated {updated} products")
 
         # 5. Один COMMIT для всех операций
         self.db.commit()
@@ -594,31 +597,23 @@ class CatalogScanner:
         Удалить товары, которые не обновлялись N дней.
         
         Args:
-            days_threshold: Количество дней без обновлений (по умолчанию 30)
+            days_threshold: Количество дней без обновлений (по умолчанию 7)
             
         Returns:
             Количество удалённых товаров
         """
         cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
         
-        # Находим устаревшие товары для текущего магазина
-        stale_products = self.db.query(Product).filter(
+        deleted = self.db.query(Product).filter(
             Product.last_seen < cutoff_date,
-            Product.store_code == self.store_code
-        ).all()
+            Product.store_code == self.store_code,
+        ).delete(synchronize_session=False)
         
-        count = len(stale_products)
-        
-        if count > 0:
-            print(f"DEBUG: Удаление {count} устаревших товаров для магазина {self.store_code} (не обновлялись {days_threshold}+ дней)")
-            
-            # Удаляем товары (история цен удалится каскадно, если настроено в моделях)
-            for product in stale_products:
-                self.db.delete(product)
-            
+        if deleted > 0:
             self.db.commit()
+            logger.info(f"Удалено {deleted} устаревших товаров для магазина {self.store_code}")
         
-        return count
+        return deleted
 
     def close(self):
         """Закрыть клиент."""

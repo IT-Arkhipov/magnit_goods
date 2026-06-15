@@ -14,6 +14,16 @@ import json
 from typing import Optional
 import time
 import os
+import random
+import logging
+
+from src.server.constants import (
+    STORE_TYPE_MAP,
+    REVERSE_STORE_TYPE_MAP,
+    API_STORE_TYPE_CODE,
+)
+
+logger = logging.getLogger(__name__)
 
 
 class MagnitAPIClient:
@@ -57,7 +67,6 @@ class MagnitAPIClient:
             if elapsed < self.rate_limit:
                 delay = self.rate_limit - elapsed
                 time.sleep(delay)
-        import random
         time.sleep(random.uniform(0.1, 0.5))
         self._last_request_time = time.time()
 
@@ -137,19 +146,19 @@ class MagnitAPIClient:
             payload["categories"] = []
 
         try:
-            print(f"DEBUG: POST {url}")
-            print(f"DEBUG: Payload: {payload}")
-            print(f"DEBUG: Payload JSON: {json.dumps(payload)}")
+            logger.debug(f"DEBUG: POST {url}")
+            logger.debug(f"DEBUG: Payload: {payload}")
+            logger.debug(f"DEBUG: Payload JSON: {json.dumps(payload)}")
 
             response = self.session.post(url, json=payload, timeout=self.timeout)
 
-            print(f"DEBUG: Response status: {response.status_code}")
-            print(f"DEBUG: Response text: {response.text[:500]}")
+            logger.debug(f"DEBUG: Response status: {response.status_code}")
+            logger.debug(f"DEBUG: Response text: {response.text[:500]}")
 
             response.raise_for_status()
             data = response.json()
 
-            print(f"DEBUG: Response keys: {list(data.keys())}")
+            logger.debug(f"DEBUG: Response keys: {list(data.keys())}")
 
             # Парсим ответ
             items = []
@@ -189,7 +198,7 @@ class MagnitAPIClient:
                 # Если API не вернул nextOffset, вычисляем сами
                 next_offset = offset + len(items) if has_more else None
             
-            print(f"DEBUG pagination: offset={offset}, len(items)={len(items)}, total={total}, hasMore={has_more}, api_next_offset={api_next_offset}, next_offset={next_offset}")
+            logger.debug(f"DEBUG pagination: offset={offset}, len(items)={len(items)}, total={total}, hasMore={has_more}, api_next_offset={api_next_offset}, next_offset={next_offset}")
 
             return {
                 "items": items,
@@ -198,7 +207,7 @@ class MagnitAPIClient:
                 "next_offset": next_offset,
             }
         except requests.RequestException as e:
-            print(f"ERROR: {e}")
+            logger.error(f"ERROR: {e}")
             raise Exception(f"Ошибка при поиске: {str(e)}")
 
     def _parse_category(self, item: dict) -> Optional[dict]:
@@ -216,7 +225,7 @@ class MagnitAPIClient:
                 "parent_id": item.get("parentId"),
             }
         except Exception as e:
-            print(f"Ошибка парсинга категории: {e}")
+            logger.error(f"Ошибка парсинга категории: {e}")
             return None
 
     def _parse_product(self, item: dict) -> Optional[dict]:
@@ -292,7 +301,7 @@ class MagnitAPIClient:
                 "category_id": item.get("categoryId"),
             }
         except Exception as e:
-            print(f"Ошибка парсинга товара: {e}")
+            logger.error(f"Ошибка парсинга товара: {e}")
             import traceback
             traceback.print_exc()
             return None
@@ -305,35 +314,6 @@ class MagnitAPIClient:
         """Закрыть сессию."""
         self.session.close()
 
-
-# Маппинг типов: API код → UI-лейбл (кнопки на magnit.ru/shops)
-# Проверено через Playwright 2026-04-13: клик по кнопке → storeTypeListV2 в запросе
-# URL кнопки: ?storeType=<код>
-STORE_TYPE_MAP = {
-    "MM": "Магнит",
-    "ME": "Экстра",
-    "DG": "М.Косметик",
-    "GM": "Семейный",
-    "MO": "Опт",
-    "MC": "Моя цена",
-    "ZARYAD": "Заряд",
-    "MM_MINI": "Мини",
-}
-
-# Обратный маппинг: UI-лейбл → API код
-REVERSE_STORE_TYPE_MAP = {v: k for k, v in STORE_TYPE_MAP.items()}
-
-# Маппинг для API запросов (лейбл → числовой код)
-API_STORE_TYPE_CODE = {
-    "Магнит": "1",
-    "Экстра": "6",
-    "М.Косметик": "3",
-    "Семейный": "5",
-    "Опт": "7",
-    "Моя цена": "9",
-    "Заряд": "8",
-    "Мини": "2",
-}
 
 ALL_STORE_TYPES = list(STORE_TYPE_MAP.keys())
 
@@ -383,7 +363,6 @@ class StoresAPI:
             if elapsed < self.rate_limit:
                 delay = self.rate_limit - elapsed
                 time.sleep(delay)
-        import random
         time.sleep(random.uniform(0.1, 0.5))
         self._last_request_time = time.time()
 
@@ -419,7 +398,7 @@ class StoresAPI:
         try:
             self.session.get(f"{self.base_url}/shops", timeout=10)
         except Exception as e:
-            print(f"Warning: Could not get cookies: {e}")
+            logger.warning(f"Warning: Could not get cookies: {e}")
         
         # Список типов для запроса
         types_to_search = store_types if store_types else ALL_STORE_TYPES
@@ -444,26 +423,26 @@ class StoresAPI:
             }
 
             try:
-                print(f"DEBUG StoresAPI: POST {url} (type={store_type})")
-                print(f"DEBUG StoresAPI: Payload: {json.dumps(payload, ensure_ascii=False)}")
-                print(f"DEBUG StoresAPI: Cookies: {self.session.cookies.get_dict()}")
+                logger.debug(f"DEBUG StoresAPI: POST {url} (type={store_type})")
+                logger.debug(f"DEBUG StoresAPI: Payload: {json.dumps(payload, ensure_ascii=False)}")
+                logger.debug(f"DEBUG StoresAPI: Cookies: {self.session.cookies.get_dict()}")
                 
                 response = self.session.post(url, json=payload, timeout=self.timeout)
                 
-                print(f"DEBUG StoresAPI: Response status: {response.status_code}")
-                print(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
+                logger.debug(f"DEBUG StoresAPI: Response status: {response.status_code}")
+                logger.debug(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
                 
                 if response.status_code == 200:
                     data = response.json()
                     # Ответ API имеет структуру: {"data": [...], "totalCount": N}
                     stores = data.get("data", [])
-                    print(f"DEBUG StoresAPI: Found {len(stores)} stores for type {store_type}")
+                    logger.debug(f"DEBUG StoresAPI: Found {len(stores)} stores for type {store_type}")
                     all_stores.extend(stores)
                 else:
-                    print(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
+                    logger.debug(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
                     
             except requests.RequestException as e:
-                print(f"ERROR StoresAPI for type {store_type}: {e}")
+                logger.error(f"ERROR StoresAPI for type {store_type}: {e}")
                 # Продолжаем поиск для остальных типов
 
         # Дедупликация по code
@@ -477,7 +456,7 @@ class StoresAPI:
         
         unique_stores = list(seen_codes.values())
         
-        print(f"DEBUG StoresAPI: Total unique stores: {len(unique_stores)}")
+        logger.debug(f"DEBUG StoresAPI: Total unique stores: {len(unique_stores)}")
 
         return {
             "stores": unique_stores,

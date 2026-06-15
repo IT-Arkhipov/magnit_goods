@@ -8,12 +8,15 @@ from sqlalchemy import (
     Date,
     Text,
     ForeignKey,
+    UniqueConstraint,
+    Index,
 )
 from sqlalchemy.orm import relationship
 from datetime import datetime
 import hashlib
 
 from src.server.database import Base
+from src.server.constants import STORE_TYPE_CODES
 
 
 def store_hash_id(store_code: str, store_type: str, full_address: str) -> str:
@@ -40,23 +43,12 @@ class Store(Base):
     is_active = Column(Boolean, default=True)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    STORE_TYPE_TO_SHOP_TYPE = {
-        "Магнит": 1,
-        "Мини": 2,
-        "М.Косметик": 3,
-        "Семейный": 5,
-        "Экстра": 6,
-        "Опт": 7,
-        "Заряд": 8,
-        "Моя цена": 9,
-    }
-
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         if not kwargs.get("id") and self.store_code and self.store_type and self.full_address:
             self.id = store_hash_id(self.store_code, self.store_type, self.full_address)
         if not kwargs.get("shop_type") and self.store_type:
-            self.shop_type = self.STORE_TYPE_TO_SHOP_TYPE.get(self.store_type)
+            self.shop_type = STORE_TYPE_CODES.get(self.store_type)
 
 
 class Category(Base):
@@ -85,13 +77,19 @@ class Product(Base):
     """Товар (текущее состояние)."""
 
     __tablename__ = "products"
+    __table_args__ = (
+        UniqueConstraint("product_id", "store_code", name="uq_product_store"),
+        Index("ix_product_store_lookup", "product_id", "store_code"),
+        Index("ix_product_price_change", "store_code", "price_change_percent"),
+        Index("ix_product_last_scan", "store_code", "last_scan_found"),
+    )
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, nullable=False)
     name = Column(String, nullable=False)
     sku = Column(String, nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
-    store_code = Column(String, nullable=False, index=True)
+    store_code = Column(String, nullable=False)
     
     # Relationships
     category = relationship("Category", backref="products")
@@ -133,6 +131,8 @@ class Product(Base):
     # Отслеживание цен
     previous_price = Column(Float, nullable=True)  # Предыдущая цена (из предыдущего сканирования)
     price_change_percent = Column(Float, nullable=True, index=True)  # Процент изменения (+ снижение, - повышение)
+    last_change_price = Column(Float, nullable=True)  # Цена до последнего изменения
+    last_change_date = Column(DateTime, nullable=True)  # Дата последнего изменения цены
 
 
 class ScanJob(Base):

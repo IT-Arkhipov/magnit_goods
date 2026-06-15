@@ -811,6 +811,9 @@ async function startScanProducts() {
                 if (job.status === 'completed') {
                     clearInterval(pollingInterval);
 
+                    // Установить флаг "Новая цена" для страницы товаров
+                    localStorage.setItem('showNewPriceMode', 'true');
+
                     // Показываем результаты
                     let summary = `
                         ✓ Сканирование завершено!<br>

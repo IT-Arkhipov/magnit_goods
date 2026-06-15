@@ -1113,7 +1113,7 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
             // Режим 1: изменение от предыдущего сканирования
             changePercent = p.price_change_percent !== null && p.price_change_percent !== undefined ? p.price_change_percent : 0;
             previousPrice = p.previous_price || null;
-            changeDate = p.last_price_change;
+            changeDate = p.last_change_date || p.last_price_change;
         } else {
             // Режим 2: последнее реальное изменение цены
             if (p.last_change_price !== null && p.last_change_price !== undefined) {
@@ -1151,12 +1151,16 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
         // Тултип
         let tooltipHtml;
         if (showNewPriceMode) {
-            // Режим 1: всегда показываем остаток и дату последнего сканирования
-            tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
+            // Режим 1: показываем предыдущую цену и дату, если есть изменение
+            if (previousPrice && changePercent !== 0) {
+                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
+            } else {
+                tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
+            }
         } else {
             // Режим 2: если есть изменение - показываем предыдущую цену и дату изменения
             if (previousPrice && changePercent !== 0) {
-                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата изменения: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
+                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
             } else {
                 tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
             }

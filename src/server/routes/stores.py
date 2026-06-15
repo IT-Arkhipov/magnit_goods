@@ -5,13 +5,17 @@ import os
 import dotenv
 from datetime import datetime, timedelta
 import time
+import logging
 
 from sqlalchemy import or_
 from src.server.database import get_db
 from src.server.models import Store, ScanJob
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest, StorePreviewItem, AddSelectedStoresRequest
-from src.server.services.magnit_api import STORE_TYPE_MAP
+from src.server.services.magnit_api import STORE_TYPE_MAP as API_STORE_TYPE_MAP
 from src.server.utils.city_extractor import extract_city_from_address
+from src.server.constants import STORE_TYPE_CODES
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
 
@@ -33,9 +37,8 @@ def _cleanup_stale_jobs(db: Session):
 
 
 def _mark_all_running_failed_on_startup(db: Session):
-    """При старте сервера пометить все running задания как failed (процесс был убит)."""
+    """При старте сервера пометить ВСЕ running задания как failed (процесс был убит)."""
     stale_jobs = db.query(ScanJob).filter(
-        ScanJob.job_type == "stores",
         ScanJob.status == "running",
     ).all()
     for job in stale_jobs:
@@ -44,6 +47,7 @@ def _mark_all_running_failed_on_startup(db: Session):
         job.finished_at = datetime.utcnow()
     if stale_jobs:
         db.commit()
+        logger.info(f"Помечено как failed: {len(stale_jobs)} зависших заданий")
 
 
 @router.get("", response_model=list[StoreResponse])
@@ -105,7 +109,7 @@ def get_store(store_id: str, db: Session = Depends(get_db)):
 
 
 @router.put("/{store_id}", response_model=StoreResponse)
-def update_store(store_id: int, data: StoreUpdate, db: Session = Depends(get_db)):
+def update_store(store_id: str, data: StoreUpdate, db: Session = Depends(get_db)):
     """Обновить магазин."""
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
@@ -205,7 +209,7 @@ def preview_stores(
 
     stores_api = None
     try:
-        from src.server.services.magnit_api import StoresAPI, STORE_TYPE_MAP
+        from src.server.services.magnit_api import StoresAPI
         stores_api = StoresAPI()
 
         # Формируем запрос: город + улица (если есть)
@@ -224,9 +228,9 @@ def preview_stores(
                 offset=0,
             )
             stores_data = result.get("stores", [])
-            print(f"DEBUG preview_stores: Получено {len(stores_data)} магазинов из API")
+            logger.debug(f"DEBUG preview_stores: Получено {len(stores_data)} магазинов из API")
         except Exception as api_error:
-            print(f"ERROR preview_stores: {api_error}")
+            logger.error(f"ERROR preview_stores: {api_error}")
             raise HTTPException(
                 status_code=502,
                 detail=f"Ошибка API Магнита: {str(api_error)}"
@@ -239,18 +243,18 @@ def preview_stores(
             external_id = sd.get("externalId", {})
             code = external_id.get("storeCode") or sd.get("store_code")
             if not code:
-                print(f"DEBUG: Пропущен магазин без кода: {sd.get('address')}")
+                logger.debug(f"DEBUG: Пропущен магазин без кода: {sd.get('address')}")
                 continue
             
             # Преобразуем формат API в наш формат
-            # storeTypeV2: "GM" -> STORE_TYPE_MAP.get("GM") = "Семейный"
+            # storeTypeV2: "GM" -> API_STORE_TYPE_MAP.get("GM") = "Семейный"
             store_type_api = sd.get("storeTypeV2") or sd.get("storeType", "")
             # Удаляем префикс "STORE_TYPE_" если есть
             if store_type_api.startswith("STORE_TYPE_"):
                 store_type_api = store_type_api[11:]
             
-            store_type_name = STORE_TYPE_MAP.get(store_type_api, store_type_api)
-            print(f"DEBUG: Магазин {code}, тип API: {store_type_api}, тип UI: {store_type_name}")
+            store_type_name = API_STORE_TYPE_MAP.get(store_type_api, store_type_api)
+            logger.debug(f"DEBUG: Магазин {code}, тип API: {store_type_api}, тип UI: {store_type_name}")
             
             # Получаем полный адрес
             full_address = sd.get("full_address") or sd.get("address", "")
@@ -262,7 +266,7 @@ def preview_stores(
             
             # Если город не извлечён (например, для сёл без явного указания) - пропускаем магазин
             if not city:
-                print(f"DEBUG: Пропущен магазин без города: {full_address}")
+                logger.debug(f"DEBUG: Пропущен магазин без города: {full_address}")
                 continue
             
             store_info = {
@@ -277,13 +281,13 @@ def preview_stores(
             if code not in seen:
                 seen[code] = store_info
 
-        print(f"DEBUG: Всего уникальных магазинов: {len(seen)}")
+        logger.debug(f"DEBUG: Всего уникальных магазинов: {len(seen)}")
 
         # Формируем превью
         preview = []
         for sd in seen.values():
             if not sd.get("full_address"):
-                print(f"DEBUG: Пропущен магазин без адреса: {sd}")
+                logger.debug(f"DEBUG: Пропущен магазин без адреса: {sd}")
                 continue
             preview.append(StorePreviewItem(
                 store_code=sd["store_code"],
@@ -295,7 +299,7 @@ def preview_stores(
                 exists_in_db=sd["store_code"] in existing_codes,
             ))
 
-        print(f"DEBUG preview_stores: Сформировано {len(preview)} магазинов для превью")
+        logger.debug(f"DEBUG preview_stores: Сформировано {len(preview)} магазинов для превью")
         return {"total_found": len(preview), "stores": preview}
 
     except HTTPException:
@@ -313,18 +317,6 @@ def preview_stores(
                 pass
 
 
-STORE_TYPE_TO_SHOP_TYPE = {
-    "Магнит": 1,
-    "Мини": 2,
-    "М.Косметик": 3,
-    "Семейный": 5,
-    "Экстра": 6,
-    "Опт": 7,
-    "Заряд": 8,
-    "Моя цена": 9,
-}
-
-
 @router.post("/add-selected")
 def add_selected_stores(
     req: AddSelectedStoresRequest,
@@ -339,7 +331,7 @@ def add_selected_stores(
         if s.store_code in existing_codes:
             skipped += 1
         else:
-            shop_type_code = STORE_TYPE_TO_SHOP_TYPE.get(s.store_type)
+            shop_type_code = STORE_TYPE_CODES.get(s.store_type)
             to_add.append(Store(
                 store_code=s.store_code,
                 store_type=s.store_type,

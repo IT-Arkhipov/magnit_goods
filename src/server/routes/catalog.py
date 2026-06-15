@@ -8,9 +8,12 @@ from typing import Optional
 from datetime import datetime
 import threading
 import os
+import logging
 
 from src.server.database import get_db
 from src.server.models import Category, Product, Store
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api", tags=["Каталог"])
 
@@ -104,18 +107,18 @@ def update_catalog_from_api(
     import os
     from src.server.services.catalog_scanner import CatalogScanner
 
-    print(f"DEBUG: Обновление каталога для магазина {store_code}")
+    logger.debug(f"DEBUG: Обновление каталога для магазина {store_code}")
 
     store_type = os.getenv("STORE_TYPE", "MM")
     scanner = CatalogScanner(db, store_code=store_code, store_type=store_type)
     try:
         result = scanner.scan_categories()
         scanner.close()
-        print(f"DEBUG: Обновление каталога завершено: {result}")
+        logger.debug(f"DEBUG: Обновление каталога завершено: {result}")
         return {"status": "completed", **result}
     except Exception as e:
         scanner.close()
-        print(f"ERROR: Ошибка при обновлении каталога: {e}")
+        logger.error(f"ERROR: Ошибка при обновлении каталога: {e}")
         import traceback
 
         traceback.print_exc()
@@ -125,38 +128,31 @@ def update_catalog_from_api(
 @router.get("/categories/tree")
 def get_categories_tree(db: Session = Depends(get_db)):
     """Получить дерево категорий с подкатегориями."""
-    root_categories = (
-        db.query(Category)
-        .filter(Category.parent_id.is_(None))
-        .order_by(Category.name)
-        .all()
-    )
+    all_cats = db.query(Category).order_by(Category.name).all()
 
-    def build_tree(category, parent_id=None):
-        children = (
-            db.query(Category)
-            .filter(Category.parent_id == category.id)
-            .order_by(Category.name)
-            .all()
-        )
-        result = {
-            "id": category.id,
-            "name": category.name,
-            "url": category.url,
-            "magnit_id": category.magnit_id,
-            "is_tracked": category.is_tracked,
-            "product_count": category.product_count,
-            "parent_id": parent_id,
+    cat_map = {
+        c.id: {
+            "id": c.id,
+            "name": c.name,
+            "url": c.url,
+            "magnit_id": c.magnit_id,
+            "is_tracked": c.is_tracked,
+            "product_count": c.product_count,
+            "parent_id": c.parent_id,
             "children": [],
         }
-        for child in children:
-            result["children"].append(build_tree(child, category.id))
-        return result
+        for c in all_cats
+    }
 
-    result = []
-    for cat in root_categories:
-        result.append(build_tree(cat, None))
-    return result
+    roots = []
+    for cat in cat_map.values():
+        if cat["parent_id"] is None:
+            roots.append(cat)
+        else:
+            parent = cat_map.get(cat["parent_id"])
+            if parent:
+                parent["children"].append(cat)
+    return roots
 
 
 @router.post("/categories/load-from-json")
@@ -265,28 +261,29 @@ def list_products(
 ):
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
-    from datetime import datetime, timedelta
-    
+    from datetime import timedelta
+    from sqlalchemy import func, or_
+
+    # Распарсиваем category_ids один раз
+    cat_id_list: list[int] = []
+    if category_ids:
+        cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
+
     query = db.query(Product).options(joinedload(Product.category))
     if store_code:
         query = query.filter(Product.store_code == store_code)
     if category_id:
         query = query.filter(Product.category_id == category_id)
-    if category_ids:
-        cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
-        if cat_id_list:
-            query = query.filter(Product.category_id.in_(cat_id_list))
+    if cat_id_list:
+        query = query.filter(Product.category_id.in_(cat_id_list))
     if search:
         query = query.filter(Product.name.like(f"%{search}%"))
     if min_price is not None:
         query = query.filter(Product.price >= min_price)
     if max_price is not None:
         query = query.filter(Product.price <= max_price)
-    
+
     if store_code:
-        from datetime import timedelta
-        from sqlalchemy import func
-        
         scan_query = db.query(
             Product.category_id,
             func.max(Product.last_scan_found).label('max_scan_time')
@@ -294,11 +291,9 @@ def list_products(
             Product.store_code == store_code,
             Product.last_scan_found.isnot(None)
         )
-        
-        if category_ids:
-            cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
-            if cat_id_list:
-                scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
+
+        if cat_id_list:
+            scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
         elif category_id:
             scan_query = scan_query.filter(Product.category_id == category_id)
         
@@ -321,7 +316,6 @@ def list_products(
                     )
                 )
             
-            from sqlalchemy import or_
             query = query.filter(or_(*conditions))
     
     if sort_by == "price":
@@ -343,6 +337,8 @@ def list_products(
                 "previous_price": p.previous_price,
                 "price_change_percent": p.price_change_percent,
                 "last_price_change": p.last_price_change.isoformat() if p.last_price_change else None,
+                "last_change_price": p.last_change_price,
+                "last_change_date": p.last_change_date.isoformat() if p.last_change_date else None,
                 "currency": p.currency,
                 "unit": p.unit,
                 "image_url": p.image_url,
@@ -378,23 +374,24 @@ def get_products_stats(
     db: Session = Depends(get_db),
 ):
     """Статистика товаров."""
-    query = db.query(Product)
-    if store_code:
-        query = query.filter(Product.store_code == store_code)
-    
-    total = query.count()
-    in_stock = query.filter(Product.in_stock == True).count()  # noqa: E712
-    with_price_decrease = query.filter(Product.price_change_percent > 0).count()
-    with_price_increase = query.filter(Product.price_change_percent < 0).count()
-    
-    last_update = query.order_by(Product.last_seen.desc()).first()
-    
+    from sqlalchemy import func, case
+
+    query_filter = Product.store_code == store_code if store_code else True
+
+    row = db.query(
+        func.count().label("total"),
+        func.sum(case((Product.in_stock == True, 1), else_=0)).label("in_stock"),
+        func.sum(case((Product.price_change_percent > 0, 1), else_=0)).label("with_price_decrease"),
+        func.sum(case((Product.price_change_percent < 0, 1), else_=0)).label("with_price_increase"),
+        func.max(Product.last_seen).label("last_update"),
+    ).filter(query_filter).one()
+
     return {
-        "total": total,
-        "in_stock": in_stock,
-        "with_price_decrease": with_price_decrease,
-        "with_price_increase": with_price_increase,
-        "last_update": last_update.last_seen.isoformat() if last_update and last_update.last_seen else None,
+        "total": row.total or 0,
+        "in_stock": row.in_stock or 0,
+        "with_price_decrease": row.with_price_decrease or 0,
+        "with_price_increase": row.with_price_increase or 0,
+        "last_update": row.last_update.isoformat() if row.last_update else None,
     }
 
 
@@ -471,6 +468,10 @@ def get_product(
         "last_price_change": product.last_price_change.isoformat()
         if product.last_price_change
         else None,
+        "last_change_price": product.last_change_price,
+        "last_change_date": product.last_change_date.isoformat()
+        if product.last_change_date
+        else None,
     }
 
 
@@ -487,7 +488,7 @@ def scan_products(
     from src.server.services.catalog_scanner import CatalogScanner
     import traceback
 
-    print(
+    logger.debug(
         f"DEBUG: scan_products called with store_code={store_code}, tracked_only={tracked_only}"
     )
 
@@ -498,23 +499,23 @@ def scan_products(
         except ValueError:
             raise HTTPException(status_code=400, detail="Неверный формат category_ids")
 
-    print(f"DEBUG: Creating CatalogScanner...")
+    logger.debug(f"DEBUG: Creating CatalogScanner...")
     scanner = CatalogScanner(db, store_code=store_code)
-    print(f"DEBUG: CatalogScanner created successfully")
+    logger.debug(f"DEBUG: CatalogScanner created successfully")
 
     try:
-        print(
+        logger.debug(
             f"DEBUG: Calling scan_products with cat_ids={cat_ids}, tracked_only={tracked_only}"
         )
         result = scanner.scan_products(category_ids=cat_ids, tracked_only=tracked_only)
-        print(f"DEBUG: scan_products returned: {result}")
+        logger.debug(f"DEBUG: scan_products returned: {result}")
         scanner.close()
         return {"status": "completed", **result}
     except Exception as e:
         scanner.close()
         tb = traceback.format_exc()
-        print(f"ERROR in scan_products: {str(e)}")
-        print(f"TRACEBACK:\n{tb}")
+        logger.error(f"ERROR in scan_products: {str(e)}")
+        logger.error(f"TRACEBACK:\n{tb}")
         raise HTTPException(status_code=500, detail=f"{str(e)}\n{tb}")
 
 
@@ -610,18 +611,24 @@ def scan_all_stores(
                     scanner = CatalogScanner(
                         bg_db, store_code=store_code, address=address, job_id=job_id
                     )
-                    
+
+                    # Загружаем маппинг категорий один раз до цикла
+                    cat_name_map = {
+                        cat.magnit_id: cat.name
+                        for cat in bg_db.query(Category.magnit_id, Category.name)
+                        .filter(Category.magnit_id.in_(cat_codes))
+                        .all()
+                    }
+
                     # Сканируем по одной категории за раз для обновления прогресса
                     for cat_idx, cat_code in enumerate(cat_codes):
                         # Обновляем прогресс по категориям
                         job_db.current_category_index = cat_idx + 1
-                        
-                        # Получаем название категории
-                        cat_obj = bg_db.query(Category).filter(Category.magnit_id == cat_code).first()
-                        if cat_obj:
-                            job_db.current_category_name = cat_obj.name
-                            job_db.current_category_magnit_id = cat_obj.magnit_id
-                        
+
+                        # Используем предзагруженный маппинг категорий
+                        job_db.current_category_name = cat_name_map.get(cat_code, f"ID:{cat_code}")
+                        job_db.current_category_magnit_id = cat_code
+
                         bg_db.commit()
                         
                         result = scanner.scan_products(
@@ -651,7 +658,7 @@ def scan_all_stores(
                     job_db.items_updated = total_updated
                     bg_db.commit()
                 except Exception as e:
-                    print(f"ERROR scanning store {store_code}: {str(e)}")
+                    logger.error(f"ERROR scanning store {store_code}: {str(e)}")
                     job_db.progress_message = f"Ошибка {store_code}: {str(e)}"
                     bg_db.commit()
 
@@ -723,6 +730,7 @@ _catalog_update_status = {
     "not_found": 0,
     "errors": [],
 }
+_catalog_update_lock = threading.Lock()
 
 
 def _fetch_and_update_categories_background():
@@ -733,74 +741,77 @@ def _fetch_and_update_categories_background():
     global _catalog_update_status
 
     try:
-        _catalog_update_status["in_progress"] = True
-        _catalog_update_status["errors"] = []
+        with _catalog_update_lock:
+            _catalog_update_status["in_progress"] = True
+            _catalog_update_status["errors"] = []
 
-        print("Начало полной замены каталога из API Магнита...")
+        logger.info("Начало полной замены каталога из API Магнита...")
 
         # Используем код магазина из .env
         store_code = os.getenv("STORE_CODE")
         store_type = os.getenv("STORE_TYPE")
 
-        print(f"DEBUG: STORE_CODE={store_code}, STORE_TYPE={store_type}")
+        logger.debug(f"DEBUG: STORE_CODE={store_code}, STORE_TYPE={store_type}")
 
         if store_code and store_type:
-            print(f"DEBUG: Using store_code={store_code}, store_type={store_type}")
+            logger.debug(f"DEBUG: Using store_code={store_code}, store_type={store_type}")
             stats = replace_catalog_from_api(
                 store_code=store_code, store_type=store_type
             )
         else:
-            print("DEBUG: No STORE_CODE/STORE_TYPE in env, trying to get from DB")
+            logger.debug("DEBUG: No STORE_CODE/STORE_TYPE in env, trying to get from DB")
             # Получаем первый активный магазин для запроса
             db = SessionLocal()
             store = db.query(Store).filter(Store.is_active == True).first()
             db.close()
             if store:
-                print(
+                logger.debug(
                     f"DEBUG: Found active store: {store.store_code}, type: {store.store_type}"
                 )
                 stats = replace_catalog_from_api(
                     store_code=store.store_code, store_type=os.getenv("STORE_TYPE", "6")
                 )
             else:
-                print("DEBUG: No active stores found, using defaults")
+                logger.debug("DEBUG: No active stores found, using defaults")
                 stats = replace_catalog_from_api()
 
-        print(f"DEBUG: replace_catalog_from_api returned: {stats}")
+        logger.debug(f"DEBUG: replace_catalog_from_api returned: {stats}")
 
         # Проверяем статус ответа
         if stats.get("status") == "error":
             # Ошибка при получении данных из API
-            _catalog_update_status["errors"] = stats.get("errors", ["Unknown error"])
-            print(
+            with _catalog_update_lock:
+                _catalog_update_status["errors"] = stats.get("errors", ["Unknown error"])
+            logger.error(
                 f"Ошибка при получении данных из API: {_catalog_update_status['errors']}"
             )
             return
 
         # Успешная замена
-        _catalog_update_status["total"] = stats.get("total", 0)
-        _catalog_update_status["processed"] = stats.get("total", 0)  # все обработаны
-        _catalog_update_status["updated"] = stats.get("updated", 0)
-        _catalog_update_status["not_found"] = (
-            0  # при полной замене не удаляем по-старому
-        )
+        with _catalog_update_lock:
+            _catalog_update_status["total"] = stats.get("total", 0)
+            _catalog_update_status["processed"] = stats.get("total", 0)  # все обработаны
+            _catalog_update_status["updated"] = stats.get("updated", 0)
+            _catalog_update_status["not_found"] = (
+                0  # при полной замене не удаляем по-старому
+            )
 
-        if stats.get("errors"):
-            _catalog_update_status["errors"] = stats["errors"]
+            if stats.get("errors"):
+                _catalog_update_status["errors"] = stats["errors"]
 
-        print(
+        logger.info(
             f"Каталог заменён: Всего {stats.get('total', 0)} категорий, "
             f"Добавлено: {stats.get('added', 0)}, Восстановлено is_tracked: {stats.get('updated', 0)}"
         )
 
     except Exception as e:
-        _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
-        print(f"Ошибка при замене каталога: {e}")
-        import traceback
-
-        traceback.print_exc()
+        with _catalog_update_lock:
+            _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
+        logger.error(f"Ошибка при замене каталога: {e}")
+        logger.exception("Traceback")
     finally:
-        _catalog_update_status["in_progress"] = False
+        with _catalog_update_lock:
+            _catalog_update_status["in_progress"] = False
 
 
 @router.post("/categories/fetch-magnit-ids")
@@ -811,15 +822,16 @@ def fetch_magnit_category_ids_endpoint(db: Session = Depends(get_db)):
     """
     global _catalog_update_status
 
-    if _catalog_update_status["in_progress"]:
-        return {
-            "status": "in_progress",
-            "message": "Обновление уже в процессе",
-            "progress": {
-                "processed": _catalog_update_status["processed"],
-                "total": _catalog_update_status["total"],
-            },
-        }
+    with _catalog_update_lock:
+        if _catalog_update_status["in_progress"]:
+            return {
+                "status": "in_progress",
+                "message": "Обновление уже в процессе",
+                "progress": {
+                    "processed": _catalog_update_status["processed"],
+                    "total": _catalog_update_status["total"],
+                },
+            }
 
     # Запускаем фоновую задачу в отдельном потоке
     thread = threading.Thread(
@@ -838,15 +850,16 @@ def get_fetch_status():
     """Получить статус обновления каталога."""
     global _catalog_update_status
 
-    return {
-        "in_progress": _catalog_update_status["in_progress"],
-        "total": _catalog_update_status["total"],
-        "processed": _catalog_update_status["processed"],
-        "updated": _catalog_update_status["updated"],
-        "not_found": _catalog_update_status["not_found"],
-        "error_count": len(_catalog_update_status["errors"]),
-        "errors": _catalog_update_status["errors"][:10],  # Первые 10 ошибок
-    }
+    with _catalog_update_lock:
+        return {
+            "in_progress": _catalog_update_status["in_progress"],
+            "total": _catalog_update_status["total"],
+            "processed": _catalog_update_status["processed"],
+            "updated": _catalog_update_status["updated"],
+            "not_found": _catalog_update_status["not_found"],
+            "error_count": len(_catalog_update_status["errors"]),
+            "errors": _catalog_update_status["errors"][:10],  # Первые 10 ошибок
+        }
 
 
 @router.delete("/products/clear")

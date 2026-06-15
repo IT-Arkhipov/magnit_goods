@@ -81,34 +81,40 @@ def update_prices(
     db.add(job)
     db.commit()
     db.refresh(job)
+    job_id = job.id
 
     def run_update():
-        job_db = db.query(ScanJob).filter(ScanJob.id == job.id).first()
-        if not job_db:
-            return
-        job_db.status = "running"
-        job_db.started_at = datetime.utcnow()
-        db.commit()
-
+        from src.server.database import SessionLocal
+        bg_db = SessionLocal()
         try:
-            scanner = CatalogScanner(db, store_code=store_code, job_id=job.id)
-            result = scanner.scan_products(
-                category_ids=cat_ids,
-                tracked_only=tracked_only,
-            )
-            scanner.close()
+            job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
+            if not job_db:
+                return
+            job_db.status = "running"
+            job_db.started_at = datetime.utcnow()
+            bg_db.commit()
 
-            job_db.status = "completed"
-            job_db.finished_at = datetime.utcnow()
-            job_db.items_scanned = result["scanned"]
-            job_db.items_added = result["added"]
-            job_db.items_updated = result["updated"]
-            db.commit()
-        except Exception as e:
-            job_db.status = "failed"
-            job_db.error_message = str(e)
-            job_db.finished_at = datetime.utcnow()
-            db.commit()
+            try:
+                scanner = CatalogScanner(bg_db, store_code=store_code, job_id=job_id)
+                result = scanner.scan_products(
+                    category_ids=cat_ids,
+                    tracked_only=tracked_only,
+                )
+                scanner.close()
+
+                job_db.status = "completed"
+                job_db.finished_at = datetime.utcnow()
+                job_db.items_scanned = result["scanned"]
+                job_db.items_added = result["added"]
+                job_db.items_updated = result["updated"]
+                bg_db.commit()
+            except Exception as e:
+                job_db.status = "failed"
+                job_db.error_message = str(e)
+                job_db.finished_at = datetime.utcnow()
+                bg_db.commit()
+        finally:
+            bg_db.close()
 
     if background_tasks:
         background_tasks.add_task(run_update)

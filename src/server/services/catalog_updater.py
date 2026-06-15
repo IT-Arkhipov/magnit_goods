@@ -5,11 +5,14 @@
 import os
 import json
 import time
+import logging
 from pathlib import Path
 from typing import Dict, List, Tuple
 import requests
 from src.server.database import SessionLocal
 from src.server.models import Category, Store
+
+logger = logging.getLogger(__name__)
 
 
 class CatalogUpdater:
@@ -58,20 +61,20 @@ class CatalogUpdater:
             response.raise_for_status()
             return response.json()
         except Exception as e:
-            print(f"Error fetching category {category_id}: {e}")
+            logger.error(f"Error fetching category {category_id}: {e}")
             return None
 
     def load_root_categories_from_file(self) -> List[Dict]:
         """Загрузить корневые категории из JSON файла."""
         if not self.categories_file.exists():
-            print(f"Categories file not found: {self.categories_file}")
+            logger.warning(f"Categories file not found: {self.categories_file}")
             return []
         try:
             with open(self.categories_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
             return [{"id": cat["id"], "title": cat["title"]} for cat in data]
         except Exception as e:
-            print(f"Error loading categories from file: {e}")
+            logger.error(f"Error loading categories from file: {e}")
             return []
 
     def update_category_from_api(
@@ -94,7 +97,6 @@ class CatalogUpdater:
         # Обновляем название корневой категории если изменилось
         if category.name != cat_info.get("title", category.name):
             category.name = cat_info["title"]
-            db.commit()
             updated += 1
 
         # Получаем текущие подкатегории из БД
@@ -110,8 +112,6 @@ class CatalogUpdater:
                 db.delete(child)
                 deleted += 1
 
-        db.commit()
-
         # Добавляем или обновляем подкатегории из API
         for sub in subcats_from_api:
             sub_id = sub["id"]
@@ -122,7 +122,6 @@ class CatalogUpdater:
                 child = current_ids[sub_id]
                 if child.name != sub_name:
                     child.name = sub_name
-                    db.commit()
                     updated += 1
             else:
                 # Добавляем новую подкатегорию
@@ -168,7 +167,7 @@ class CatalogUpdater:
                     magnit_id = cat_data["id"]
                     expected_title = cat_data["title"]
 
-                    print(f"Updating category: {expected_title} ({magnit_id})")
+                    logger.info(f"Updating category: {expected_title} ({magnit_id})")
 
                     api_data = self.fetch_category_data(magnit_id)
 
@@ -217,7 +216,7 @@ class CatalogUpdater:
                     error_msg = (
                         f"Error updating {cat_data.get('title', 'unknown')}: {str(e)}"
                     )
-                    print(error_msg)
+                    logger.error(error_msg)
                     stats["errors"].append(error_msg)
                     stats["processed"] += 1
 
@@ -244,7 +243,7 @@ class CatalogUpdater:
                     "errors": ["Categories file not found or empty"],
                 }
 
-            print(
+            logger.debug(
                 f"DEBUG: Loaded {len(root_categories_from_file)} root categories from file"
             )
 
@@ -257,7 +256,7 @@ class CatalogUpdater:
                     magnit_id = cat_data["id"]
                     expected_title = cat_data["title"]
 
-                    print(f"DEBUG: Fetching category {expected_title} ({magnit_id})")
+                    logger.debug(f"DEBUG: Fetching category {expected_title} ({magnit_id})")
 
                     api_data = self.fetch_category_data(magnit_id)
 
@@ -282,7 +281,7 @@ class CatalogUpdater:
                     error_msg = (
                         f"Error fetching {cat_data.get('title', 'unknown')}: {str(e)}"
                     )
-                    print(error_msg)
+                    logger.error(error_msg)
                     api_errors.append(error_msg)
 
             # Шаг 3: Если есть ошибки API - вернуть ошибку, не менять БД
@@ -293,7 +292,7 @@ class CatalogUpdater:
                     "message": f"Failed to fetch {len(api_errors)} categories from API",
                 }
 
-            print(
+            logger.debug(
                 f"DEBUG: Successfully fetched {len(all_categories_data)} categories from API"
             )
 
@@ -306,7 +305,7 @@ class CatalogUpdater:
                 old_tracked_status[cat.magnit_id] = cat.is_tracked
 
             # Шаг 5: Очистить таблицу категорий
-            print("DEBUG: Clearing categories table...")
+            logger.debug("DEBUG: Clearing categories table...")
             db.query(Category).delete()
             db.commit()
 
@@ -341,7 +340,7 @@ class CatalogUpdater:
                 if parent_magnit_id is not None:  # подкатегория
                     parent_id = magnit_to_db_id.get(parent_magnit_id)
                     if parent_id is None:
-                        print(
+                        logger.warning(
                             f"WARN: Parent category {parent_magnit_id} not found for {title}"
                         )
                         continue
@@ -373,7 +372,7 @@ class CatalogUpdater:
         except Exception as e:
             db.rollback()
             error_msg = f"Critical error during category replacement: {str(e)}"
-            print(error_msg)
+            logger.error(error_msg)
             import traceback
 
             traceback.print_exc()
