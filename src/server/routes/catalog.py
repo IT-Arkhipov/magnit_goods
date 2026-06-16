@@ -269,55 +269,72 @@ def list_products(
     if category_ids:
         cat_id_list = [int(x.strip()) for x in category_ids.split(',') if x.strip().isdigit()]
 
-    query = db.query(Product).options(joinedload(Product.category))
-    if store_code:
-        query = query.filter(Product.store_code == store_code)
-    if category_id:
-        query = query.filter(Product.category_id == category_id)
-    if cat_id_list:
-        query = query.filter(Product.category_id.in_(cat_id_list))
-    if search:
-        query = query.filter(Product.name.like(f"%{search}%"))
-    if min_price is not None:
-        query = query.filter(Product.price >= min_price)
-    if max_price is not None:
-        query = query.filter(Product.price <= max_price)
-
-    if store_code:
-        scan_query = db.query(
-            Product.category_id,
-            func.max(Product.last_scan_found).label('max_scan_time')
-        ).filter(
-            Product.store_code == store_code,
-            Product.last_scan_found.isnot(None)
-        )
-
+    def _build_filtered_query():
+        """Строит query с базовыми фильтрами (без search и пагинации)."""
+        q = db.query(Product).options(joinedload(Product.category))
+        if store_code:
+            q = q.filter(Product.store_code == store_code)
+        if category_id:
+            q = q.filter(Product.category_id == category_id)
         if cat_id_list:
-            scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
-        elif category_id:
-            scan_query = scan_query.filter(Product.category_id == category_id)
-        
-        max_scan_times = scan_query.group_by(Product.category_id).all()
-        
-        # Создаем словарь с максимальным временем для каждой категории
-        scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
-        
-        if scan_times_dict:
-            # Для каждой категории показываем товары, обновленные не позднее 1 часа от последнего обновления
-            # ИЛИ товары, у которых last_scan_found не установлен (старые товары)
-            conditions = []
-            for cat_id, max_time in scan_times_dict.items():
-                cutoff_time = max_time - timedelta(hours=1)
-                conditions.append(
-                    (Product.category_id == cat_id) & 
-                    (
-                        ((Product.last_scan_found >= cutoff_time) & (Product.last_scan_found <= max_time)) |
-                        (Product.last_scan_found.is_(None))
+            q = q.filter(Product.category_id.in_(cat_id_list))
+        if min_price is not None:
+            q = q.filter(Product.price >= min_price)
+        if max_price is not None:
+            q = q.filter(Product.price <= max_price)
+
+        if store_code:
+            scan_query = db.query(
+                Product.category_id,
+                func.max(Product.last_scan_found).label('max_scan_time')
+            ).filter(
+                Product.store_code == store_code,
+                Product.last_scan_found.isnot(None)
+            )
+
+            if cat_id_list:
+                scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
+            elif category_id:
+                scan_query = scan_query.filter(Product.category_id == category_id)
+
+            max_scan_times = scan_query.group_by(Product.category_id).all()
+
+            scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
+
+            if scan_times_dict:
+                # Для каждой категории показываем товары, обновленные не позднее 1 часа
+                # от последнего обновления ИЛИ товары без last_scan_found
+                conditions = []
+                for cat_id, max_time in scan_times_dict.items():
+                    cutoff_time = max_time - timedelta(hours=1)
+                    conditions.append(
+                        (Product.category_id == cat_id) &
+                        (
+                            ((Product.last_scan_found >= cutoff_time) & (Product.last_scan_found <= max_time)) |
+                            (Product.last_scan_found.is_(None))
+                        )
                     )
-                )
-            
-            query = query.filter(or_(*conditions))
-    
+
+                q = q.filter(or_(*conditions))
+        return q
+
+    if search and search.strip():
+        # SQLite LOWER() не работает с не-ASCII символами (кириллица, немецкий и т.д.),
+        # поэтому используем casefold() (Unicode-aware) и фильтруем в Python.
+        search_cf = search.casefold().strip()
+        candidates = _build_filtered_query().all()
+        matching_ids = [
+            p.product_id for p in candidates
+            if search_cf in (p.name or "").casefold()
+        ]
+        if not matching_ids:
+            return []
+        query = db.query(Product).options(joinedload(Product.category)).filter(
+            Product.product_id.in_(matching_ids)
+        )
+    else:
+        query = _build_filtered_query()
+
     if sort_by == "price":
         query = query.order_by(Product.price.asc(), Product.name.asc())
     elif sort_by == "last_seen":
