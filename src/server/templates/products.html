@@ -135,7 +135,7 @@
 }
 .price-tooltip {
     position: absolute;
-    bottom: 125%;
+    bottom: calc(100% + 8px);
     left: 50%;
     transform: translateX(-50%);
     background: #333;
@@ -143,7 +143,10 @@
     padding: 8px 12px;
     border-radius: 4px;
     font-size: 12px;
-    white-space: nowrap;
+    white-space: normal;
+    max-width: 320px;
+    word-wrap: break-word;
+    text-align: left;
     z-index: 1000;
     opacity: 0;
     visibility: hidden;
@@ -165,7 +168,7 @@
 }
 .product-name-cell {
     position: relative;
-    cursor: default;
+    cursor: help;
 }
 .product-image-tooltip {
     position: absolute;
@@ -405,7 +408,7 @@ function loadPriceModeState() {
 function togglePriceMode() {
     showNewPriceMode = document.getElementById('newPriceMode').checked;
     localStorage.setItem('showNewPriceMode', showNewPriceMode);
-    renderProductsList();
+    loadProducts();
 }
 
 // Форматирование даты
@@ -971,9 +974,11 @@ function renderProductsList() {
       let productsToRender = productsState.allProducts;
       
       if (showNewPriceMode) {
-          productsToRender = productsToRender.filter(p => p.price_change_percent !== null && p.price_change_percent !== undefined);
-      } else {
-          productsToRender = productsToRender.filter(p => p.last_change_price !== null && p.last_change_price !== undefined);
+          productsToRender = productsToRender.filter(p =>
+              p.price_change_percent !== null &&
+              p.price_change_percent !== undefined &&
+              p.price_change_percent > 0
+          );
       }
       
       const grouped = {};
@@ -1150,20 +1155,10 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
         
         // Тултип
         let tooltipHtml;
-        if (showNewPriceMode) {
-            // Режим 1: показываем предыдущую цену и дату, если есть изменение
-            if (previousPrice && changePercent !== 0) {
-                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
-            } else {
-                tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
-            }
+        if (previousPrice && changePercent !== 0) {
+            tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
         } else {
-            // Режим 2: если есть изменение - показываем предыдущую цену и дату изменения
-            if (previousPrice && changePercent !== 0) {
-                tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
-            } else {
-                tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
-            }
+            tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
         }
 
      return `
@@ -1906,8 +1901,12 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
     // Фильтруем товары по режиму цен
     let filteredProducts = products;
     if (showNewPriceMode) {
-        // Режим 1: показываем только товары с изменением цены от предыдущего сканирования
-        filteredProducts = products.filter(p => p.price_change_percent !== null && p.price_change_percent !== undefined);
+        // Режим 1: только товары со сниженной ценой относительно предыдущего сканирования
+        filteredProducts = products.filter(p =>
+            p.price_change_percent !== null &&
+            p.price_change_percent !== undefined &&
+            p.price_change_percent > 0
+        );
     }
     // Режим 2: показываем все товары (без фильтрации)
     
@@ -2068,15 +2067,14 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                   
                                   // Tooltip с предыдущей ценой
                                   const oldPriceText = priceInfo.previous_price
-                                      ? `Предыдущая цена: ${priceInfo.previous_price} ₽ ` 
+                                      ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
+                                          ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                                          : ''} `
                                       : '';
                                 // Информация для tooltip
                                 const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
-                                const savingsInfo = !allEqual && priceInfo.price === minPrice && savingsPercent 
-                                    ? `Экономия: ${savingsPercent}% от других магазинов | ` 
-                                    : '';
-                                const tooltipText = `${oldPriceText}${savingsInfo}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                                const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
                                 // Создаем ссылку на товар в Магните
                                 const seoCode = priceInfo.seo_code;
@@ -2198,7 +2196,12 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                          // Информация для tooltip
                          const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                           const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
-                          const tooltipText = `Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                          const oldPriceText = priceInfo.previous_price
+                              ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
+                                  ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                                  : ''} | `
+                              : '';
+                          const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                           
                           // Создаем ссылку на товар в Магните
                           const seoCode = priceInfo.seo_code;
@@ -2291,12 +2294,13 @@ function collapseAllButFirst() {
         }
     });
     
-    // Обновляем текст кнопки
+    // Обновляем текст кнопки (если она есть)
     const btn = document.getElementById('toggleAllCategoriesBtn');
     if (btn) {
         btn.textContent = 'Раскрыть все';
-        allCategoriesExpanded = false;
     }
+    // Состояние устанавливаем всегда, чтобы не рассинхронизироваться с реальным DOM
+    allCategoriesExpanded = false;
 }
 
 // Debounce helper для фильтров цены
@@ -2347,7 +2351,7 @@ function expandAllCategories() {
             if (arrow) arrow.style.transform = 'rotate(90deg)';
         }
     });
-    
+
     // Раскрываем все дочерние категории
     const childHeaders = document.querySelectorAll('.child-header');
     childHeaders.forEach(header => {
@@ -2358,13 +2362,14 @@ function expandAllCategories() {
             if (arrow) arrow.style.transform = 'rotate(90deg)';
         }
     });
-    
-    // Обновляем текст кнопки
+
+    // Обновляем текст кнопки (если она есть)
     const btn = document.getElementById('toggleAllCategoriesBtn');
     if (btn) {
         btn.textContent = 'Свернуть все';
-        allCategoriesExpanded = true;
     }
+    // Состояние устанавливаем всегда, чтобы не рассинхронизироваться с реальным DOM
+    allCategoriesExpanded = true;
 }
 
 // Переопределяем loadProducts для использования улучшенной версии
@@ -2421,29 +2426,25 @@ document.addEventListener('DOMContentLoaded', () => {
          });
      }
      
-     // Применяем сохранённый процент экономии при загрузке страницы
-     const savedSavings = localStorage.getItem('savingsFilter');
-     if (savedSavings && savingsFilterEl) {
-         savingsFilterEl.value = savedSavings;
-         // Загружаем товары с применённым фильтром
-         setTimeout(() => {
-             loadProducts();
-             // Раскрываем категории если выбран процент (не "-")
-             if (savedSavings !== '') {
-                 // Пытаемся раскрыть категории с несколькими попытками
-                 setTimeout(expandAllCategories, 1500);
-                 setTimeout(expandAllCategories, 2500);
-             } else {
-                 setTimeout(collapseAllButFirst, 1500);
-             }
-         }, 100);
-     }
-     
-     // Загружаем товары при загрузке страницы если есть выбранные магазины
-     const selectedStores = getSelectedStores();
-     if (selectedStores.length > 0) {
-         setTimeout(loadProducts, 500);
-     }
+      // Применяем сохранённый процент экономии при загрузке страницы
+      const savedSavings = localStorage.getItem('savingsFilter');
+      if (savedSavings && savingsFilterEl) {
+          savingsFilterEl.value = savedSavings;
+          // Загружаем товары с применённым фильтром
+          // Не вызываем auto-expand — пусть пользователь сам решит, раскрывать или нет.
+          // Раньше вызывался setTimeout(expandAllCategories, 1500/2500), но это
+          // устанавливало allCategoriesExpanded=true ДО клика пользователя, и его
+          // первый клик выполнял collapse вместо ожидаемого expand.
+          setTimeout(() => {
+              loadProducts();
+          }, 100);
+      }
+
+      // Загружаем товары при загрузке страницы если есть выбранные магазины
+      const selectedStores = getSelectedStores();
+      if (selectedStores.length > 0) {
+          setTimeout(loadProducts, 500);
+      }
      
      // Синхронизация чекбоксов списка покупок при загрузке
      syncCheckboxesFromLocalStorage();

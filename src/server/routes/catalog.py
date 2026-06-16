@@ -430,6 +430,7 @@ def get_multi_store_prices(
             "in_stock": p.in_stock,
             "quantity": p.quantity,
             "last_seen": p.last_seen.isoformat() if p.last_seen else None,
+            "last_change_date": p.last_change_date.isoformat() if p.last_change_date else None,
             "seo_code": p.seo_code,
             "shop_type": store_shop_type_map.get(p.store_code),
         }
