@@ -272,6 +272,49 @@
     width: 100%;
     box-sizing: border-box;
 }
+
+/* Подсветка поискового запроса в названиях товаров */
+mark.search-highlight {
+    background-color: #ffeb3b;
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+    font-weight: 600;
+}
+
+/* Поле поиска с кнопкой очистки */
+.search-input-wrapper {
+    position: relative;
+    display: block;
+}
+.search-input-wrapper input[type="text"] {
+    width: 100%;
+    padding-right: 30px;
+    box-sizing: border-box;
+}
+.search-clear-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #999;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 50%;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.search-clear-btn:hover {
+    background: #eee;
+    color: #333;
+}
 </style>
 
 <div class="card">
@@ -299,7 +342,11 @@
         </div>
         <div class="form-group">
             <label>Поиск</label>
-            <input type="text" id="searchFilter" placeholder="Название товара" disabled>
+            <div class="search-input-wrapper">
+                <input type="text" id="searchFilter" placeholder="Название товара (от 3 символов)" autocomplete="off">
+                <button type="button" id="searchClearBtn" class="search-clear-btn" title="Очистить" style="display:none;">×</button>
+            </div>
+            <small id="searchHint" style="color:#999; font-size: 12px;">Введите минимум 3 символа для поиска</small>
         </div>
         <div class="form-group">
             <label>Сортировка</label>
@@ -1163,7 +1210,7 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
 
      return `
          <tr>
-             <td><strong>${p.name}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
+             <td><strong>${highlightSearch(p.name)}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
              ${otherPricesHtml}
              <td class="price-cell" style="font-size:13px;font-weight:bold;text-align:left;">
                  <span class="price-current">${priceText}</span>${tooltipHtml}
@@ -1182,6 +1229,18 @@ function escapeHtml(text) {
     const div = document.createElement('div');
     div.textContent = text;
     return div.innerHTML;
+}
+
+// Подсветка вхождений поискового запроса в тексте
+function highlightSearch(text) {
+    if (!text) return '';
+    const search = (document.getElementById('searchFilter')?.value || '').trim();
+    const escaped = escapeHtml(text);
+    if (search.length < 3) return escaped;
+    // Экранируем спецсимволы regex в поисковом запросе
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedSearch, 'gi');
+    return escaped.replace(regex, match => `<mark class="search-highlight">${match}</mark>`);
 }
 
 // ============================================
@@ -1961,8 +2020,12 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                 }).join('')
                 : '';
             
+            // При активном поиске по названию раскрываем все категории,
+            // чтобы пользователь сразу видел результаты без раскрытия вручную.
+            const isSearchActive = (document.getElementById('searchFilter')?.value || '').trim().length >= 3;
+
             sortedParents.forEach(([parentId, parentData], pIndex) => {
-                const parentExpanded = pIndex === 0;
+                const parentExpanded = isSearchActive || pIndex === 0;
                 const childCats = Object.entries(parentData.children).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
                 const totalProducts = childCats.reduce((sum, [,c]) => sum + c.products.length, 0);
                 
@@ -1987,7 +2050,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                 `;
                 
                 childCats.forEach(([catId, catData], cIndex) => {
-                    const catExpanded = cIndex === 0;
+                    const catExpanded = isSearchActive || cIndex === 0;
                     html += `
                         <div class="child-category" style="margin-bottom: 6px; margin-left: 16px;">
                             <div class="child-header" onclick="toggleChildCategory('${parentId}-${catId}')" style="
@@ -2110,7 +2173,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                           html += `
                               <tr>
                                   <td class="product-name-cell">
-                                      <strong>${escapeHtml(p.name)}</strong>
+                                       <strong>${highlightSearch(p.name)}</strong>
                                       ${promoBadge}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}
                                   </td>
                                   ${storeCells}
@@ -2133,6 +2196,9 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             });
             
             listDiv.innerHTML = html;
+            if (isSearchActive) {
+                expandAllCategories();
+            }
         })
         .catch(err => {
             // Fallback - простой список без иерархии
@@ -2224,7 +2290,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
               const activePriceLink = activeProductUrl 
                   ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeStoreCode}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
                   : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
-              html += `<tr><td class="product-name-cell"><strong>${escapeHtml(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.price_change_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+               html += `<tr><td class="product-name-cell"><strong>${highlightSearch(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.price_change_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
          html += '</tbody></table>';
     });
@@ -2390,7 +2456,81 @@ document.addEventListener('DOMContentLoaded', () => {
     const minPriceEl = document.getElementById('minPrice');
     const maxPriceEl = document.getElementById('maxPrice');
     const savingsFilterEl = document.getElementById('savingsFilter');
-    
+    const searchFilterEl = document.getElementById('searchFilter');
+    const searchHintEl = document.getElementById('searchHint');
+
+    // Поиск по названию товара (от 3 символов, debounce 300ms)
+    if (searchFilterEl) {
+        const searchClearBtn = document.getElementById('searchClearBtn');
+
+        // Восстанавливаем сохранённое значение
+        const savedSearch = localStorage.getItem('searchFilter');
+        if (savedSearch) {
+            searchFilterEl.value = savedSearch;
+        }
+
+        // Обновляем подсказку при загрузке
+        function updateSearchHint(value) {
+            if (!searchHintEl) return;
+            const len = value.trim().length;
+            if (len === 0) {
+                searchHintEl.textContent = 'Введите минимум 3 символа для поиска';
+                searchHintEl.style.color = '#999';
+            } else if (len < 3) {
+                const need = 3 - len;
+                searchHintEl.textContent = `Ещё ${need} симв.`;
+                searchHintEl.style.color = '#e31e25';
+            } else {
+                searchHintEl.textContent = '';
+            }
+        }
+
+        // Показываем/скрываем кнопку очистки
+        function updateClearBtn(value) {
+            if (!searchClearBtn) return;
+            searchClearBtn.style.display = value.trim().length > 0 ? 'flex' : 'none';
+        }
+
+        updateSearchHint(searchFilterEl.value);
+        updateClearBtn(searchFilterEl.value);
+
+        let searchTimeout;
+        searchFilterEl.addEventListener('input', () => {
+            const value = searchFilterEl.value;
+            updateSearchHint(value);
+            updateClearBtn(value);
+
+            // Сохраняем в localStorage
+            localStorage.setItem('searchFilter', value);
+
+            // Сбрасываем предыдущий таймер
+            clearTimeout(searchTimeout);
+
+            // Поиск только при >=3 символах, сброс при 0
+            searchTimeout = setTimeout(() => {
+                const trimmed = value.trim();
+                if (trimmed.length === 0 || trimmed.length >= 3) {
+                    loadProducts();
+                    // Раскрываем все категории при активном поиске для удобства просмотра
+                    // (после задержки, чтобы успел отрендериться HTML)
+                    if (trimmed.length >= 3) {
+                        setTimeout(expandAllCategories, 800);
+                    }
+                }
+            }, 300);
+        });
+
+        // Кнопка очистки поиска
+        if (searchClearBtn) {
+            searchClearBtn.addEventListener('click', () => {
+                searchFilterEl.value = '';
+                searchFilterEl.focus();
+                // Триггерим input event, чтобы обновить подсказку, кнопку, и вызвать loadProducts
+                searchFilterEl.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+        }
+    }
+
     if (stockFilterEl) stockFilterEl.addEventListener('change', loadProducts);
     if (promoFilterEl) promoFilterEl.addEventListener('change', loadProducts);
     if (savingsFilterEl) {
