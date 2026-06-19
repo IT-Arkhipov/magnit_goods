@@ -63,7 +63,13 @@ db.sqlite3-journal
 
 # Project database
 src/data/magnit.db
+*.db.backup.*
+# PNG-скриншоты
 *.png
+
+# Тестовые скрипты и заметки AI-сессий
+query_product.py
+session-ses_*.md
 
 # Editor / tool settings
 .qwen/settings.json
