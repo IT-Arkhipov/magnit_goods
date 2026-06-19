@@ -11,6 +11,12 @@
     "*": "ask",
     "bash": "allow",
     "read": "allow",
-    "edit": "allow"
+    "edit": "allow",
+    "Glob **/*.py": "allow",
+    "**/*.md": "ask",
+    "Call tool todowrite": "allow",
+    "playwright_browser_navigate": "allow",
+    "playwright_browser_click": "allow",
+    "playwright_browser_evaluate": "allow"
   }  
 }
