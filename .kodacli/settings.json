@@ -1,0 +1,23 @@
+{
+  "model": "koda-base",
+  "permissions": {
+    "allow": [
+      "Bash(curl *)",
+      "Bash(powershell *)",
+      "Bash(start *)",
+      "Bash(taskkill *)",
+      "Bash(timeout *)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_run_code",
+      "Bash(type *)",
+      "Bash(findstr *)",
+      "Bash(dir *)",
+      "Bash(python *)",
+      "Shell(python *)",
+      "Shell(cd *)",
+      "WriteFile",
+      "Edit"
+    ]
+  },
+  "$version": 3  
+}

@@ -1,0 +1,260 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Магинт манИт{% endblock %}</title>
+    <script src="https://unpkg.com/htmx.org@1.9.12"></script>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #f5f5f5; color: #333; }
+        .navbar { background: #e31e25; color: white; padding: 12px 24px; display: flex; gap: 20px; align-items: center; }
+        .navbar a { color: white; text-decoration: none; padding: 8px 16px; border-radius: 4px; }
+        .navbar a:hover { background: rgba(255,255,255,0.2); }
+        .navbar a.active { background: rgba(255,255,255,0.3); font-weight: bold; }
+        .navbar .nav-disabled { color: rgba(255,255,255,0.4); padding: 8px 16px; cursor: not-allowed; font-size: 14px; }
+         .container { width: 100%; margin: 24px auto; padding: 0 16px; }
+        .card { background: white; border-radius: 8px; padding: 24px; margin-bottom: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .card h2 { margin-bottom: 16px; color: #e31e25; }
+         table { width: 100%; border-collapse: collapse; table-layout: auto; }
+         th, td { text-align: left; padding: 10px 12px; border-bottom: 1px solid #eee; word-wrap: break-word; overflow-wrap: break-word; }
+         th { background: #fafafa; font-weight: 600; font-size: 14px; color: #666; }
+        tr:hover { background: #f9f9f9; }
+        .btn { display: inline-block; padding: 8px 16px; border: none; border-radius: 4px; cursor: pointer; font-size: 14px; text-decoration: none; }
+        .btn-primary { background: #e31e25; color: white; }
+        .btn-primary:hover { background: #c41a20; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-success:hover { background: #218838; }
+        .btn-danger { background: #dc3545; color: white; }
+        .btn-danger:hover { background: #c82333; }
+        .btn-sm { padding: 4px 10px; font-size: 12px; }
+        .badge { display: inline-block; padding: 2px 8px; border-radius: 12px; font-size: 12px; font-weight: 600; }
+        .badge-success { background: #d4edda; color: #155724; }
+        .badge-danger { background: #f8d7da; color: #721c24; }
+        .badge-warning { background: #fff3cd; color: #856404; }
+        .badge-info { background: #d1ecf1; color: #0c5460; }
+        input, select { padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; }
+        input:focus, select:focus { outline: none; border-color: #e31e25; }
+        .form-row { display: flex; gap: 12px; margin-bottom: 12px; flex-wrap: wrap; align-items: end; }
+        .form-group { display: flex; flex-direction: column; gap: 4px; }
+        .form-group label { font-size: 13px; color: #666; }
+        .progress-bar { width: 100%; height: 20px; background: #e9ecef; border-radius: 10px; overflow: hidden; }
+        .progress-bar-fill { height: 100%; background: #28a745; transition: width 0.3s; }
+        .category-tree { list-style: none; }
+        .category-tree li { padding: 8px 0; border-bottom: 1px solid #eee; }
+        .category-tree .children { margin-left: 24px; }
+        .toggle-switch { position: relative; display: inline-block; width: 40px; height: 20px; }
+        .toggle-switch input { opacity: 0; width: 0; height: 0; }
+        .toggle-slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 20px; }
+        .toggle-slider:before { position: absolute; content: ""; height: 16px; width: 16px; left: 2px; bottom: 2px; background-color: white; transition: .4s; border-radius: 50%; }
+        .toggle-switch input:checked + .toggle-slider { background-color: #28a745; }
+        .toggle-switch input:checked + .toggle-slider:before { transform: translateX(20px); }
+        .product-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(250px, 1fr)); gap: 16px; }
+        .product-card { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.1); }
+        .product-card img { width: 100%; height: 180px; object-fit: cover; }
+        .product-card-body { padding: 12px; }
+        .price-old { text-decoration: line-through; color: #999; font-size: 14px; }
+        .price-current { font-size: 20px; font-weight: bold; color: #e31e25; }
+         .discount-badge { background: #e31e25; color: white; padding: 4px 8px; border-radius: 4px; font-size: 12px; font-weight: bold; }
+         
+         /* Адаптивность для мобильных устройств */
+         @media (max-width: 768px) {
+             .navbar { padding: 12px 8px; gap: 8px; flex-wrap: wrap; }
+             .navbar a, .navbar .nav-disabled { padding: 6px 10px; font-size: 12px; }
+             .container { padding: 0 8px; margin: 12px auto; }
+             .card { padding: 12px; margin-bottom: 12px; }
+             .card h2 { font-size: 18px; margin-bottom: 12px; }
+             
+             /* Таблицы - вертикальное отображение */
+             table { display: block; width: 100%; }
+             table thead { display: none; }
+             table tbody { display: block; }
+             table tr { display: block; margin-bottom: 12px; border: 1px solid #ddd; border-radius: 4px; padding: 0; background: white; }
+             table td { display: block; padding: 8px 12px; border: none; text-align: left; position: relative; padding-left: 120px; min-height: 24px; }
+             table td:before { content: attr(data-label); position: absolute; left: 12px; font-weight: 600; color: #666; width: 100px; }
+             table td:first-child { padding-left: 12px; }
+             table td:first-child:before { content: ''; }
+             
+             .form-row { gap: 8px; }
+             .form-group { gap: 2px; }
+             input, select { padding: 6px 8px; font-size: 13px; }
+             .btn { padding: 6px 12px; font-size: 12px; }
+             .badge { padding: 2px 6px; font-size: 11px; }
+         }
+         
+         @media (max-width: 480px) {
+             .navbar { padding: 8px 4px; gap: 4px; }
+             .navbar a, .navbar .nav-disabled { padding: 4px 8px; font-size: 11px; }
+             .container { padding: 0 4px; }
+             .card { padding: 8px; }
+             .card h2 { font-size: 16px; }
+             
+             table { font-size: 12px; }
+             table td { padding: 6px 8px; padding-left: 100px; font-size: 12px; }
+             table td:before { width: 90px; font-size: 11px; }
+             
+             .form-row { gap: 4px; margin-bottom: 8px; }
+             input, select { padding: 4px 6px; font-size: 12px; }
+             .btn { padding: 4px 8px; font-size: 11px; }
+         }
+     </style>
+</head>
+<body>
+    <nav class="navbar">
+        <strong>Магнит манИт</strong>
+        <a href="/" class="{{ 'active' if page == 'stores' else '' }}">Магазины</a>
+        <a href="/catalog" class="{{ 'active' if page == 'catalog' else '' }}">Каталог</a>
+        <a href="/products" class="{{ 'active' if page == 'products' else '' }}">Товары</a>
+        <a href="/shopping-list" class="{{ 'active' if page == 'shopping-list' else '' }}">Список покупок</a>
+        <span class="nav-disabled" title="Скоро будет доступно">Скидки</span>
+        <a href="/jobs" class="{{ 'active' if page == 'jobs' else '' }}">Задания</a>
+    </nav>
+    <div class="container">
+        {% block content %}{% endblock %}
+    </div>
+
+    <script>
+    // ============================================
+    // Общий JS для списка покупок и polling'а job'ов
+    // ============================================
+
+    function getShoppingList() {
+        try {
+            return JSON.parse(localStorage.getItem('shoppingList') || '[]');
+        } catch (e) {
+            return [];
+        }
+    }
+
+    function saveShoppingList(list) {
+        localStorage.setItem('shoppingList', JSON.stringify(list));
+    }
+
+    function escapeHtml(text) {
+        if (text === null || text === undefined) return '';
+        const div = document.createElement('div');
+        div.textContent = String(text);
+        return div.innerHTML;
+    }
+
+    async function validateShoppingList() {
+        const list = getShoppingList();
+        if (list.length === 0) {
+            return [];
+        }
+
+        const productIds = [...new Set(list.map(x => x.product_id))];
+        const storeCodes = [...new Set(list.map(x => x.store_code))];
+
+        let apiData = {};
+        try {
+            const response = await fetch(
+                `/api/products/multi-prices?product_ids=${productIds.join(',')}&store_codes=${storeCodes.join(',')}`
+            );
+            if (response.ok) {
+                apiData = await response.json();
+            }
+        } catch (e) {
+            console.error('Ошибка валидации списка покупок:', e);
+            return list;
+        }
+
+        let changed = false;
+        const updated = list.map(item => {
+            const found = apiData[item.product_id] && apiData[item.product_id][item.store_code];
+            const newMissing = !found;
+            const newOutOfStock = !!found && (found.in_stock === false || found.quantity === 0);
+            const newPrice = found ? found.price : item.price;
+            const newPrev = found ? found.previous_price : item.previous_price;
+            const newQty = found ? found.quantity : null;
+
+            if (item.missing !== newMissing ||
+                item.out_of_stock !== newOutOfStock ||
+                item.price !== newPrice ||
+                item.previous_price !== newPrev ||
+                item.quantity !== newQty) {
+                changed = true;
+            }
+
+            return {
+                ...item,
+                price: newPrice,
+                previous_price: newPrev,
+                quantity: newQty,
+                missing: newMissing,
+                out_of_stock: newOutOfStock,
+            };
+        });
+
+        if (changed) {
+            saveShoppingList(updated);
+        }
+        return updated;
+    }
+
+    let scanPollingState = {
+        active: false,
+        prevHadJobs: false,
+        idleSince: null,
+        timer: null,
+    };
+
+    function startScanPolling() {
+        if (scanPollingState.timer) {
+            return;
+        }
+        scanPollingState.active = true;
+        scanPollingState.prevHadJobs = false;
+        scanPollingState.idleSince = null;
+
+        const tick = async () => {
+            if (!scanPollingState.active) {
+                return;
+            }
+            try {
+                const res = await fetch('/api/jobs/active?job_type=prices');
+                let jobs = [];
+                if (res.ok) {
+                    jobs = await res.json();
+                }
+                const hasJobs = Array.isArray(jobs) && jobs.length > 0;
+
+                if (scanPollingState.prevHadJobs && !hasJobs) {
+                    await validateShoppingList();
+                    window.dispatchEvent(new CustomEvent('shoppingListUpdated'));
+                    scanPollingState.idleSince = Date.now();
+                } else if (!hasJobs) {
+                    if (scanPollingState.idleSince && Date.now() - scanPollingState.idleSince > 2 * 60 * 1000) {
+                        stopScanPolling();
+                        return;
+                    }
+                    if (!scanPollingState.idleSince) {
+                        scanPollingState.idleSince = Date.now();
+                    }
+                } else {
+                    scanPollingState.idleSince = null;
+                }
+
+                scanPollingState.prevHadJobs = hasJobs;
+            } catch (e) {
+                console.error('Ошибка polling job\'ов:', e);
+            }
+
+            if (scanPollingState.active) {
+                scanPollingState.timer = setTimeout(tick, 5000);
+            }
+        };
+
+        scanPollingState.timer = setTimeout(tick, 1000);
+    }
+
+    function stopScanPolling() {
+        scanPollingState.active = false;
+        if (scanPollingState.timer) {
+            clearTimeout(scanPollingState.timer);
+            scanPollingState.timer = null;
+        }
+    }
+    </script>
+</body>
+</html>

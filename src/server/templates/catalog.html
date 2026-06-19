@@ -1,0 +1,1208 @@
+{% extends "base.html" %}
+
+{% block title %}Каталог - Магнит Goods{% endblock %}
+
+{% block content %}
+<style>
+.category-tree {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.category-tree ul {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+    border-left: 2px solid #e0e0e0;
+    margin-left: 12px;
+}
+
+.category-tree li {
+    margin: 0;
+    padding: 0;
+}
+
+.category-item {
+    padding: 10px 12px;
+    margin: 0;
+    border-radius: 4px;
+    background: transparent;
+    border: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: background 0.2s;
+}
+
+.category-item:hover {
+    background: #f0f0f0;
+}
+
+.category-item.has-children {
+    font-weight: 500;
+}
+
+.category-item.checked {
+    background: #e8f5e9;
+}
+
+.category-item.partial {
+    background: #e3f2fd;
+}
+
+.category-checkbox {
+    width: 13px;
+    height: 13px;
+    cursor: pointer;
+    margin: 0;
+    flex-shrink: 0;
+}
+
+.category-checkbox:indeterminate {
+    accent-color: #2196f3;
+}
+
+.category-toggle {
+    cursor: pointer;
+    user-select: none;
+    width: 20px;
+    height: 20px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: bold;
+    color: #666;
+    border-radius: 3px;
+    flex-shrink: 0;
+    transition: transform 0.2s;
+}
+
+.category-toggle:hover {
+    background: #e0e0e0;
+}
+
+.category-toggle.collapsed {
+    transform: rotate(-90deg);
+}
+
+.category-toggle.expanded {
+    transform: rotate(0deg);
+}
+
+.category-toggle::before {
+    content: '▼';
+    font-size: 10px;
+}
+
+.category-name {
+    flex: 1;
+    font-size: 14px;
+    cursor: pointer;
+    user-select: none;
+}
+
+.category-count {
+    font-size: 12px;
+    color: #999;
+    padding: 2px 8px;
+    background: #f5f5f5;
+    border-radius: 12px;
+    border: 1px solid #e0e0e0;
+    flex-shrink: 0;
+}
+
+.category-state-indicator {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    margin-left: 4px;
+}
+
+.category-state-indicator.full {
+    background: #4caf50;
+}
+
+.category-state-indicator.partial {
+    background: #2196f3;
+}
+
+.children-hidden {
+    display: none;
+}
+
+.action-buttons {
+    display: flex;
+    gap: 8px;
+    margin-top: 16px;
+}
+
+.category-depth-0 > .category-item {
+    font-weight: 600;
+    background: #fafafa;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+.category-depth-0 > .category-item:hover {
+    background: #f5f5f5;
+}
+
+/* Адаптивность для мобильных устройств */
+@media (max-width: 768px) {
+    .category-item {
+        padding: 8px 8px;
+        gap: 6px;
+        font-size: 13px;
+    }
+    
+    .category-checkbox {
+        width: 16px;
+        height: 16px;
+    }
+    
+    .category-toggle {
+        width: 18px;
+        height: 18px;
+        font-size: 12px;
+    }
+    
+    .category-name {
+        font-size: 13px;
+    }
+    
+    .category-count {
+        font-size: 11px;
+        padding: 1px 6px;
+    }
+    
+    #categories-tree {
+        max-height: 500px;
+    }
+    
+    .category-tree ul {
+        margin-left: 8px;
+    }
+}
+
+@media (max-width: 480px) {
+    .category-item {
+        padding: 6px 4px;
+        gap: 4px;
+        font-size: 12px;
+    }
+    
+    .category-checkbox {
+        width: 14px;
+        height: 14px;
+    }
+    
+    .category-toggle {
+        width: 16px;
+        height: 16px;
+        font-size: 10px;
+    }
+    
+    .category-name {
+        font-size: 12px;
+    }
+    
+    .category-count {
+        font-size: 10px;
+        padding: 1px 4px;
+    }
+    
+    #categories-tree {
+        max-height: 400px;
+    }
+    
+    .category-tree ul {
+        margin-left: 4px;
+        border-left: 1px solid #e0e0e0;
+    }
+}
+</style>
+
+    <div class="card">
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+         <h2 style="margin: 0;">Категории товаров</h2>
+         <div style="display: flex; gap: 8px;">
+              <button class="btn btn-success" id="scan-btn" onclick="startScanProducts()">Сканировать товары</button>
+              <button class="btn btn-danger" id="cancel-scan-btn" onclick="cancelScan()" style="display: none;">Остановить</button>
+         </div>
+     </div>
+
+    <div id="load-status" style="margin-bottom: 12px;"></div>
+    <div id="update-status" style="margin-bottom: 12px;"></div>
+    <div id="scan-status" style="margin-bottom: 12px;"></div>
+
+    <div id="overall-progress" style="margin-bottom: 12px; display: none; padding: 12px; background: #e3f2fd; border-radius: 4px; border: 1px solid #2196f3;">
+        <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <strong>Общий прогресс:</strong>
+            <span id="overall-progress-percent" style="font-weight: bold; color: #1976d2;">0%</span>
+        </div>
+        <div id="overall-progress-text" style="margin-bottom: 8px; font-size: 14px; color: #333;">Магазин: - | Категория: -</div>
+        <div style="width: 100%; height: 20px; background: #fff; border-radius: 4px; overflow: hidden;">
+            <div id="overall-progress-bar" style="height: 100%; background: #2196f3; width: 0%; transition: width 0.3s;"></div>
+        </div>
+    </div>
+
+    <div id="category-progress" style="margin-bottom: 12px; display: none; padding: 12px; background: #fff3e0; border-radius: 4px; border: 1px solid #ff9800;">
+        <div style="margin-bottom: 8px; display: flex; justify-content: space-between; align-items: center;">
+            <strong id="category-name">Категория</strong>
+            <span id="category-progress-percent" style="font-weight: bold; color: #f57c00;">0%</span>
+        </div>
+        <div id="category-progress-text" style="margin-bottom: 8px; font-size: 14px; color: #333;">0 из 0 товаров</div>
+        <div style="width: 100%; height: 16px; background: #fff; border-radius: 4px; overflow: hidden;">
+            <div id="category-progress-bar" style="height: 100%; background: #ff9800; width: 0%; transition: width 0.3s;"></div>
+        </div>
+        <div style="margin-top: 6px; font-size: 12px; color: #666;">
+            Новых: <span id="category-added">0</span> |
+            Обновлено: <span id="category-updated">0</span> |
+            Всего: <span id="category-scanned">0</span>
+        </div>
+    </div>
+
+    <div style="margin-bottom: 12px; padding: 12px; background: #f8f9fa; border-radius: 4px; border: 1px solid #e0e0e0;">
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <label style="display: flex; align-items: center; gap: 6px; cursor: pointer; user-select: none;">
+                <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)">
+                <strong>Выбрать все</strong>
+            </label>
+            <span id="selected-count" style="color: #666; font-size: 14px; margin-left: auto;">Выбрано: 0 из 0</span>
+            <button class="btn btn-sm btn-secondary" onclick="fetchMagnitCategoryIds(this)" style="padding: 2px 8px;">Обновить каталог</button>
+            <button class="btn btn-sm btn-secondary" onclick="saveSelectedCategories()" style="padding: 2px 8px;">Сохранить выбор</button>
+        </div>
+    </div>
+
+    <div id="categories-tree" style="max-height: 600px; overflow-y: auto;">
+         <p style="color: #666; text-align: center; padding: 20px;">Загрузка каталога...</p>
+     </div>
+</div>
+
+<div class="card" style="background: #fff3cd; border-left: 4px solid #ffc107;">
+    <h3 style="margin-top: 0;">Управление базой данных товаров</h3>
+    <p style="color: #666; margin-bottom: 12px;">Используйте эти функции для очистки некорректных данных товаров:</p>
+    
+    <div style="display: flex; gap: 12px; flex-wrap: wrap;">
+        <button class="btn btn-warning" onclick="clearProductsForSelectedCategories()" style="background: #ff9800; color: white;">
+            Очистить товары выбранных категорий
+        </button>
+        <button class="btn btn-danger" onclick="clearAllProductsConfirm()" style="background: #dc3545;">
+            Очистить все товары из базы
+        </button>
+    </div>
+    
+    <p style="color: #999; font-size: 12px; margin-top: 12px;">
+        После очистки нужно пересканировать товары через кнопку "Сканировать товары" выше.
+    </p>
+</div>
+
+<script>
+let categoriesData = [];
+let selectedCategories = new Set();
+let expandedCategories = new Set();
+
+async function loadCategoriesTree() {
+    try {
+        console.log('loadCategoriesTree: starting...');
+        const response = await fetch('/api/categories/tree');
+        categoriesData = await response.json();
+        console.log('loadCategoriesTree: received', categoriesData.length, 'root categories');
+
+        // Загружаем выбор из localStorage
+        const savedIds = localStorage.getItem('categoryFilter_selectedIds');
+        
+        selectedCategories.clear();
+        if (savedIds) {
+            // Восстанавливаем из localStorage
+            const savedArray = JSON.parse(savedIds);
+            savedArray.forEach(id => selectedCategories.add(id));
+            console.log('Loaded from localStorage:', Array.from(selectedCategories));
+        } else {
+            // Если localStorage пуст, загружаем отслеживаемые категории из БД
+            const trackedResponse = await fetch('/api/categories?tracked=true');
+            const trackedCategories = await trackedResponse.json();
+            
+            console.log('Loaded tracked categories from DB:', trackedCategories.length);
+            trackedCategories.forEach(cat => {
+                selectedCategories.add(cat.id);
+            });
+        }
+
+        console.log('selectedCategories after load:', Array.from(selectedCategories));
+
+        // Инициализируем expandedCategories — все категории с детьми развёрнуты по умолчанию
+        expandedCategories.clear();
+        function collectAllParentIds(categories) {
+            categories.forEach(cat => {
+                if (cat.children && cat.children.length > 0) {
+                    expandedCategories.add(cat.id);
+                    collectAllParentIds(cat.children);
+                }
+            });
+        }
+        collectAllParentIds(categoriesData);
+        console.log('expandedCategories:', Array.from(expandedCategories));
+
+        renderTree();
+
+        // Ждём, пока DOM обновится, затем обновляем состояние
+        await new Promise(resolve => setTimeout(resolve, 100));
+        updateIndeterminateStates();
+        updateSelectedCount();
+
+        // Показываем статус загрузки
+        const statusDiv = document.getElementById('load-status');
+        // Убрано сообщение "Каталог загружен" при открытии страницы
+    } catch (e) {
+        console.error('Ошибка загрузки дерева:', e);
+        const statusDiv = document.getElementById('load-status');
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка загрузки каталога: ${e.message}</div>`;
+    }
+}
+
+function renderTree() {
+    const container = document.getElementById('categories-tree');
+    console.log('renderTree called with categoriesData:', categoriesData.length, 'items');
+    
+    if (!categoriesData || categoriesData.length === 0) {
+        container.innerHTML = '<p style="color: #666; text-align: center; padding: 20px;">Нет категорий для отображения</p>';
+        return;
+    }
+    
+    container.innerHTML = '<ul class="category-tree">' + categoriesData.map(cat => renderCategory(cat)).join('') + '</ul>';
+    console.log('renderTree: HTML rendered');
+
+    // Восстанавливаем состояние развёрнутых категорий
+    expandedCategories.forEach(id => {
+        const li = document.querySelector(`li[data-category-id="${id}"]`);
+        if (li) {
+            const toggle = li.querySelector('.category-toggle');
+            const childrenUl = li.querySelector('ul');
+            if (toggle && childrenUl) {
+                childrenUl.classList.remove('children-hidden');
+                toggle.classList.remove('collapsed');
+                toggle.classList.add('expanded');
+            }
+        }
+    });
+
+    // После отрисовки обновляем состояние indeterminate чекбоксов
+    setTimeout(() => {
+        updateIndeterminateStates();
+    }, 0);
+}
+
+function renderCategory(category, level = 0) {
+    const hasChildren = category.children && category.children.length > 0;
+    const isChecked = selectedCategories.has(category.id);
+    const childrenState = hasChildren ? getChildrenState(category) : null;
+    const isIndeterminate = childrenState === 'partial';
+    const isFullyChecked = childrenState === 'all';
+    
+    const depthClass = `category-depth-${level}`;
+    const stateClass = isIndeterminate ? 'partial' : (isChecked || isFullyChecked ? 'checked' : '');
+    const itemClass = hasChildren ? 'has-children' : '';
+    
+    let html = `
+        <li data-category-id="${category.id}" class="${depthClass}">
+            <div class="category-item ${stateClass} ${itemClass}">
+                ${hasChildren ? `<span class="category-toggle collapsed" onclick="toggleChildren(${category.id})" title="Развернуть/свернуть"></span>` : '<span style="width:20px;"></span>'}
+                <input
+                    type="checkbox"
+                    class="category-checkbox"
+                    id="cat-${category.id}"
+                    data-category-id="${category.id}"
+                    ${isChecked || isFullyChecked ? 'checked' : ''}
+                    ${isIndeterminate ? 'data-indeterminate="true"' : ''}
+                    onchange="toggleCategory(${category.id}, this.checked)"
+                    title="${category.name}"
+                >
+                <label for="cat-${category.id}" class="category-name">
+                    ${category.name}
+                </label>
+                ${category.product_count > 0 ? `<span class="category-count">${category.product_count}</span>` : ''}
+                ${hasChildren && (isIndeterminate || isFullyChecked) ? `<span class="category-state-indicator ${isIndeterminate ? 'partial' : 'full'}"></span>` : ''}
+            </div>
+    `;
+
+    if (hasChildren) {
+        const isExpanded = expandedCategories.has(category.id);
+        const hiddenClass = isExpanded ? '' : 'children-hidden';
+        html += '<ul class="category-tree ' + hiddenClass + '">' + category.children.map(child => renderCategory(child, level + 1)).join('') + '</ul>';
+    }
+
+    html += '</li>';
+    return html;
+}
+
+function getChildrenState(category) {
+    if (!category.children || category.children.length === 0) return null;
+    
+    let checkedCount = 0;
+    let totalCount = 0;
+    
+    function countChildren(cat) {
+        totalCount++;
+        if (selectedCategories.has(cat.id)) {
+            checkedCount++;
+        }
+        if (cat.children) {
+            cat.children.forEach(countChildren);
+        }
+    }
+    
+    category.children.forEach(countChildren);
+    
+    if (checkedCount === 0) return 'none';
+    if (checkedCount === totalCount) return 'all';
+    return 'partial';
+}
+
+function toggleCategory(categoryId, checked) {
+    const category = findCategory(categoriesData, categoryId);
+    if (!category) return;
+    
+    // Если это корневая категория (нет parent_id), не добавляем в selectedCategories
+    const isRoot = !category.parent_id;
+    
+    if (checked) {
+        if (!isRoot) selectedCategories.add(categoryId);
+        // Выбираем все дочерние
+        selectAllChildren(categoryId, true);
+    } else {
+        if (!isRoot) selectedCategories.delete(categoryId);
+        // Снимаем выбор со всех дочерних
+        selectAllChildren(categoryId, false);
+    }
+    
+    // Обновляем состояние родителей
+    updateParentStates(categoryId);
+    updateSelectedCount();
+    updateIndeterminateStates();
+    renderTree();
+}
+
+function selectAllChildren(categoryId, select) {
+    const category = findCategory(categoriesData, categoryId);
+    if (!category || !category.children) return;
+    
+    function selectRecursive(cat) {
+        if (select) {
+            selectedCategories.add(cat.id);
+        } else {
+            selectedCategories.delete(cat.id);
+        }
+        
+        if (cat.children) {
+            cat.children.forEach(selectRecursive);
+        }
+    }
+    
+    category.children.forEach(selectRecursive);
+}
+
+function updateParentStates(categoryId) {
+    const parent = findParentCategory(categoriesData, categoryId);
+    if (!parent) return;
+    
+    const childrenState = getChildrenState(parent);
+    
+    if (childrenState === 'all') {
+        selectedCategories.add(parent.id);
+    } else if (childrenState === 'none') {
+        selectedCategories.delete(parent.id);
+    } else {
+        // partial - не добавляем в selectedCategories, но отмечаем как indeterminate
+        selectedCategories.delete(parent.id);
+    }
+    
+    // Рекурсивно обновляем родителей
+    updateParentStates(parent.id);
+}
+
+function updateIndeterminateStates() {
+    document.querySelectorAll('.category-checkbox').forEach(cb => {
+        const categoryId = parseInt(cb.dataset.categoryId);
+        const category = findCategory(categoriesData, categoryId);
+        
+        if (category && category.children && category.children.length > 0) {
+            const childrenState = getChildrenState(category);
+            if (childrenState === 'partial') {
+                cb.indeterminate = true;
+                cb.checked = false;
+            } else {
+                cb.indeterminate = false;
+            }
+        } else {
+            cb.indeterminate = false;
+        }
+    });
+}
+
+function getChildrenState(category) {
+    if (!category.children || category.children.length === 0) return null;
+    
+    let checkedCount = 0;
+    let totalCount = 0;
+    
+    function countChildren(cat) {
+        totalCount++;
+        if (selectedCategories.has(cat.id)) {
+            checkedCount++;
+        }
+        if (cat.children) {
+            cat.children.forEach(countChildren);
+        }
+    }
+    
+    category.children.forEach(countChildren);
+    
+    if (checkedCount === 0) return 'none';
+    if (checkedCount === totalCount) return 'all';
+    return 'partial';
+}
+
+function findCategory(categories, id) {
+    for (const cat of categories) {
+        if (cat.id === id) return cat;
+        if (cat.children) {
+            const found = findCategory(cat.children, id);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+function findParentCategory(categories, childId, parent = null) {
+    for (const cat of categories) {
+        if (cat.children) {
+            for (const child of cat.children) {
+                if (child.id === childId) return cat;
+            }
+            const found = findParentCategory(cat.children, childId, cat);
+            if (found) return found;
+        }
+    }
+    return null;
+}
+
+function toggleChildren(categoryId) {
+    const li = document.querySelector(`li[data-category-id="${categoryId}"]`);
+    const toggle = li.querySelector('.category-toggle');
+    const childrenUl = li.querySelector('ul');
+
+    if (childrenUl) {
+        if (childrenUl.classList.contains('children-hidden')) {
+            childrenUl.classList.remove('children-hidden');
+            toggle.classList.remove('collapsed');
+            toggle.classList.add('expanded');
+            expandedCategories.add(categoryId);
+        } else {
+            childrenUl.classList.add('children-hidden');
+            toggle.classList.remove('expanded');
+            toggle.classList.add('collapsed');
+            expandedCategories.delete(categoryId);
+        }
+    }
+}
+
+function toggleSelectAll(checked) {
+    selectedCategories.clear();
+    
+    if (checked) {
+        function addAll(categories) {
+            categories.forEach(cat => {
+                if (cat.parent_id) selectedCategories.add(cat.id);  // Только дочерние
+                if (cat.children) addAll(cat.children);
+            });
+        }
+        addAll(categoriesData);
+    }
+    
+    renderTree();
+    updateSelectedCount();
+}
+
+function updateSelectedCount() {
+    const count = selectedCategories.size;
+    const total = countAllCategories();
+    document.getElementById('selected-count').textContent = `Выбрано: ${count} из ${total}`;
+    
+    const selectAllCheckbox = document.getElementById('select-all');
+    if (count === 0) {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = false;
+    } else if (count === total) {
+        selectAllCheckbox.checked = true;
+        selectAllCheckbox.indeterminate = false;
+    } else {
+        selectAllCheckbox.checked = false;
+        selectAllCheckbox.indeterminate = true;
+    }
+}
+
+function countAllCategories() {
+    let count = 0;
+    function countCats(categories) {
+        categories.forEach(cat => {
+            if (cat.parent_id) count++;  // Только дочерние
+            if (cat.children) countCats(cat.children);
+        });
+    }
+    countCats(categoriesData);
+    return count;
+}
+
+async function saveSelectedCategories() {
+    const statusDiv = document.getElementById('load-status');
+    statusDiv.innerHTML = '<div class="badge badge-info">Сохранение...</div>';
+
+    try {
+        // Сохраняем в localStorage
+        localStorage.setItem('categoryFilter_selectedIds', JSON.stringify(Array.from(selectedCategories)));
+        
+        // Отправляем все выбранные категории в БД (включая родителей)
+        const response = await fetch('/api/categories/update-tracking', {
+            method: 'POST',
+            headers: {
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({
+                category_ids: Array.from(selectedCategories)
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            statusDiv.innerHTML = `<div class="badge badge-success">✓ Сохранено! Отслеживается категорий: ${data.tracked_count}</div>`;
+            setTimeout(() => {
+                statusDiv.innerHTML = '';
+            }, 3000);
+        } else {
+            statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка сохранения</div>`;
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+async function startScanProducts() {
+    const scanBtn = document.getElementById('scan-btn');
+    const scanStatus = document.getElementById('scan-status');
+
+    try {
+        // Проверяем, выбраны ли категории на странице
+        if (selectedCategories.size === 0) {
+            scanStatus.innerHTML = '<div class="badge badge-warning">Ошибка: выберите категории для сканирования</div>';
+            return;
+        }
+        
+        // Сначала сохраняем текущий выбор категорий в БД
+        scanStatus.innerHTML = '<div class="badge badge-info">Сохранение выбора категорий...</div>';
+        
+        const saveResponse = await fetch('/api/categories/update-tracking', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ category_ids: Array.from(selectedCategories) })
+        });
+        const saveResult = await saveResponse.json();
+        
+        if (saveResult.status !== 'success') {
+            scanStatus.innerHTML = '<div class="badge badge-danger">Ошибка сохранения категорий</div>';
+            return;
+        }
+        
+        scanStatus.innerHTML = `<div class="badge badge-success">Сохранено ${saveResult.tracked_count} категорий. Запуск сканирования...</div>`;
+        
+        // Получаем кол-во магазинов для отображения
+        const storesResponse = await fetch('/api/stores?limit=1000');
+        const stores = await storesResponse.json();
+
+        if (!stores || stores.length === 0) {
+            scanStatus.innerHTML = '<div class="badge badge-danger">Ошибка: магазин не выбран. Добавьте магазины на странице "Магазины"</div>';
+            return;
+        }
+
+        scanBtn.disabled = true;
+        document.getElementById('cancel-scan-btn').style.display = 'inline-block';
+        scanStatus.innerHTML = `<div class="badge badge-info">Запуск сканирования ${stores.length} магазинов, ${selectedCategories.size} категорий...</div>`;
+
+        // Запускаем фоновое задание
+        const response = await fetch(`/api/catalog/scan-all-stores?tracked_only=true`, {
+            method: 'POST'
+        });
+
+        if (!response.ok) {
+            const error = await response.json();
+            scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${error.detail || 'Неизвестная ошибка'}</div>`;
+            scanBtn.disabled = false;
+            return;
+        }
+
+        const startResult = await response.json();
+        const jobId = startResult.job_id;
+        currentJobId = jobId;
+
+        // Показать оба прогресс-бара
+        document.getElementById('overall-progress').style.display = 'block';
+        document.getElementById('category-progress').style.display = 'block';
+
+        // Polling статуса задания
+        pollingInterval = setInterval(async () => {
+            try {
+                const jobResponse = await fetch(`/api/jobs/${jobId}`);
+                const job = await jobResponse.json();
+
+                // Обновляем сообщение статуса во время выполнения
+                if (job.status === 'running' && job.total_stores && job.total_categories) {
+                    scanStatus.innerHTML = `<div class="badge badge-info">Сканирование ${job.total_stores} магазинов, ${job.total_categories} категорий...</div>`;
+                }
+
+                // Обновляем общий прогресс (магазины и категории)
+                if (job.total_stores && job.total_categories) {
+                    const totalOps = job.total_stores * job.total_categories;
+                    const currentOp = (job.current_store_index - 1) * job.total_categories + job.current_category_index;
+                    const overallPercent = Math.round((currentOp / totalOps) * 100);
+                    
+                    document.getElementById('overall-progress-percent').textContent = `${overallPercent}%`;
+                    document.getElementById('overall-progress-bar').style.width = `${overallPercent}%`;
+                    
+                    const storeName = job.current_store_address || job.current_store_code || '-';
+                    const catName = job.current_category_name || '-';
+                    document.getElementById('overall-progress-text').textContent = 
+                        `Магазин: ${storeName} (${job.current_store_index}/${job.total_stores}) | Категория: ${catName} (${job.current_category_index}/${job.total_categories})`;
+                }
+                
+                // Обновляем детальный прогресс по категории (товары)
+                if (job.current_category_items_total > 0) {
+                    const categoryPercent = Math.round((job.current_category_items_loaded / job.current_category_items_total) * 100);
+                    
+                    document.getElementById('category-progress-percent').textContent = `${categoryPercent}%`;
+                    document.getElementById('category-progress-bar').style.width = `${categoryPercent}%`;
+                    document.getElementById('category-progress-text').textContent = 
+                        `${job.current_category_items_loaded} из ${job.current_category_items_total} товаров`;
+                    document.getElementById('category-name').textContent = job.current_category_name || 'Категория';
+                } else if (job.current_category_name) {
+                    document.getElementById('category-name').textContent = job.current_category_name;
+                    document.getElementById('category-progress-text').textContent = 'Загрузка товаров...';
+                }
+                
+                // Обновляем статистику
+                document.getElementById('category-added').textContent = job.items_added || 0;
+                document.getElementById('category-updated').textContent = job.items_updated || 0;
+                document.getElementById('category-scanned').textContent = job.items_scanned || 0;
+                
+                // Проверка на отмену
+                console.log('Job status:', job.status, 'progress:', job.progress);
+                if (job.status === 'cancelled') {
+                    clearInterval(pollingInterval);
+                    scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+                    scanBtn.disabled = false;
+                    document.getElementById('cancel-scan-btn').style.display = 'none';
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
+                    currentJobId = null;
+                    return;
+                }
+
+                if (job.status === 'completed') {
+                    clearInterval(pollingInterval);
+
+                    // Установить флаг "Новая цена" для страницы товаров
+                    localStorage.setItem('showNewPriceMode', 'true');
+
+                    // Показываем результаты
+                    let summary = `
+                        ✓ Сканирование завершено!<br>
+                        Магазинов: ${job.total_stores || stores.length}<br>
+                        Категорий: ${job.total_categories || selectedCategories.size}<br>
+                        Товаров просканировано: ${job.items_scanned || 0}<br>
+                        Товаров добавлено: ${job.items_added || 0}<br>
+                        Товаров обновлено: ${job.items_updated || 0}
+                    `;
+
+                    scanStatus.innerHTML = `<div class="badge badge-success" style="display: block; margin-bottom: 12px;">${summary}</div>`;
+
+                    // Скрыть кнопку остановки
+                    document.getElementById('cancel-scan-btn').style.display = 'none';
+
+                    // Скрыть прогресс-бары
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
+
+                    // Кнопка для перехода к товарам
+                    const goToProductsBtn = document.createElement('button');
+                    goToProductsBtn.className = 'btn btn-primary';
+                    goToProductsBtn.textContent = 'Перейти к Товарам →';
+                    goToProductsBtn.onclick = () => window.location.href = '/products';
+                    scanStatus.appendChild(goToProductsBtn);
+                    
+                    // Скрыть результаты через 5 секунд
+                    setTimeout(() => {
+                        scanStatus.innerHTML = '';
+                    }, 5000);
+                    
+                    scanBtn.disabled = false;
+                    currentJobId = null;
+                } else if (job.status === 'failed') {
+                    clearInterval(pollingInterval);
+                    scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${job.error_message || 'Неизвестная ошибка'}</div>`;
+                    scanBtn.disabled = false;
+                    document.getElementById('overall-progress').style.display = 'none';
+                    document.getElementById('category-progress').style.display = 'none';
+                    currentJobId = null;
+                }
+                // Если status === 'running' или 'pending' — продолжаем polling
+            } catch (e) {
+                console.error('Polling error:', e);
+                // Не останавливаем polling при ошибке сети
+            }
+        }, 2000); // Каждые 2 секунды
+
+    } catch (e) {
+        scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+        scanBtn.disabled = false;
+    }
+}
+
+async function fetchMagnitCategoryIds(updateBtn) {
+    const updateStatus = document.getElementById('update-status');
+    
+    updateBtn.disabled = true;
+    updateStatus.innerHTML = '<div class="badge badge-info">⏳ Запуск обновления каталога...</div>';
+    
+    try {
+        // Запускаем обновление
+        const response = await fetch('/api/categories/fetch-magnit-ids', {
+            method: 'POST'
+        });
+        
+        if (!response.ok) {
+            const error = await response.json();
+            updateStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${error.detail || 'Неизвестная ошибка'}</div>`;
+            updateBtn.disabled = false;
+            return;
+        }
+        
+        const result = await response.json();
+        updateStatus.innerHTML = `<div class="badge badge-info">${result.message}</div>`;
+        
+        // Начинаем опрашивать статус
+        pollUpdateStatus(updateBtn);
+        
+    } catch (e) {
+        updateStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+        updateBtn.disabled = false;
+    }
+}
+
+async function pollUpdateStatus(updateBtn) {
+    const updateStatus = document.getElementById('update-status');
+    const maxAttempts = 300; // 5 минут при опросе каждые 1 сек
+    let attempts = 0;
+    
+    const pollInterval = setInterval(async () => {
+        attempts++;
+        
+        try {
+            const response = await fetch('/api/categories/fetch-magnit-ids/status');
+            const status = await response.json();
+            
+            if (status.in_progress) {
+                updateStatus.innerHTML = `<div class="badge badge-info">Обновление каталога...</div>`;
+            } else {
+                // Обновление завершено
+                clearInterval(pollInterval);
+
+                let message = `Обновление завершено!<br>`;
+                message += `Добавлено: ${status.processed || 0}<br>`;
+                message += `Восстановлено отслеживаний: ${status.updated}`;
+
+                if (status.error_count > 0) {
+                    message = `Обновление не выполнено<br>`;
+                    message += `Ошибок при получении данных: ${status.error_count}`;
+                    if (status.errors && status.errors.length > 0) {
+                        message += '<br><details style="margin-top:8px;"><summary style="cursor:pointer;font-weight:500;">Ошибки</summary><ul style="margin:8px 0;padding-left:20px;font-size:12px;">';
+                        status.errors.forEach(err => {
+                            message += `<li>${err}</li>`;
+                        });
+                        message += '</ul></details>';
+                    }
+
+                    updateStatus.innerHTML = `<div class="badge badge-danger">${message}</div>`;
+                    updateBtn.disabled = false;
+
+                    // НЕ перезагружаем дерево категорий при ошибке
+                    // Очищаем статус через 15 секунд
+                    setTimeout(() => {
+                        updateStatus.innerHTML = '';
+                    }, 15000);
+                } else {
+                    // Успешное обновление
+                    updateStatus.innerHTML = `<div class="badge badge-success">${message}</div>`;
+                    updateBtn.disabled = false;
+
+                    // Перезагружаем дерево категорий
+                    setTimeout(() => {
+                        loadCategoriesTree();
+                    }, 2000);
+
+                    // Очищаем статус через 10 секунд
+                    setTimeout(() => {
+                        updateStatus.innerHTML = '';
+                    }, 10000);
+                }
+            }
+        } catch (e) {
+            console.error('Ошибка при опросе статуса:', e);
+        }
+        
+        // Прерываем опрос если превышено максимальное количество попыток
+        if (attempts >= maxAttempts) {
+            clearInterval(pollInterval);
+            updateStatus.innerHTML = `<div class="badge badge-warning">⚠ Истекло время ожидания. Обновление может ещё продолжаться.</div>`;
+            updateBtn.disabled = false;
+        }
+    }, 1000); // Опрашиваем каждую секунду
+}
+
+// Загружаем дерево при загрузке страницы
+window.addEventListener('DOMContentLoaded', async () => {
+    await loadCategoriesTree();
+    // Восстанавливаем прогресс если есть активное задание
+    await restoreProgressIfNeeded();
+});
+
+async function restoreProgressIfNeeded() {
+    try {
+        const response = await fetch('/api/jobs/active?job_type=scan_all_stores');
+        const activeJobs = await response.json();
+        
+        if (activeJobs && activeJobs.length > 0) {
+            // Фильтруем: только задания младше 6 часов и с реальным сканированием (total_stores > 0)
+            const now = Date.now();
+            const maxAge = 6 * 60 * 60 * 1000; // 6 часов
+            
+            const validJob = activeJobs.find(job => {
+                const jobTime = new Date(job.started_at).getTime();
+                const age = now - jobTime;
+                // Проверяем: задание не старше 6 часов И есть реальное сканирование (total_stores > 0)
+                return age < maxAge && job.total_stores > 0 && job.total_categories > 0;
+            });
+            
+            if (!validJob) {
+                console.log('Нет активных заданий для восстановления (старые или без данных)');
+                return;
+            }
+            
+            // Берём первое валидное задание
+            const job = validJob;
+            currentJobId = job.id;
+            
+            // Показываем прогресс-бары
+            document.getElementById('overall-progress').style.display = 'block';
+            document.getElementById('category-progress').style.display = 'block';
+            document.getElementById('scan-btn').disabled = true;
+            document.getElementById('cancel-scan-btn').style.display = 'inline-block';
+            
+            // Обновляем данные прогресса
+            updateProgressBars(job);
+            
+            // Запускаем polling
+            pollingInterval = setInterval(async () => {
+                try {
+                    const jobResponse = await fetch(`/api/jobs/${job.id}`);
+                    const updatedJob = await jobResponse.json();
+                    
+                    updateProgressBars(updatedJob);
+                    
+                    // Проверяем завершение
+                    if (updatedJob.status === 'completed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('scan-btn').disabled = false;
+                        document.getElementById('cancel-scan-btn').style.display = 'none';
+                        document.getElementById('overall-progress').style.display = 'none';
+                        document.getElementById('category-progress').style.display = 'none';
+                        currentJobId = null;
+                    } else if (updatedJob.status === 'cancelled' || updatedJob.status === 'failed') {
+                        clearInterval(pollingInterval);
+                        document.getElementById('scan-btn').disabled = false;
+                        document.getElementById('cancel-scan-btn').style.display = 'none';
+                        document.getElementById('overall-progress').style.display = 'none';
+                        document.getElementById('category-progress').style.display = 'none';
+                        currentJobId = null;
+                    }
+                } catch (e) {
+                    console.error('Polling error:', e);
+                }
+            }, 2000);
+            
+            console.log('Восстановлен прогресс для задания:', job.id);
+        }
+    } catch (e) {
+        console.error('Ошибка восстановления прогресса:', e);
+    }
+}
+
+function updateProgressBars(job) {
+    // Общий прогресс
+    if (job.total_stores && job.total_categories) {
+        const totalOps = job.total_stores * job.total_categories;
+        const currentOp = (job.current_store_index - 1) * job.total_categories + job.current_category_index;
+        const overallPercent = Math.round((currentOp / totalOps) * 100);
+        
+        document.getElementById('overall-progress-percent').textContent = `${overallPercent}%`;
+        document.getElementById('overall-progress-bar').style.width = `${overallPercent}%`;
+        
+        const storeName = job.current_store_address || job.current_store_code || '-';
+        const catName = job.current_category_name || '-';
+        document.getElementById('overall-progress-text').textContent = 
+            `Магазин: ${storeName} (${job.current_store_index}/${job.total_stores}) | Категория: ${catName} (${job.current_category_index}/${job.total_categories})`;
+    }
+    
+    // Детальный прогресс по товарам
+    if (job.current_category_items_total > 0) {
+        const categoryPercent = Math.round((job.current_category_items_loaded / job.current_category_items_total) * 100);
+        
+        document.getElementById('category-progress-percent').textContent = `${categoryPercent}%`;
+        document.getElementById('category-progress-bar').style.width = `${categoryPercent}%`;
+        document.getElementById('category-progress-text').textContent = 
+            `${job.current_category_items_loaded} из ${job.current_category_items_total} товаров`;
+        document.getElementById('category-name').textContent = job.current_category_name || 'Категория';
+    } else if (job.current_category_name) {
+        document.getElementById('category-name').textContent = job.current_category_name;
+        document.getElementById('category-progress-text').textContent = 'Загрузка товаров...';
+    }
+    
+    // Статистика
+    document.getElementById('category-added').textContent = job.items_added || 0;
+    document.getElementById('category-updated').textContent = job.items_updated || 0;
+    document.getElementById('category-scanned').textContent = job.items_scanned || 0;
+}
+
+// Остановка сканирования
+let currentJobId = null;
+let pollingInterval = null;
+
+function cancelScan() {
+    console.log('cancelScan called, currentJobId:', currentJobId);
+    if (currentJobId) {
+        fetch(`/api/jobs/${currentJobId}/cancel`, { method: 'POST' })
+            .then(response => {
+                if (!response.ok) {
+                    return response.json().then(err => {
+                        throw new Error(err.detail || 'Не удалось отменить');
+                    });
+                }
+                return response.json();
+            })
+            .then(() => {
+                console.log('Cancel API success, fetching final status...');
+                // Ещё один запрос для получения финального статуса
+                return fetch(`/api/jobs/${currentJobId}`);
+            })
+            .then(response => response.json())
+            .then(job => {
+                console.log('Final job status:', job.status);
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                    pollingInterval = null;
+                }
+                const btn = document.getElementById('scan-btn');
+                const cancelBtn = document.getElementById('cancel-scan-btn');
+                const overallProgressEl = document.getElementById('overall-progress');
+                const categoryProgressEl = document.getElementById('category-progress');
+                const statusEl = document.getElementById('scan-status');
+                if (btn) btn.disabled = false;
+                if (cancelBtn) cancelBtn.style.display = 'none';
+                if (overallProgressEl) overallProgressEl.style.display = 'none';
+                if (categoryProgressEl) categoryProgressEl.style.display = 'none';
+                if (statusEl) statusEl.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+                // Скрыть сообщение через 3 секунды
+                setTimeout(() => {
+                    if (statusEl) statusEl.innerHTML = '';
+                }, 3000);
+                currentJobId = null;
+            })
+            .catch(e => {
+                console.error('Ошибка отмены:', e);
+                if (pollingInterval) {
+                    clearInterval(pollingInterval);
+                }
+                scanBtn.disabled = false;
+                document.getElementById('cancel-scan-btn').style.display = 'none';
+                document.getElementById('overall-progress').style.display = 'none';
+                document.getElementById('category-progress').style.display = 'none';
+                scanStatus.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+            });
+    } else {
+        if (pollingInterval) {
+            clearInterval(pollingInterval);
+        }
+        scanBtn.disabled = false;
+        document.getElementById('cancel-scan-btn').style.display = 'none';
+        scanStatus.innerHTML = '<div class="badge badge-warning">Сканирование остановлено пользователем</div>';
+        document.getElementById('overall-progress').style.display = 'none';
+        document.getElementById('category-progress').style.display = 'none';
+    }
+}
+
+async function clearProductsForSelectedCategories() {
+    if (selectedCategories.size === 0) {
+        alert('Выберите категории для удаления товаров');
+        return;
+    }
+    
+    const categoryNames = Array.from(selectedCategories)
+        .map(id => {
+            const cat = findCategory(categoriesData, id);
+            return cat ? cat.name : `ID: ${id}`;
+        })
+        .join(', ');
+    
+    if (!confirm(`Удалить товары из следующих категорий?\n\n${categoryNames}`)) {
+        return;
+    }
+    
+    try {
+        const categoryIds = Array.from(selectedCategories).join(',');
+        const response = await fetch(`/api/products/clear-by-categories?category_ids=${encodeURIComponent(categoryIds)}`, { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`Успешно удалено ${result.deleted_count} товаров из выбранных категорий`);
+        } else {
+            alert(`Ошибка: ${result.detail}`);
+        }
+    } catch (e) {
+        alert(`Ошибка: ${e.message}`);
+    }
+}
+
+async function clearAllProductsConfirm() {
+    if (!confirm('Вы уверены? Это удалит ВСЕ товары из базы данных.')) {
+        return;
+    }
+    
+    if (!confirm('Это действие необратимо. Подтвердите еще раз.')) {
+        return;
+    }
+    
+    try {
+        const response = await fetch('/api/products/clear', { method: 'DELETE' });
+        const result = await response.json();
+        
+        if (response.ok) {
+            alert(`Успешно удалено ${result.deleted_count} товаров\n\nТеперь нажмите "Сканировать товары" для пересканирования.`);
+        } else {
+            alert(`Ошибка: ${result.detail}`);
+        }
+    } catch (e) {
+        alert(`Ошибка: ${e.message}`);
+    }
+}
+</script>
+{% endblock %}

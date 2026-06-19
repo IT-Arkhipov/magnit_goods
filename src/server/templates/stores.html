@@ -1,0 +1,474 @@
+{% extends "base.html" %}
+{% block title %}Магинт манИт{% endblock %}
+
+{% block content %}
+<style>
+    /* Адаптивные таблицы для stores */
+    @media (max-width: 768px) {
+        #stores-table table, #preview-table table {
+            display: block;
+            overflow-x: auto;
+        }
+        
+        #stores-table table thead, #preview-table table thead {
+            display: none;
+        }
+        
+        #stores-table table tbody tr, #preview-table table tbody tr {
+            display: block;
+            margin-bottom: 12px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            padding: 8px;
+            background: white;
+        }
+        
+        #stores-table table td, #preview-table table td {
+            display: block;
+            text-align: left;
+            padding: 6px 0;
+            border: none;
+        }
+        
+        #stores-table table td:before, #preview-table table td:before {
+            content: attr(data-label);
+            font-weight: 600;
+            color: #666;
+            display: inline-block;
+            width: 80px;
+            margin-right: 8px;
+        }
+        
+        #stores-table table td:first-child, #preview-table table td:first-child {
+            padding-bottom: 8px;
+            border-bottom: 1px solid #eee;
+        }
+    }
+</style>
+<!-- Сканирование по адресу -->
+<div class="card">
+    <h2>Добавление магазинов</h2>
+    <p style="color:#666;margin-bottom:12px;">Укажите город, улицу (опционально) и нужные типы магазинов для поиска</p>
+    <div class="form-row">
+        <div class="form-group">
+            <!-- <label>Город</label> -->
+            <div style="position:relative;display:inline-block;">
+                <input type="text" id="scan-city" placeholder="Город" style="width:180px" oninput="saveScanCity(); clearScanCityError()">
+                <div id="scan-city-error" style="position:absolute;left:0;right:0;top:100%;color:#e74c3c;font-size:12px;display:none;margin-top:2px;"></div>
+            </div>
+        </div>
+        <div class="form-group">
+            <!-- <label>Улица (опционально)</label> -->
+            <input type="text" id="scan-street" placeholder="Улица (опционально)" style="width:180px">
+        </div>
+        <div class="form-group">
+            <label>Типы магазинов</label>
+            <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:4px;">
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Магнит" checked> Магнит
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Мини" checked> Мини
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Семейный" checked> Семейный
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Экстра" checked> Экстра
+                </label>
+                <label style="font-size:13px;display:flex;align-items:center;gap:4px;">
+                    <input type="checkbox" class="scan-type-cb" value="Моя цена" checked> Моя цена
+                </label>
+            </div>
+        </div>
+        <div class="form-group" style="align-self:end;">
+            <button class="btn btn-success" onclick="scanByAddress()">Сканировать</button>
+        </div>
+    </div>
+    <div id="scan-address-status" style="margin-top:12px;"></div>
+
+    <!-- Результаты preview -->
+    <div id="scan-preview" style="display:none;margin-top:16px;">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+            <h3 style="margin:0;">Найдено: <span id="preview-count">0</span> магазинов</h3>
+            <button id="add-selected-btn" class="btn btn-primary" style="display:none;" onclick="addSelectedStores()">
+                Добавить выбранные (<span id="selected-preview-count">0</span>)
+            </button>
+        </div>
+        <div id="preview-table" style="max-height:480px;overflow-y:auto;"></div>
+    </div>
+</div>
+
+<!-- Список магазинов в базе -->
+<div class="card">
+    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:16px;">
+        <h2 style="margin:0;">Список магазинов в базе</h2>
+        <button id="delete-selected-btn" class="btn btn-danger" style="display:none;" onclick="deleteSelectedStores()">
+            Удалить выбранные (<span id="selected-count">0</span>)
+        </button>
+    </div>
+    <div id="stores-table" style="max-height:480px;overflow-y:auto;">
+        {% include "stores_table.html" %}
+    </div>
+</div>
+
+<script>
+// === Чекбоксы и массовое удаление ===
+function toggleAllStores(checked) {
+    document.querySelectorAll('.store-checkbox').forEach(cb => cb.checked = checked);
+    updateDeleteButton();
+    document.getElementById('select-all-stores').indeterminate = false;
+}
+
+function updateDeleteButton() {
+    const allCheckboxes = document.querySelectorAll('.store-checkbox');
+    const checked = document.querySelectorAll('.store-checkbox:checked');
+    const selectAll = document.getElementById('select-all-stores');
+    const btn = document.getElementById('delete-selected-btn');
+    const count = document.getElementById('selected-count');
+
+    if (selectAll) {
+        selectAll.checked = allCheckboxes.length > 0 && checked.length === allCheckboxes.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < allCheckboxes.length;
+    }
+    if (checked.length > 0) {
+        btn.style.display = 'inline-block';
+        count.textContent = checked.length;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+async function deleteSelectedStores() {
+    const checked = document.querySelectorAll('.store-checkbox:checked');
+    const ids = Array.from(checked).map(cb => cb.value);
+
+    if (ids.length === 0) return;
+    if (!confirm(`Удалить ${ids.length} магазин(ов)?`)) return;
+
+    try {
+        const resp = await fetch('/api/stores/delete-batch', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ ids }),
+        });
+        if (resp.ok) {
+            // Собираем коды удалённых магазинов (по хэшу id = store_code+store_type+full_address)
+            // Просто обновляем оба списка
+            filterStores();
+            await refreshPreviewStatuses();
+        } else {
+            const data = await resp.json();
+            alert('Ошибка: ' + (data.detail || 'Не удалось удалить'));
+        }
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    }
+}
+
+// === Обновить статусы в preview по текущим данным БД ===
+async function refreshPreviewStatuses() {
+    if (!previewStores || previewStores.length === 0) return;
+    const previewDiv = document.getElementById('scan-preview');
+    if (previewDiv.style.display === 'none') return;
+
+    try {
+        const resp = await fetch('/api/stores');
+        const dbStores = await resp.json();
+        const dbCodes = new Set(dbStores.map(s => s.store_code));
+
+        let changed = false;
+        for (const s of previewStores) {
+            const nowInDb = dbCodes.has(s.store_code);
+            if (s.exists_in_db !== nowInDb) {
+                s.exists_in_db = nowInDb;
+                changed = true;
+            }
+        }
+        if (changed) {
+            renderPreview(previewStores);
+        }
+    } catch (e) {
+        console.error('Ошибка обновления статусов preview:', e);
+    }
+}
+
+function clearScanCityError() {
+    const errorDiv = document.getElementById('scan-city-error');
+    const cityInput = document.getElementById('scan-city');
+    errorDiv.style.display = 'none';
+    cityInput.style.borderColor = '';
+}
+
+// Сохранение города в localStorage
+function saveScanCity() {
+    const cityInput = document.getElementById('scan-city');
+    if (cityInput.value.trim()) {
+        localStorage.setItem('scanCity', cityInput.value.trim());
+    }
+}
+
+// Восстановление города из localStorage
+function restoreScanCity() {
+    const savedCity = localStorage.getItem('scanCity');
+    if (savedCity) {
+        document.getElementById('scan-city').value = savedCity;
+    }
+}
+
+// === Сканирование по адресу — preview ===
+async function scanByAddress() {
+    const cityInput = document.getElementById('scan-city');
+    const city = cityInput.value.trim();
+    const street = document.getElementById('scan-street').value.trim();
+    const statusDiv = document.getElementById('scan-address-status');
+    const previewDiv = document.getElementById('scan-preview');
+    const errorDiv = document.getElementById('scan-city-error');
+
+    // Сброс ошибки
+    errorDiv.style.display = 'none';
+    cityInput.style.borderColor = '';
+
+    if (!city) {
+        errorDiv.textContent = 'Введите город';
+        errorDiv.style.display = 'block';
+        cityInput.style.borderColor = '#e74c3c';
+        return;
+    }
+
+    const typeCheckboxes = document.querySelectorAll('.scan-type-cb:checked');
+    const storeTypes = Array.from(typeCheckboxes).map(cb => cb.value);
+
+    if (storeTypes.length === 0) {
+        alert('Выберите хотя бы один тип магазина');
+        return;
+    }
+
+    statusDiv.innerHTML = '<div class="badge badge-info">Поиск магазинов...</div>';
+    previewDiv.style.display = 'none';
+
+    try {
+        const resp = await fetch('/api/stores/preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                city: city,
+                street: street || null,
+                store_types: storeTypes,
+            }),
+        });
+        const data = await resp.json();
+
+        if (data.stores) {
+            statusDiv.innerHTML = `<div class="badge badge-success">Найдено ${data.total_found} магазинов — выберите нужные</div>`;
+            renderPreview(data.stores);
+        } else if (data.detail) {
+            statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${data.detail}</div>`;
+        }
+    } catch (e) {
+        statusDiv.innerHTML = `<div class="badge badge-danger">Ошибка: ${e.message}</div>`;
+    }
+}
+
+// === Рендер таблицы preview ===
+let previewStores = [];
+
+function renderPreview(stores) {
+    previewStores = stores;
+    const previewDiv = document.getElementById('scan-preview');
+    const container = document.getElementById('preview-table');
+    const countSpan = document.getElementById('preview-count');
+
+    // Сначала новые (не в БД), сортировка по типу → адресу
+    const newStores = stores.filter(s => !s.exists_in_db)
+        .sort((a, b) => a.store_type.localeCompare(b.store_type, 'ru') || a.full_address.localeCompare(b.full_address, 'ru'));
+    // Затем существующие, тоже по типу → адресу
+    const existingStores = stores.filter(s => s.exists_in_db)
+        .sort((a, b) => a.store_type.localeCompare(b.store_type, 'ru') || a.full_address.localeCompare(b.full_address, 'ru'));
+
+    const sortedStores = [...newStores, ...existingStores];
+    previewStores = sortedStores;
+
+    countSpan.textContent = stores.length;
+    previewDiv.style.display = 'block';
+
+    if (sortedStores.length === 0) {
+        container.innerHTML = '<p>Магазины не найдены</p>';
+        document.getElementById('add-selected-btn').style.display = 'none';
+        return;
+    }
+
+    let html = `<table>
+        <thead><tr>
+            <th style="width:40px;"><input type="checkbox" id="select-all-preview" onchange="toggleAllPreview(this.checked)"></th>
+            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th>
+        </tr></thead><tbody>`;
+
+    for (let i = 0; i < sortedStores.length; i++) {
+        const s = sortedStores[i];
+        const rowClass = s.exists_in_db ? 'style="background:#f0f0f0;color:#999;"' : '';
+        const badge = s.exists_in_db ? `<br><span style="color:#e67e22;font-size:11px;">(уже в базе)</span>` : '';
+        html += `<tr ${rowClass}>
+            <td data-label=""><input type="checkbox" class="preview-checkbox" data-index="${i}" ${s.exists_in_db ? 'disabled' : ''} onchange="updatePreviewSelection()"></td>
+            <td data-label="Тип:"><span class="badge badge-info">${s.store_type}</span>${badge}</td>
+            <td data-label="Город:">${s.city}</td>
+            <td data-label="Адрес:"><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
+            <td data-label="Код:"><code>${s.store_code}</code></td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    updatePreviewSelection();
+}
+
+function toggleAllPreview(checked) {
+    document.querySelectorAll('.preview-checkbox:not(:disabled)').forEach(cb => cb.checked = checked);
+    updatePreviewSelection();
+    document.getElementById('select-all-preview').indeterminate = false;
+}
+
+function updatePreviewSelection() {
+    const allCheckboxes = document.querySelectorAll('.preview-checkbox:not(:disabled)');
+    const checked = document.querySelectorAll('.preview-checkbox:checked');
+    const selectAll = document.getElementById('select-all-preview');
+    const btn = document.getElementById('add-selected-btn');
+    const count = document.getElementById('selected-preview-count');
+
+    if (selectAll) {
+        selectAll.checked = allCheckboxes.length > 0 && checked.length === allCheckboxes.length;
+        selectAll.indeterminate = checked.length > 0 && checked.length < allCheckboxes.length;
+    }
+    if (checked.length > 0) {
+        btn.style.display = 'inline-block';
+        count.textContent = checked.length;
+    } else {
+        btn.style.display = 'none';
+    }
+}
+
+// === Добавление выбранных магазинов ===
+async function addSelectedStores() {
+    const checked = document.querySelectorAll('.preview-checkbox:checked');
+    const indices = Array.from(checked).map(cb => parseInt(cb.dataset.index));
+    const selected = indices.map(i => previewStores[i]);
+
+    if (selected.length === 0) return;
+    if (!confirm(`Добавить ${selected.length} магазин(ов) в базу?`)) return;
+
+    const btn = document.getElementById('add-selected-btn');
+    btn.disabled = true;
+    btn.textContent = 'Добавить в базу';
+
+    try {
+        const resp = await fetch('/api/stores/add-selected', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ stores: selected }),
+        });
+        const data = await resp.json();
+
+        const statusDiv = document.getElementById('scan-address-status');
+        statusDiv.innerHTML = `<div class="badge badge-success">✓ Добавлено: ${data.added}, пропущено: ${data.skipped}</div>`;
+
+        // Обновляем статус в preview — добавленные становятся «уже в базе»
+        for (const idx of indices) {
+            const s = previewStores[idx];
+            if (s.store_code && data.added > 0) {
+                // Проверяем, что этот конкретный магазин был добавлен (не пропущен)
+                s.exists_in_db = true;
+            }
+        }
+        // Более точно: проходим по всем preview и обновляем по store_code
+        // Перерендерим preview с новыми статусами
+        renderPreview(previewStores);
+
+        // Обновляем основной список
+        filterStores();
+    } catch (e) {
+        alert('Ошибка: ' + e.message);
+    } finally {
+        btn.disabled = false;
+    }
+}
+
+// === Проверка статуса заданий ===
+async function pollJobStatus(jobId, progressDivId, refreshTable) {
+    const progressDiv = document.getElementById(progressDivId);
+
+    const checkStatus = async () => {
+        try {
+            const resp = await fetch(`/api/jobs/${jobId}`);
+            const job = await resp.json();
+
+            if (job.status === 'running' || job.status === 'pending') {
+                if (progressDiv) {
+                    progressDiv.innerHTML = `
+                        <div class="progress-bar" style="margin:8px 0;">
+                            <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
+                        </div>
+                        <small>${job.progress_message || 'Выполняется...'} (${job.progress}%)</small>
+                    `;
+                }
+                setTimeout(checkStatus, 2000);
+            } else if (job.status === 'completed') {
+                if (progressDiv) {
+                    progressDiv.innerHTML = `
+                        <div class="badge badge-success">
+                            ✓ Завершено! ${job.progress_message || `Просканировано: ${job.items_scanned}, Добавлено: ${job.items_added}`}
+                        </div>
+                    `;
+                }
+                if (refreshTable) filterStores();
+            } else if (job.status === 'failed') {
+                if (progressDiv) {
+                    progressDiv.innerHTML = `<div class="badge badge-danger">✗ Ошибка: ${job.error_message}</div>`;
+                }
+            }
+        } catch (e) {
+            console.error('Ошибка проверки статуса:', e);
+        }
+    };
+
+    checkStatus();
+}
+
+// === Загрузка и отображение ===
+async function filterStores() {
+    const resp = await fetch('/api/stores');
+    const stores = await resp.json();
+    renderTable(stores);
+}
+
+function renderTable(stores) {
+    // Сортировка по типу, затем по адресу
+    stores.sort((a, b) => (a.store_type || '').localeCompare(b.store_type || '', 'ru') || (a.full_address || '').localeCompare(b.full_address || '', 'ru'));
+
+    const container = document.getElementById('stores-table');
+    if (stores.length === 0) {
+        container.innerHTML = '<p>Магазины не найдены</p>';
+        document.getElementById('delete-selected-btn').style.display = 'none';
+        return;
+    }
+    let html = `<table>
+        <thead><tr>
+            <th style="width:40px;"><input type="checkbox" id="select-all-stores" onchange="toggleAllStores(this.checked)"></th>
+            <th>Тип</th><th>Город</th><th>Адрес</th><th>Код</th>
+        </tr></thead><tbody>`;
+    for (const s of stores) {
+        html += `<tr>
+            <td data-label=""><input type="checkbox" class="store-checkbox" value="${s.id}" onchange="updateDeleteButton()"></td>
+            <td data-label="Тип:"><span class="badge badge-info">${s.store_type}</span></td>
+            <td data-label="Город:">${s.city}</td>
+            <td data-label="Адрес:"><a href="https://yandex.ru/maps/?text=${encodeURIComponent(s.full_address)}" target="_blank" style="color:#2c3e50;text-decoration:underline;">${s.full_address}</a></td>
+            <td data-label="Код:"><code>${s.store_code}</code></td>
+        </tr>`;
+    }
+    html += '</tbody></table>';
+    container.innerHTML = html;
+    updateDeleteButton();
+}
+
+// Восстановление города при загрузке страницы
+document.addEventListener('DOMContentLoaded', restoreScanCity);
+</script>
+{% endblock %}

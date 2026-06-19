@@ -1,0 +1,2850 @@
+{% extends "base.html" %}
+
+{% block title %}Товары - Магнит Goods{% endblock %}
+
+{% block content %}
+<!-- Панель выбора магазинов для сравнения (Фаза 1) -->
+<div class="card">
+    <h2>Сравнение товаров по магазинам</h2>
+    <p style="color: #666; font-size: 15px; margin-bottom: 12px;">Выберите не более 5 магазинов для просмотра и сравнения цен на товары</p>
+    
+    <div style="overflow-x: auto; margin-bottom: 12px;">
+        <table id="storesTable" style="width: 100%; border-collapse: collapse;">
+            <thead>
+                <tr style="background: #f8f9fa;">
+                    <th style="padding: 10px; border: 1px solid #ddd; vertical-align: middle; text-align: center;">
+                        <input type="checkbox" id="selectAllStores" onchange="toggleAllStores()" style="margin:0;">
+                    </th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Тип</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Город</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Адрес</th>
+                    <th style="padding: 10px; border: 1px solid #ddd;">Код</th>
+                </tr>
+            </thead>
+            <tbody id="storesTableBody">
+                <tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Загрузка списка магазинов...</td></tr>
+            </tbody>
+        </table>
+    </div>
+    
+    <div style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+        <button class="btn" style="background: #007bff; color: white;" onclick="applyStoreComparison()">Применить выбор</button>
+        <button class="btn btn-secondary" onclick="clearStoreSelection()">Очистить</button>
+        <span id="selectedStoresCount" class="badge badge-info" style="font-size: 14px;">Выбрано: 0 / 0</span>
+    </div>
+</div>
+
+<!-- Панель списка покупок -->
+<div class="card" style="background: #f0f8ff; border-left: 4px solid #2196f3;">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+        <div>
+            <h3 style="margin: 0 0 4px 0;">Список покупок</h3>
+            <span id="shoppingListCounter" style="color: #666; font-size: 14px;">
+                Выбрано: 0 товаров из 0 магазинов
+            </span>
+        </div>
+        <div style="display: flex; gap: 8px;">
+            <a href="/shopping-list" class="btn" style="background: #28a745; color: white;">
+                Просмотреть список
+            </a>
+            <button class="btn btn-secondary" onclick="clearShoppingList()">
+                Очистить всё
+            </button>
+        </div>
+    </div>
+</div>
+
+<!-- Панель статистики (временно скрыта)
+<div class="card" style="display: none;">
+    <h3>Статистика товаров</h3>
+    <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 12px; margin-top: 12px;">
+        <div class="stat-card">
+            <div class="stat-value" id="statTotal">-</div>
+            <div class="stat-label">Всего товаров</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statInStock">-</div>
+            <div class="stat-label">В наличии</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statDiscount">-</div>
+            <div class="stat-label">Со скидкой</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statPromo">-</div>
+            <div class="stat-label">Акции</div>
+        </div>
+        <div class="stat-card">
+            <div class="stat-value" id="statLastUpdate">-</div>
+            <div class="stat-label">Обновлено</div>
+        </div>
+    </div>
+</div>
+-->
+
+<style>
+.category-content table td {
+    text-align: left !important;
+}
+.category-content table th {
+    text-align: left !important;
+}
+.category-content table th.store-header {
+    text-align: left !important;
+}
+.stat-card {
+    background: #f8f9fa;
+    padding: 16px;
+    border-radius: 8px;
+    border: 1px solid #e0e0e0;
+    text-align: center;
+    transition: transform 0.2s, box-shadow 0.2s;
+}
+.stat-card:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.1);
+}
+.stat-value {
+    font-size: 24px;
+    font-weight: bold;
+    color: #2196f3;
+    margin-bottom: 4px;
+}
+.stat-label {
+    font-size: 14px;
+    color: #666;
+    text-transform: uppercase;
+}
+#selectAllStores, #storesTableBody input[type="checkbox"] {
+    cursor: pointer;
+}
+.shopping-list-checkbox {
+    cursor: pointer;
+}
+.shopping-list-checkbox:checked + span {
+    background: #d4edda;
+    padding: 2px 6px;
+    border-radius: 4px;
+    border: 2px solid #28a745;
+}
+tr.selected-row {
+    border-left: 4px solid #28a745 !important;
+    background: #f0fff4 !important;
+}
+tr.selected-row td:first-child {
+    border-left: none;
+}
+.price-cell {
+    position: relative;
+    cursor: help;
+    padding-left: 8px;
+    word-break: break-word;
+}
+.price-tooltip {
+    position: absolute;
+    bottom: calc(100% + 8px);
+    left: 50%;
+    transform: translateX(-50%);
+    background: #333;
+    color: #fff;
+    padding: 8px 12px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: normal;
+    max-width: 320px;
+    word-wrap: break-word;
+    text-align: left;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+}
+.price-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #333;
+}
+.price-cell:hover .price-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+.product-name-cell {
+    position: relative;
+    cursor: help;
+}
+.product-image-tooltip {
+    position: absolute;
+    bottom: 125%;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #fff;
+    border: 1px solid #ddd;
+    border-radius: 4px;
+    padding: 8px;
+    z-index: 1000;
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity 0.2s, visibility 0.2s;
+    pointer-events: none;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+}
+.product-image-tooltip img {
+    max-width: 150px;
+    max-height: 150px;
+    border-radius: 4px;
+}
+.product-image-tooltip::after {
+    content: '';
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    border: 5px solid transparent;
+    border-top-color: #ddd;
+}
+.product-name-cell:hover .product-image-tooltip {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Стили для дерева категорий */
+.category-item {
+    padding: 4px 0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.category-item input[type="checkbox"] {
+    margin: 0;
+    cursor: pointer;
+}
+
+.category-label {
+    cursor: pointer;
+    flex: 1;
+    padding: 2px 4px;
+    border-radius: 4px;
+    transition: background 0.2s;
+}
+
+.category-label:hover {
+    background: #f5f5f5;
+}
+
+.category-tracked {
+    color: inherit;
+    font-weight: normal;
+}
+
+.category-children {
+    margin-left: 20px;
+    border-left: 1px solid #eee;
+    padding-left: 12px;
+}
+
+.category-children .category-item {
+    padding: 2px 0;
+}
+
+.dropdown-button:hover {
+    border-color: #999;
+}
+
+.category-dropdown {
+    scrollbar-width: thin;
+    -ms-overflow-style: scrollbar;
+    overflow-y: scroll !important;
+}
+.category-dropdown::-webkit-scrollbar {
+    width: 8px;
+}
+.category-dropdown::-webkit-scrollbar-track {
+    background: #f1f1f1;
+}
+.category-dropdown::-webkit-scrollbar-thumb {
+    background: #888;
+    border-radius: 4px;
+}
+.category-dropdown::-webkit-scrollbar-thumb:hover {
+    background: #555;
+}
+
+.category-dropdown-container {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+/* Подсветка поискового запроса в названиях товаров */
+mark.search-highlight {
+    background-color: #ffeb3b;
+    color: inherit;
+    padding: 0 2px;
+    border-radius: 2px;
+    font-weight: 600;
+}
+
+/* Поле поиска с кнопкой очистки */
+.search-input-wrapper {
+    position: relative;
+    display: block;
+}
+.search-input-wrapper input[type="text"] {
+    width: 100%;
+    padding-right: 30px;
+    box-sizing: border-box;
+}
+.search-clear-btn {
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 22px;
+    height: 22px;
+    border: none;
+    background: transparent;
+    color: #999;
+    font-size: 18px;
+    line-height: 1;
+    cursor: pointer;
+    border-radius: 50%;
+    padding: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+.search-clear-btn:hover {
+    background: #eee;
+    color: #333;
+}
+</style>
+
+<div class="card">
+    <h2>Фильтры и поиск товаров</h2>
+
+    <div class="form-row">
+        <div class="form-group" style="flex: 1.5;">
+            <label>Категории</label>
+            <div class="category-dropdown-container" style="position: relative;">
+                <button id="categoryDropdownButton" class="dropdown-button" onclick="toggleCategoryDropdown()" style="width: 100%; text-align: left; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;">
+                    <span id="categoryDropdownText">Все категории</span>
+                    <span style="float: right;">▼</span>
+                </button>
+                <div id="categoryDropdown" class="category-dropdown" style="display: none; position: absolute; top: 100%; left: 0; width: 100%; max-height: 400px; overflow-y: scroll; background: white; border: 1px solid #ddd; border-radius: 4px; z-index: 1000; margin-top: 4px; box-shadow: 0 4px 8px rgba(0,0,0,0.1);">
+                    <div style="padding: 4px 12px;">
+                        <span id="selectedCount" style="color: #666; font-size: 14px;">Выбрано: 0</span>
+                        <button id="selectAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="selectAllCategories(); return false;" style="margin-left: 8px; padding: 2px 8px;">Выбрать все</button>
+                        <button id="deselectAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="deselectAllCategories(); return false;" style="padding: 2px 8px;">Снять все</button>
+                    </div>
+                    <div id="categoryTree" style="padding: 8px;">
+                        <p style="color: #666;">Загрузка категорий...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Поиск</label>
+            <div class="search-input-wrapper">
+                <input type="text" id="searchFilter" placeholder="Название товара" autocomplete="off">
+                <button type="button" id="searchClearBtn" class="search-clear-btn" title="Очистить" style="display:none;">×</button>
+            </div>
+        </div>
+        <div class="form-group">
+            <label>Сортировка</label>
+            <select id="sortFilter" disabled>
+                <option value="name">По названию</option>
+                <option value="price">По цене</option>
+                <!-- <option value="discount">По скидке</option> -->
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Наличие</label>
+            <select id="stockFilter" disabled>
+                <option value="">Все</option>
+                <option value="in_stock">В наличии</option>
+                <option value="out_of_stock">Нет в наличии</option>
+                <option value="low_stock">Мало осталось</option>
+            </select>
+        </div>
+        <div class="form-group">
+            <label>Акции</label>
+            <select id="promoFilter" disabled>
+                <option value="">Все</option>
+                <!-- <option value="discount">Со скидкой</option> -->
+                <option value="promotion">Акции</option>
+            </select>
+        </div>
+        <div class="form-group" style="flex: 0.5;">
+            <label>Цена от</label>
+            <input type="number" id="minPrice" placeholder="0" min="0" disabled style="width: 100%;">
+        </div>
+        <div class="form-group" style="flex: 0.5;">
+            <label>Цена до</label>
+            <input type="number" id="maxPrice" placeholder="1000" min="0" disabled style="width: 100%;">
+        </div>
+         <div class="form-group">
+             <label>Экономия (%)</label>
+             <select id="savingsFilter" onchange="onSavingsFilterChange()">
+                 <option value="">-</option>
+                 <option value="10">10%</option>
+                 <option value="20">20%</option>
+                 <option value="30">30%</option>
+             </select>
+         </div>
+         <div style="margin-left: 24px; display: flex; align-items: center;">
+             <label style="margin: 0;">
+                 <input type="checkbox" id="newPriceMode" checked onchange="togglePriceMode()">
+                 Новая цена
+             </label>
+         </div>
+    </div>
+</div>
+
+<div class="card">
+    <div id="products-list">
+        <p style="color: #666;">Нажмите "Загрузить" для отображения товаров</p>
+    </div>
+</div>
+
+<!-- Модальное окно для сравнения товаров по магазинам -->
+<div id="compareModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 800px; width: 90%; max-height: 80vh; overflow-y: auto;">
+        <h2 id="compareModalTitle">Сравнение товара</h2>
+        <div id="compareModalContent"></div>
+        <button class="btn btn-danger" onclick="closeCompareModal()" style="margin-top: 16px;">Закрыть</button>
+    </div>
+</div>
+
+<!-- Модальное окно для истории цен -->
+<div id="priceHistoryModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 700px; width: 90%; max-height: 80vh; overflow-y: auto;">
+        <h2 id="priceHistoryModalTitle">История цен</h2>
+        <div id="priceHistoryModalContent"></div>
+        <button class="btn btn-danger" onclick="closePriceHistoryModal()" style="margin-top: 16px;">Закрыть</button>
+    </div>
+</div>
+
+<script>
+// Маппинг числовых кодов типов магазинов на API коды
+const SHOP_TYPE_TO_API_CODE = {
+    1: "MM",        // Магнит
+    2: "MM_MINI",   // Мини
+    3: "DG",        // М.Косметик
+    5: "GM",        // Семейный
+    6: "ME",        // Экстра
+    7: "MO",        // Опт
+    8: "ZARYAD",    // Заряд
+    9: "MC",        // Моя цена
+};
+
+// Глобальные переменные для работы с категориями
+let selectedCategoryIds = [];
+let categoryTreeData = null;
+
+// Глобальные переменные для отслеживания изменений
+let lastSelectedCategoryIds = [];
+
+// Режим отображения цен
+let showNewPriceMode = true;
+
+// Загрузка состояния режима цен при загрузке страницы
+function loadPriceModeState() {
+    const saved = localStorage.getItem('showNewPriceMode');
+    if (saved !== null) {
+        showNewPriceMode = saved === 'true';
+    } else {
+        showNewPriceMode = true;
+    }
+    const checkbox = document.getElementById('newPriceMode');
+    if (checkbox) {
+        checkbox.checked = showNewPriceMode;
+    }
+}
+
+// Переключение режима отображения цен
+function togglePriceMode() {
+    showNewPriceMode = document.getElementById('newPriceMode').checked;
+    localStorage.setItem('showNewPriceMode', showNewPriceMode);
+    loadProducts();
+}
+
+// Форматирование даты
+function formatDate(isoString) {
+    if (!isoString) return '-';
+    const date = new Date(isoString);
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    const hours = String(date.getHours()).padStart(2, '0');
+    const minutes = String(date.getMinutes()).padStart(2, '0');
+    return `${day}.${month}.${year} ${hours}:${minutes}`;
+}
+
+// Функция для открытия ссылки на товар
+function openProductLink(url, storeCode, shopType) {
+    window.open(url, '_blank');
+}
+
+// Функции для работы с dropdown категорий
+function toggleCategoryDropdown() {
+    const dropdown = document.getElementById('categoryDropdown');
+    const isVisible = dropdown.style.display === 'block';
+    dropdown.style.display = isVisible ? 'none' : 'block';
+    
+    if (!isVisible && !categoryTreeData) {
+        loadCategoryTree();
+    }
+}
+
+document.addEventListener('click', function(event) {
+    const dropdown = document.getElementById('categoryDropdown');
+    const button = document.getElementById('categoryDropdownButton');
+    if (dropdown && button && !dropdown.contains(event.target) && !button.contains(event.target)) {
+        if (dropdown.style.display !== 'none') {
+            const currentIdsJSON = JSON.stringify(selectedCategoryIds);
+            const prevIdsJSON = JSON.stringify(lastSelectedCategoryIds);
+            
+            if (currentIdsJSON !== prevIdsJSON) {
+                saveSelectedCategoriesToLocalStorage();
+                loadProducts();
+            }
+            
+            lastSelectedCategoryIds = [...selectedCategoryIds];
+            dropdown.style.display = 'none';
+        }
+    }
+});
+
+async function loadCategoryTree() {
+    const categoryTree = document.getElementById('categoryTree');
+    try {
+        const response = await fetch('/api/categories/tree');
+        categoryTreeData = await response.json();
+        renderCategoryTree(categoryTreeData);
+        updateCheckboxes();
+        updateSelectedCount();
+        updateCategoryButtons();
+        return categoryTreeData;
+    } catch (error) {
+        categoryTree.innerHTML = '<p style="color: #dc3545;">Ошибка загрузки категорий</p>';
+        return null;
+    }
+}
+
+function renderCategoryTree(categories, parentId = null) {
+    const container = document.getElementById('categoryTree');
+    let html = '';
+    
+    function getTotalProductCount(cat) {
+        let count = cat.product_count || 0;
+        if (cat.children) {
+            cat.children.forEach(child => {
+                count += getTotalProductCount(child);
+            });
+        }
+        return count;
+    }
+    
+    function renderNode(category, depth = 0) {
+        const indent = depth * 20;
+        const hasChildren = category.children && category.children.length > 0;
+        const isChecked = selectedCategoryIds.includes(category.id);
+        const trackedClass = category.is_tracked ? 'category-tracked' : '';
+        const totalCount = getTotalProductCount(category);
+        
+        html += `
+            <div class="category-item" style="margin-left: ${indent}px;">
+                <input type="checkbox" id="cat-${category.id}" value="${category.id}" 
+                       ${isChecked ? 'checked' : ''} 
+                       onchange="toggleCategoryCheckbox(this)">
+                <label for="cat-${category.id}" class="category-label ${trackedClass}" 
+                       title="${category.is_tracked ? 'Отслеживается' : 'Не отслеживается'}">
+                      ${escapeHtml(category.name)}
+                      ${totalCount > 0 ? ` (${totalCount})` : ''}
+                    </label>
+            </div>
+        `;
+        
+        if (hasChildren) {
+            html += `<div class="category-children">`;
+            category.children.forEach(child => renderNode(child, depth + 1));
+            html += `</div>`;
+        }
+    }
+    
+    categories.forEach(category => renderNode(category));
+    container.innerHTML = html;
+}
+
+function toggleCategoryCheckbox(checkbox) {
+    const categoryId = parseInt(checkbox.value);
+    
+    if (checkbox.checked) {
+        addCategoryAndChildren(categoryId);
+    } else {
+        removeCategoryAndChildren(categoryId);
+    }
+    
+    updateSelectedCount();
+    updateDropdownText();
+    updateCheckboxes();
+    saveSelectedCategoriesToLocalStorage();
+    loadProducts();
+}
+
+function addCategoryAndChildren(categoryId) {
+    if (!categoryTreeData) return;
+    
+    function addIfNotExists(catId) {
+        if (!selectedCategoryIds.includes(catId)) {
+            selectedCategoryIds.push(catId);
+        }
+    }
+    
+    function traverseAndAdd(categories) {
+        categories.forEach(cat => {
+            if (cat.id === categoryId || isParentOf(categoryId, cat.id)) {
+                addIfNotExists(cat.id);
+            }
+            if (cat.children) {
+                traverseAndAdd(cat.children);
+            }
+        });
+    }
+    
+    traverseAndAdd(categoryTreeData);
+}
+
+function removeCategoryAndChildren(categoryId) {
+    if (!categoryTreeData) return;
+    
+    function traverseAndRemove(categories) {
+        categories.forEach(cat => {
+            if (cat.id === categoryId || isParentOf(categoryId, cat.id)) {
+                const index = selectedCategoryIds.indexOf(cat.id);
+                if (index > -1) {
+                    selectedCategoryIds.splice(index, 1);
+                }
+            }
+            if (cat.children) {
+                traverseAndRemove(cat.children);
+            }
+        });
+    }
+    
+    traverseAndRemove(categoryTreeData);
+}
+
+function isParentOf(parentId, childId) {
+    if (!categoryTreeData) return false;
+    
+    function traverse(categories) {
+        for (let i = 0; i < categories.length; i++) {
+            const cat = categories[i];
+            if (cat.id === parentId) {
+                for (let j = 0; j < cat.children.length; j++) {
+                    if (cat.children[j].id === childId) return true;
+                    if (isParentOfRecursive(cat.children[j].id, childId, cat.children)) {
+                        return true;
+                    }
+                }
+            }
+            if (cat.children && traverse(cat.children)) {
+                return true;
+            }
+        }
+        return false;
+    }
+    
+    return traverse(categoryTreeData);
+}
+
+function isParentOfRecursive(currentId, targetId, categories) {
+    for (let i = 0; i < categories.length; i++) {
+        const cat = categories[i];
+        if (cat.id === currentId) {
+            for (let j = 0; j < cat.children.length; j++) {
+                if (cat.children[j].id === targetId) return true;
+                if (isParentOfRecursive(cat.children[j].id, targetId, cat.children)) {
+                    return true;
+                }
+            }
+        }
+        if (cat.children && isParentOfRecursive(currentId, targetId, cat.children)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+function updateCheckboxes() {
+    if (!categoryTreeData) return;
+    
+    function updateNodeChecks(categories) {
+        categories.forEach(cat => {
+            const checkbox = document.getElementById(`cat-${cat.id}`);
+            if (checkbox) {
+                if (cat.children && cat.children.length > 0) {
+                    const childCheckedCount = cat.children.filter(child => 
+                        selectedCategoryIds.includes(child.id)).length;
+                    const totalChildren = cat.children.length;
+                    
+                    if (childCheckedCount === totalChildren) {
+                        checkbox.checked = true;
+                        checkbox.indeterminate = false;
+                    } else if (childCheckedCount === 0) {
+                        checkbox.checked = false;
+                        checkbox.indeterminate = false;
+                    } else {
+                        checkbox.checked = false;
+                        checkbox.indeterminate = true;
+                    }
+                } else {
+                    checkbox.checked = selectedCategoryIds.includes(cat.id);
+                    checkbox.indeterminate = false;
+                }
+            }
+            if (cat.children) {
+                updateNodeChecks(cat.children);
+            }
+        });
+    }
+    
+    updateNodeChecks(categoryTreeData);
+}
+
+function selectAllCategories() {
+    if (!categoryTreeData) return;
+    
+    function collectAllIds(categories) {
+        let ids = [];
+        categories.forEach(cat => {
+            ids.push(cat.id);
+            if (cat.children) {
+                ids = ids.concat(collectAllIds(cat.children));
+            }
+        });
+        return ids;
+    }
+    
+    selectedCategoryIds = collectAllIds(categoryTreeData);
+    updateCheckboxes();
+    updateSelectedCount();
+    updateDropdownText();
+    updateCategoryButtons();
+    saveSelectedCategoriesToLocalStorage();
+}
+
+function deselectAllCategories() {
+    selectedCategoryIds = [];
+    updateCheckboxes();
+    updateSelectedCount();
+    updateDropdownText();
+    updateCategoryButtons();
+    saveSelectedCategoriesToLocalStorage();
+}
+
+function updateCategoryButtons() {
+    const selectBtn = document.getElementById('selectAllCategoriesBtn');
+    const deselectBtn = document.getElementById('deselectAllCategoriesBtn');
+    if (!selectBtn || !deselectBtn) return;
+    
+    const totalChildCount = getTotalChildCount();
+    const childCount = getSelectedChildCount();
+    
+    selectBtn.disabled = childCount === totalChildCount;
+    deselectBtn.disabled = childCount === 0;
+}
+
+function getTotalChildCount() {
+    let count = 0;
+    if (categoryTreeData) {
+        function countChild(categories) {
+            categories.forEach(cat => {
+                if (cat.parent_id !== null) count++;
+                if (cat.children) countChild(cat.children);
+            });
+        }
+        countChild(categoryTreeData);
+    }
+    return count;
+}
+
+function getSelectedChildCount() {
+    let count = 0;
+    if (categoryTreeData) {
+        function countChild(categories) {
+            categories.forEach(cat => {
+                if (cat.parent_id !== null && selectedCategoryIds.includes(cat.id)) count++;
+                if (cat.children) countChild(cat.children);
+            });
+        }
+        countChild(categoryTreeData);
+    }
+    return count;
+}
+
+function updateSelectedCount() {
+    const countElement = document.getElementById('selectedCount');
+    if (countElement) {
+        let childCount = 0;
+        if (categoryTreeData) {
+            function countChildCategories(categories) {
+                categories.forEach(cat => {
+                    if (cat.parent_id !== null && selectedCategoryIds.includes(cat.id)) {
+                        childCount++;
+                    }
+                    if (cat.children) {
+                        countChildCategories(cat.children);
+                    }
+                });
+            }
+            countChildCategories(categoryTreeData);
+        }
+        countElement.textContent = `Выбрано: ${childCount}`;
+    }
+    updateCategoryButtons();
+}
+
+function updateDropdownText() {
+    const textElement = document.getElementById('categoryDropdownText');
+    
+    let childCount = 0;
+    let totalChildCount = 0;
+    
+    if (categoryTreeData) {
+        function countChildCategories(categories) {
+            categories.forEach(cat => {
+                if (cat.parent_id !== null) {
+                    totalChildCount++;
+                    if (selectedCategoryIds.includes(cat.id)) {
+                        childCount++;
+                    }
+                }
+                if (cat.children) {
+                    countChildCategories(cat.children);
+                }
+            });
+        }
+        countChildCategories(categoryTreeData);
+    }
+    
+    if (childCount === 0) {
+        textElement.textContent = 'Выберите категории';
+    } else if (childCount === totalChildCount) {
+        textElement.textContent = 'Все категории';
+    } else {
+        textElement.textContent = `Выбрано: ${childCount}`;
+    }
+}
+
+function saveSelectedCategoriesToLocalStorage() {
+    localStorage.setItem('productsPageCategoryIds', JSON.stringify(selectedCategoryIds));
+}
+
+async function loadFilterState() {
+    const savedIds = localStorage.getItem('productsPageCategoryIds');
+    
+    if (savedIds) {
+        selectedCategoryIds = JSON.parse(savedIds);
+    } else {
+        // Если нет сохранённых категорий, загружаем отслеживаемые из БД
+        try {
+            const response = await fetch('/api/categories?tracked=true');
+            const trackedCategories = await response.json();
+            // Выбираем только дочерние категории (с parent_id)
+            selectedCategoryIds = trackedCategories
+                .filter(cat => cat.parent_id !== null)
+                .map(cat => cat.id);
+            saveSelectedCategoriesToLocalStorage();
+        } catch (error) {
+            console.error('Ошибка загрузки отслеживаемых категорий:', error);
+        }
+    }
+    
+    // Загружаем дерево категорий для корректного отображения
+    if (!categoryTreeData) {
+        await loadCategoryTree();
+    }
+    
+    // Обновляем текст dropdown после загрузки
+    updateDropdownText();
+}
+
+let productsState = {
+     allProducts: [],
+     offset: 0,
+     hasMore: true,
+     isLoading: false,
+     storeCode: null,
+     sort: null,
+     selectedCategoryIds: [],
+     search: null,
+     selectedStores: [],
+     compareStoresInfo: []
+};
+
+const ITEMS_PER_PAGE = 200;
+
+async function loadProducts() {
+     const storeCode = document.getElementById('storeCode')?.value || '';
+     const search = document.getElementById('searchFilter')?.value || '';
+     const sort = document.getElementById('sortFilter')?.value || 'name';
+
+     const selectedStores = getSelectedStores();
+     const activeStoreCode = storeCode || (selectedStores.length > 0 ? selectedStores[0] : null);
+
+     if (!activeStoreCode) {
+         const listDiv = document.getElementById('products-list');
+         listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения или укажите код магазина</p>';
+         return;
+     }
+
+     const listDiv = document.getElementById('products-list');
+     listDiv.innerHTML = '<p style="color: #666;">Загрузка...</p>';
+
+     productsState = {
+         allProducts: [],
+         offset: 0,
+         hasMore: true,
+         isLoading: false,
+         storeCode: activeStoreCode,
+         sort: sort,
+         selectedCategoryIds: selectedCategoryIds,
+         search: search,
+         selectedStores: selectedStores,
+         compareStoresInfo: []
+     };
+
+     try {
+         if (selectedStores.length > 1) {
+             const storesResp = await fetch('/api/stores?limit=100');
+             const allStores = await storesResp.json();
+             const otherStores = selectedStores.filter(code => code !== activeStoreCode);
+             
+             productsState.compareStoresInfo = otherStores.map(code => {
+                 const store = allStores.find(s => s.store_code === code);
+                 let displayName = code;
+                 if (store) {
+                     displayName = store.full_address;
+                     if (store.store_type) displayName = store.store_type + ' - ' + displayName.split(',').slice(1).join(',').trim() || displayName;
+                 }
+                 return { code: code, name: displayName };
+             });
+         }
+
+         await loadMoreProductsFromAPI();
+         setupInfiniteScroll();
+         
+     } catch (e) {
+         const listDiv = document.getElementById('products-list');
+         listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+     }
+}
+
+async function loadMoreProductsFromAPI() {
+     if (productsState.isLoading || !productsState.hasMore) return;
+     
+     productsState.isLoading = true;
+     const listDiv = document.getElementById('products-list');
+     
+     try {
+          let url = `/api/products?store_code=${encodeURIComponent(productsState.storeCode)}&sort_by=${productsState.sort}&limit=${ITEMS_PER_PAGE}&offset=${productsState.offset}`;
+          
+          if (productsState.selectedCategoryIds.length > 0) {
+              url += `&category_ids=${productsState.selectedCategoryIds.join(',')}`;
+          }
+          
+          if (productsState.search) url += `&search=${encodeURIComponent(productsState.search)}`;
+
+         const response = await fetch(url);
+         const products = await response.json();
+
+         if (products.length === 0) {
+             productsState.hasMore = false;
+             if (productsState.allProducts.length === 0) {
+                 listDiv.innerHTML = '<p style="color: #666;">Товары не найдены</p>';
+             }
+             return;
+         }
+
+         productsState.allProducts.push(...products);
+         productsState.offset += products.length;
+
+         if (products.length < ITEMS_PER_PAGE) {
+             productsState.hasMore = false;
+         }
+
+         if (productsState.compareStoresInfo.length > 0) {
+             await loadPricesFromOtherStores(products);
+         }
+
+         renderProductsList();
+         
+     } catch (e) {
+         console.error('Error loading products:', e);
+     } finally {
+         productsState.isLoading = false;
+     }
+}
+
+async function loadPricesFromOtherStores(products) {
+     for (const storeInfo of productsState.compareStoresInfo) {
+         try {
+             let url = `/api/products?store_code=${storeInfo.code}&limit=${ITEMS_PER_PAGE}&offset=${productsState.offset - products.length}`;
+             if (productsState.selectedCategoryIds.length > 0) {
+                 url += `&category_ids=${productsState.selectedCategoryIds.join(',')}`;
+             }
+             
+             const resp = await fetch(url);
+             if (!resp.ok) {
+                 console.error(`Failed to load prices from store ${storeInfo.code}: ${resp.status}`);
+                 continue;
+             }
+             
+             const prods = await resp.json();
+             const priceMap = {};
+             const previousPriceMap = {};
+             
+             prods.forEach(p => {
+                 priceMap[p.product_id] = p.price;
+                 previousPriceMap[p.product_id] = p.previous_price;
+             });
+             
+             products.forEach(p => {
+                 if (!p.otherPrices) p.otherPrices = {};
+                 if (!p.otherPreviousPrices) p.otherPreviousPrices = {};
+                 p.otherPrices[storeInfo.code] = priceMap[p.product_id];
+                 p.otherPreviousPrices[storeInfo.code] = previousPriceMap[p.product_id];
+             });
+         } catch (e) {
+             console.error(`Error loading prices from store ${storeInfo.code}:`, e);
+         }
+     }
+}
+
+
+
+function renderProductsList() {
+      const listDiv = document.getElementById('products-list');
+      
+      let productsToRender = productsState.allProducts;
+      
+      if (showNewPriceMode) {
+          productsToRender = productsToRender.filter(p =>
+              p.price_change_percent !== null &&
+              p.price_change_percent !== undefined &&
+              p.price_change_percent > 0
+          );
+      }
+      
+      const grouped = {};
+      productsToRender.forEach(p => {
+          const catId = p.category_id || 0;
+          const catName = p.category_name || 'Другое';
+          if (!grouped[catId]) {
+              grouped[catId] = { name: catName, products: [] };
+          }
+          grouped[catId].products.push(p);
+      });
+
+     const sortedCategories = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+
+     let html = `
+         <div style="margin-bottom: 16px;">
+             <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(true)">Развернуть все</button>
+             <button class="btn btn-sm btn-secondary" onclick="toggleAllCategories(false)">Свернуть все</button>
+             <span style="margin-left: 12px; color: #666;">Загружено: ${productsToRender.length} товаров</span>
+             ${productsState.compareStoresInfo.length > 0 ? `<span style="margin-left: 12px; color: #666; font-size: 14px;">🛒 Сравнение с: ${productsState.compareStoresInfo.length} магазинами</span>` : ''}
+         </div>
+     `;
+
+     sortedCategories.forEach(([catId, catData]) => {
+         const isExpanded = false;
+         html += `
+             <div class="category-accordion" style="margin-bottom: 8px;">
+                 <div class="category-header" onclick="toggleCategory('${catId}')" style="
+                     padding: 12px 16px;
+                     background: #f8f9fa;
+                     border: 1px solid #ddd;
+                     border-radius: 4px;
+                     cursor: pointer;
+                     display: flex;
+                     justify-content: space-between;
+                     align-items: center;
+                     font-weight: 500;
+                 ">
+                     <span>${escapeHtml(catData.name)} <span style="color: #666; font-weight: normal;">(${catData.products.length})</span></span>
+                     <span class="category-arrow" style="transition: transform 0.3s; transform: ${isExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                 </div>
+                 <div class="category-content" id="category-${catId}" style="
+                     display: ${isExpanded ? 'block' : 'none'};
+                     padding: 12px;
+                     background: #fff;
+                     border: 1px solid #ddd;
+                     border-top: none;
+                     border-radius: 0 0 4px 4px;
+                     overflow-x: auto;
+                 ">
+                     <table style="min-width: 600px; table-layout: fixed; width: 100%;">
+                         <thead>
+                             <tr>
+                                 <th style="text-align: left;">Название</th>
+                                 ${productsState.compareStoresInfo.length > 0 ? productsState.compareStoresInfo.map(s => `<th style="font-size:11px; width: 140px;" class="store-header">${s.name.substring(0,15)}...</th>`).join('') : ''}
+                                 <th style="text-align: left; width: 140px;">Цена</th>
+                                 <th style="text-align: left;">Наличие</th>
+                                 <th style="text-align: left;">Действия</th>
+                             </tr>
+                         </thead>
+                         <tbody>
+                             ${catData.products.map(p => renderProductRow(p, productsState.compareStoresInfo, productsState.selectedStores)).join('')}
+                         </tbody>
+                     </table>
+                 </div>
+             </div>
+         `;
+     });
+
+     if (productsState.hasMore) {
+         html += '<div id="infinite-scroll-trigger" style="height: 100px; text-align: center; padding: 20px;"><p id="loading-indicator" style="color: #666;">Скролл для загрузки ещё товаров...</p></div>';
+     } else if (productsState.allProducts.length > 0) {
+         html += '<div style="text-align: center; padding: 20px; color: #999;">Все товары загружены</div>';
+     }
+
+     listDiv.innerHTML = html;
+     
+     if (productsState.hasMore) {
+         setupInfiniteScroll();
+     }
+}
+
+function setupInfiniteScroll() {
+     const trigger = document.getElementById('infinite-scroll-trigger');
+     if (!trigger) return;
+     
+     const observer = new IntersectionObserver((entries) => {
+         if (entries[0].isIntersecting && !productsState.isLoading && productsState.hasMore) {
+             loadMoreProductsFromAPI();
+         }
+     }, { threshold: 0.1 });
+     
+     observer.observe(trigger);
+}
+
+function renderProductRow(p, compareStoresInfo, selectedStores) {
+     const promoBadge = '';
+     const ratingBadge = p.rating ? `<span style="color:#f5a623;font-size:12px;">★${p.rating}</span> ` : '';
+     const qtyBadge = p.quantity !== undefined ? `<span style="font-size:12px;color:#666;" title="Остаток">📦${p.quantity}</span>` : '';
+     
+     let otherPricesHtml = '';
+      if (compareStoresInfo.length > 0) {
+          const allPrices = [p.price];
+          compareStoresInfo.forEach(s => { if (p.otherPrices?.[s.code]) allPrices.push(p.otherPrices[s.code]); });
+          const minPrice = Math.min(...allPrices);
+           compareStoresInfo.forEach(s => {
+               const price = p.otherPrices?.[s.code];
+               if (price) {
+                    const otherPrevPrice = p.otherPreviousPrices?.[s.code];
+                    const historicalDiscountText = otherPrevPrice && otherPrevPrice > 0
+                        ? ` <span style="color:#28a745;">(-${Math.round(((otherPrevPrice - price) / otherPrevPrice) * 100)}%)</span>` 
+                        : '';
+                   
+                   const isMinPrice = price === minPrice;
+                   const allEqual = allPrices.every(x => x === minPrice);
+                   const savingsPercent = !allEqual && isMinPrice && allPrices.length > 1
+                       ? Math.round(((Math.max(...allPrices) - minPrice) / Math.max(...allPrices)) * 100)
+                       : 0;
+                   const storeSavingsText = savingsPercent > 0 
+                       ? ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>` 
+                       : '';
+                  
+                  const priceText = `${price} ₽${historicalDiscountText}${storeSavingsText}`;
+                 
+                 const priceColor = isMinPrice ? '#e31e25' : '#333';
+                 
+                 otherPricesHtml += `<td style="font-size:13px;font-weight:bold;color:${priceColor};text-align:left;">${priceText}</td>`;
+             } else {
+                 otherPricesHtml += `<td style="color:#999;text-align:left;">-</td>`;
+             }
+         });
+      }
+
+        let changePercent, previousPrice, changeDate;
+        
+        if (showNewPriceMode) {
+            // Режим 1: изменение от предыдущего сканирования
+            changePercent = p.price_change_percent !== null && p.price_change_percent !== undefined ? p.price_change_percent : 0;
+            previousPrice = p.previous_price || null;
+            changeDate = p.last_change_date || p.last_price_change;
+        } else {
+            // Режим 2: последнее реальное изменение цены
+            if (p.last_change_price !== null && p.last_change_price !== undefined) {
+                changePercent = Math.round((p.last_change_price - p.price) / p.last_change_price * 1000) / 10;
+                previousPrice = p.last_change_price;
+                changeDate = p.last_change_date;
+            } else {
+                changePercent = 0;
+                previousPrice = null;
+                changeDate = null;
+            }
+        }
+        
+        // Вычисляем экономию от других магазинов (если есть сравнение)
+        let savingsFromOthersText = '';
+        if (compareStoresInfo.length > 0) {
+            const allPrices = [p.price];
+            compareStoresInfo.forEach(s => { if (p.otherPrices?.[s.code]) allPrices.push(p.otherPrices[s.code]); });
+            const minPrice = Math.min(...allPrices);
+            const allEqual = allPrices.every(x => x === minPrice);
+            const savingsPercent = !allEqual && p.price === minPrice && allPrices.length > 1
+                ? Math.round(((Math.max(...allPrices) - minPrice) / Math.max(...allPrices)) * 100)
+                : 0;
+            if (savingsPercent > 0) {
+                savingsFromOthersText = ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>`;
+            }
+        }
+        
+        const priceText = changePercent !== 0 
+            ? (changePercent > 0 
+                ? `${p.price} ₽ <span style="color:#28a745;">(↓${changePercent}%)</span>${savingsFromOthersText}` 
+                : `${p.price} ₽ <span style="color:#9c27b0;">(↑${Math.abs(changePercent)}%)</span>${savingsFromOthersText}`)
+            : `${p.price} ₽${savingsFromOthersText}`;
+        
+        // Тултип
+        let tooltipHtml;
+        if (previousPrice && changePercent !== 0) {
+            tooltipHtml = `<span class="price-tooltip">Предыдущая цена: ${previousPrice} ₽<br>Дата: ${formatDate(changeDate)}<br>Остаток: ${p.quantity || 0}</span>`;
+        } else {
+            tooltipHtml = `<span class="price-tooltip">Остаток: ${p.quantity || 0}<br>Обновлено: ${formatDate(p.last_seen)}</span>`;
+        }
+
+     return `
+         <tr>
+             <td><strong>${highlightSearch(p.name)}</strong><br>${promoBadge}${ratingBadge}${qtyBadge}</td>
+             ${otherPricesHtml}
+             <td class="price-cell" style="font-size:13px;font-weight:bold;text-align:left;">
+                 <span class="price-current">${priceText}</span>${tooltipHtml}
+             </td>
+             <td style="text-align: center;">${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
+             <td style="text-align: center; white-space: nowrap;">
+                  <button class="btn btn-sm btn-secondary" onclick="openPriceHistory(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">📈 История</button>
+                  ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
+             </td>
+         </tr>
+     `;
+ }
+
+
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Подсветка вхождений поискового запроса в тексте
+function highlightSearch(text) {
+    if (!text) return '';
+    const search = (document.getElementById('searchFilter')?.value || '').trim();
+    const escaped = escapeHtml(text);
+    if (search.length < 3) return escaped;
+    // Экранируем спецсимволы regex в поисковом запросе
+    const escapedSearch = search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const regex = new RegExp(escapedSearch, 'gi');
+    return escaped.replace(regex, match => `<mark class="search-highlight">${match}</mark>`);
+}
+
+// ============================================
+// Исторические скидки - больше не используются
+// Данные теперь приходят из БД в /api/products
+// ============================================
+
+async function compareInStores(productId, currentStoreCode, productName) {
+    const modal = document.getElementById('compareModal');
+    const modalContent = document.getElementById('compareModalContent');
+    const modalTitle = document.getElementById('compareModalTitle');
+    
+    modalTitle.textContent = `Сравнение товара: ${escapeHtml(productName)}`;
+    modalContent.innerHTML = '<p>Загрузка данных о товаре во всех магазинах...</p>';
+    modal.style.display = 'flex';
+    
+    try {
+        const storesResponse = await fetch('/api/stores?limit=1000');
+        let stores = await storesResponse.json();
+        
+        // Сортировка по Типу, затем по Адресу
+        stores.sort((a, b) => {
+            const typeA = (a.store_type || a.type || '').toLowerCase();
+            const typeB = (b.store_type || b.type || '').toLowerCase();
+            if (typeA < typeB) return -1;
+            if (typeA > typeB) return 1;
+            const addrA = (a.address || '').toLowerCase();
+            const addrB = (b.address || '').toLowerCase();
+            return addrA.localeCompare(addrB);
+        });
+        
+        const storePromises = stores.map(async store => {
+            try {
+                const response = await fetch(`/api/products/${productId}?store_code=${encodeURIComponent(store.store_code)}`);
+                if (response.ok) {
+                    const productData = await response.json();
+                    let changePercent, previousPrice;
+                    
+                    if (showNewPriceMode) {
+                        changePercent = productData.price_change_percent;
+                        previousPrice = productData.previous_price;
+                    } else {
+                        if (productData.last_change_price !== null && productData.last_change_price !== undefined) {
+                            changePercent = Math.round((productData.last_change_price - productData.price) / productData.last_change_price * 1000) / 10;
+                            previousPrice = productData.last_change_price;
+                        } else {
+                            changePercent = null;
+                            previousPrice = null;
+                        }
+                    }
+                    
+                    const changeText = changePercent !== null && changePercent !== undefined && changePercent !== 0
+                        ? (changePercent > 0 ? `↓${changePercent}%` : `↑${Math.abs(changePercent)}%`)
+                        : '-';
+                    return {
+                        store_code: store.store_code,
+                        name: store.name || store.store_code || 'Неизвестно',
+                        price: productData.price !== null ? productData.price : 'N/A',
+                        previous_price: previousPrice !== null ? previousPrice : 'N/A',
+                        in_stock: productData.in_stock ? 'В наличии' : 'Нет в наличии',
+                        change_text: changeText,
+                        isCurrent: store.store_code === currentStoreCode
+                    };
+                } else {
+                    return {
+                        store_code: store.store_code,
+                        name: store.name || store.store_code || 'Неизвестно',
+                        price: 'Ошибка',
+                        previous_price: 'N/A',
+                        in_stock: 'N/A',
+                        change_text: 'N/A',
+                        isCurrent: store.store_code === currentStoreCode
+                    };
+                }
+            } catch (error) {
+                return {
+                    store_code: store.store_code,
+                    name: store.name || store.store_code || 'Неизвестно',
+                    price: 'Ошибка',
+                    previous_price: 'N/A',
+                    in_stock: 'N/A',
+                    change_text: 'N/A',
+                    isCurrent: store.store_code === currentStoreCode
+                };
+            }
+        });
+        
+        const storeData = await Promise.all(storePromises);
+        
+        let html = '<table style="width: 100%; border-collapse: collapse;">';
+        html += '<thead><tr>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Магазин</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Цена</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Пред. цена</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Изменение</th>';
+        html += '<th style="padding: 8px; text-align: left; border-bottom: 1px solid #ddd;">Наличие</th>';
+        html += '</tr></thead><tbody>';
+        
+        storeData.forEach(item => {
+            const rowClass = item.isCurrent ? 'background-color: #f0f8ff;' : '';
+            const prevPriceDisplay = item.previous_price !== 'N/A' ? `${item.previous_price} ₽` : item.previous_price;
+            html += `<tr style="${rowClass}">`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.name}</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.price} ₽</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${prevPriceDisplay}</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.change_text}</td>`;
+            html += `<td style="padding: 8px; border-bottom: 1px solid #eee;">${item.in_stock}</td>`;
+            html += '</tr>';
+        });
+        
+        html += '</tbody></table>';
+        modalContent.innerHTML = html;
+        
+    } catch (e) {
+        console.error('Error in compareInStores:', e);
+        modalContent.innerHTML = `<p style="color: #dc3545; padding: 20px;">Ошибка при загрузке данных: ${e.message}</p>`;
+    }
+}
+
+function closeCompareModal() {
+    document.getElementById('compareModal').style.display = 'none';
+}
+
+async function openPriceHistory(productId, storeCode, productName) {
+    const modal = document.getElementById('priceHistoryModal');
+    const modalContent = document.getElementById('priceHistoryModalContent');
+    const modalTitle = document.getElementById('priceHistoryModalTitle');
+
+    modalTitle.textContent = `История цен: ${productName}`;
+    modalContent.innerHTML = '<p>Загрузка истории...</p>';
+    modal.style.display = 'flex';
+
+    try {
+        let url = `/api/products/${productId}/history?days=30`;
+        if (storeCode) url += `&store_code=${encodeURIComponent(storeCode)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            modalContent.innerHTML = `<p style="color:#dc3545;">Ошибка загрузки: ${resp.status}</p>`;
+            return;
+        }
+        const rows = await resp.json();
+        if (!rows.length) {
+            modalContent.innerHTML = '<p>Нет данных за последние 30 дней.</p>';
+            return;
+        }
+        const grouped = {};
+        rows.forEach(r => {
+            const key = r.store_code;
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(r);
+        });
+        let html = '';
+        Object.entries(grouped).forEach(([sc, list]) => {
+            list.sort((a, b) => (a.scan_date < b.scan_date ? 1 : -1));
+            const minPrice = Math.min(...list.map(x => x.price));
+            const maxPrice = Math.max(...list.map(x => x.price));
+            html += `<h3 style="margin-top: 16px;">Магазин: ${escapeHtml(sc)}</h3>`;
+            html += `<div style="color:#666;font-size:12px;margin-bottom:6px;">Мин: ${minPrice} ₽ · Макс: ${maxPrice} ₽ · Записей: ${list.length}</div>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:#f8f9fa;">
+                        <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd;">Дата</th>
+                        <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd;">Цена</th>
+                        <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd;">Изменение</th>
+                        <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd;">Остаток</th>
+                        <th style="text-align:center;padding:6px;border-bottom:1px solid #ddd;">В наличии</th>
+                    </tr>
+                </thead><tbody>`;
+            for (let i = 0; i < list.length; i++) {
+                const r = list[i];
+                const prev = i + 1 < list.length ? list[i + 1].price : null;
+                let changeHtml = '-';
+                if (prev !== null && Math.abs(prev - r.price) > 0.01) {
+                    const pct = Math.round((prev - r.price) / prev * 1000) / 10;
+                    changeHtml = pct > 0
+                        ? `<span style="color:#28a745;">↓${pct.toFixed(1)}%</span>`
+                        : `<span style="color:#9c27b0;">↑${Math.abs(pct).toFixed(1)}%</span>`;
+                }
+                const isMin = r.price === minPrice && list.length > 1;
+                const isMax = r.price === maxPrice && minPrice !== maxPrice;
+                const priceColor = isMin ? '#28a745' : (isMax ? '#dc3545' : '#333');
+                const priceWeight = isMin || isMax ? 'bold' : 'normal';
+                html += `<tr>
+                    <td style="padding:6px;border-bottom:1px solid #eee;">${r.scan_date}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;color:${priceColor};font-weight:${priceWeight};">${r.price} ₽</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${changeHtml}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${r.quantity != null ? r.quantity : '-'}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:center;">${r.in_stock ? '✓' : '✗'}</td>
+                </tr>`;
+            }
+            html += `</tbody></table>`;
+        });
+        modalContent.innerHTML = html;
+    } catch (e) {
+        modalContent.innerHTML = `<p style="color:#dc3545;">Ошибка: ${e.message}</p>`;
+    }
+}
+
+function closePriceHistoryModal() {
+    document.getElementById('priceHistoryModal').style.display = 'none';
+}
+
+// Аккордеон категорий
+function toggleCategory(catId) {
+    const content = document.getElementById(`category-${catId}`);
+    const header = content.previousElementSibling;
+    const arrow = header.querySelector('.category-arrow');
+    
+    const isExpanded = content.style.display === 'block';
+    content.style.display = isExpanded ? 'none' : 'block';
+    arrow.style.transform = isExpanded ? 'rotate(0deg)' : 'rotate(90deg)';
+}
+
+function toggleAllCategories(expand) {
+    document.querySelectorAll('.category-content').forEach(content => {
+        content.style.display = expand ? 'block' : 'none';
+    });
+    document.querySelectorAll('.category-arrow').forEach(arrow => {
+        arrow.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)';
+    });
+}
+
+// ============================================
+// Фаза 1: Панель выбора магазинов для сравнения
+// ============================================
+
+let allStores = [];
+const MAX_COMPARE_STORES = 5;
+
+// Загрузка списка магазинов
+async function loadStoresForComparison() {
+    const tbody = document.getElementById('storesTableBody');
+    tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Загрузка списка магазинов...</td></tr>';
+    
+    try {
+        const response = await fetch('/api/stores?is_active=true&limit=100');
+        allStores = await response.json();
+        
+        // Сортировка по Типу, затем по Адресу
+        allStores.sort((a, b) => {
+            const typeA = (a.store_type || a.type || '').toLowerCase();
+            const typeB = (b.store_type || b.type || '').toLowerCase();
+            if (typeA < typeB) return -1;
+            if (typeA > typeB) return 1;
+            const addrA = (a.address || '').toLowerCase();
+            const addrB = (b.address || '').toLowerCase();
+            return addrA.localeCompare(addrB);
+        });
+        
+        if (allStores.length === 0) {
+            tbody.innerHTML = '<tr><td colspan="5" style="padding: 20px; text-align: center; color: #999;">Магазины не найдены</td></tr>';
+            return;
+        }
+        
+        // Получаем сохранённый выбор из localStorage
+        const savedStores = JSON.parse(localStorage.getItem('compareStores') || '[]');
+        
+        // Генерируем строки таблицы
+        let html = '';
+        allStores.forEach(store => {
+            const isChecked = savedStores.includes(store.store_code);
+            const storeType = store.store_type || store.type || '-';
+            const city = store.city || '-';
+            const address = store.full_address || '-';
+            
+            html += `
+                <tr>
+                    <td style="padding: 8px; border: 1px solid #ddd; text-align: center; vertical-align: middle;">
+                        <input type="checkbox" 
+                               value="${store.store_code}" 
+                               data-store-type="${escapeHtml(storeType)}"
+                               ${isChecked ? 'checked' : ''}
+                               onchange="updateStoreRowStyle(this)">
+                    </td>
+                    <td style="padding: 8px; border: 1px solid #ddd; vertical-align: middle;">${escapeHtml(storeType)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; vertical-align: middle;">${escapeHtml(city)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; vertical-align: middle;">${escapeHtml(address)}</td>
+                    <td style="padding: 8px; border: 1px solid #ddd; vertical-align: middle;"><code>${store.store_code}</code></td>
+                </tr>
+            `;
+        });
+        tbody.innerHTML = html;
+        
+        // Применяем стиль к уже выбранным строкам
+        document.querySelectorAll('#storesTableBody input[type="checkbox"]').forEach(cb => {
+            updateStoreRowStyle(cb);
+        });
+        
+        updateSelectedStoresCount();
+    } catch (e) {
+        console.error('Ошибка загрузки магазинов:', e);
+        tbody.innerHTML = `<tr><td colspan="5" style="padding: 20px; text-align: center; color: #dc3545;">Ошибка: ${e.message}</td></tr>`;
+    }
+}
+
+// Обновление стиля строки при выборе чекбокса
+function updateStoreRowStyle(checkbox) {
+    const row = checkbox.closest('tr');
+    if (checkbox.checked) {
+        row.style.background = '#e8f5e9';
+    } else {
+        row.style.background = 'transparent';
+    }
+    updateSelectedStoresCount();
+}
+
+// Выбрать/снять все чекбоксы
+function toggleAllStores() {
+    const selectAll = document.getElementById('selectAllStores');
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+    
+    // Если уже выбраны все (checked), то снимаем
+    // Если выбраны не все (unchecked или indeterminate), то выбираем все (до 5)
+    if (selectAll.checked || selectAll.indeterminate) {
+        // Выбираем все (до 5 магазинов)
+        let selected = 0;
+        checkboxes.forEach(cb => {
+            if (selected < MAX_COMPARE_STORES) {
+                cb.checked = true;
+                updateStoreRowStyle(cb);
+                selected++;
+            } else {
+                cb.checked = false;
+                updateStoreRowStyle(cb);
+            }
+        });
+    } else {
+        // Снимаем все
+        checkboxes.forEach(cb => {
+            cb.checked = false;
+            updateStoreRowStyle(cb);
+        });
+    }
+    
+    updateSelectedStoresCount();
+}
+
+// Обновление счётчика выбранных магазинов
+function updateSelectedStoresCount() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+    const checked = document.querySelectorAll('#storesTableBody input[type="checkbox"]:checked');
+    const count = checked.length;
+    const total = checkboxes.length;
+    const badge = document.getElementById('selectedStoresCount');
+    const selectAll = document.getElementById('selectAllStores');
+    
+    badge.textContent = `Выбрано: ${count} / ${total}`;
+    
+    if (selectAll) {
+        // Устанавливаем неопределённое состояние при частичном выборе
+        if (count > 0 && count < total) {
+            selectAll.indeterminate = true;
+            selectAll.checked = false;
+        } else {
+            selectAll.indeterminate = false;
+            selectAll.checked = count === total && total > 0;
+        }
+        
+        // Блокируем выбор больше 5 магазинов
+        checkboxes.forEach(cb => {
+            if (!cb.checked && count >= MAX_COMPARE_STORES) {
+                cb.disabled = true;
+            } else {
+                cb.disabled = false;
+            }
+        });
+    }
+}
+
+// Применение выбора магазинов
+function applyStoreComparison() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]:checked');
+    const selected = Array.from(checkboxes).map(cb => cb.value);
+    
+    if (selected.length < 1) {
+        alert('Выберите минимум 1 магазин');
+        return;
+    }
+    
+    // Сохраняем в localStorage
+    localStorage.setItem('compareStores', JSON.stringify(selected));
+    
+    // Загружаем категории и товары
+    loadFilterState();
+    loadProducts();
+    
+    // Раскрываем/сворачиваем категории в зависимости от выбора экономии
+    const savingsFilter = document.getElementById('savingsFilter')?.value;
+    if (savingsFilter && savingsFilter !== '') {
+        // Раскрываем все категории если выбран процент экономии
+        setTimeout(expandAllCategories, 500);
+    } else {
+        // Сворачиваем все, кроме первой, если выбрано "-"
+        setTimeout(collapseAllButFirst, 500);
+    }
+}
+
+// Очистка выбора
+function clearStoreSelection() {
+    const checkboxes = document.querySelectorAll('#storesTableBody input[type="checkbox"]');
+    checkboxes.forEach(cb => {
+        cb.checked = false;
+        updateStoreRowStyle(cb);
+    });
+    document.getElementById('selectAllStores').checked = false;
+    localStorage.removeItem('compareStores');
+    updateSelectedStoresCount();
+}
+
+// Получение выбранных магазинов
+function getSelectedStores() {
+    return JSON.parse(localStorage.getItem('compareStores') || '[]');
+}
+
+// Загрузка магазинов при загрузке страницы
+document.addEventListener('DOMContentLoaded', async () => {
+    console.log('[INIT] Первый DOMContentLoaded handler запущен');
+    loadPriceModeState();
+    // Проверяем, есть ли сохранённые магазины для сравнения
+    const savedStores = getSelectedStores();
+    
+    if (savedStores.length >= 1) {
+        // Валидируем сохранённые магазины - проверяем, существуют ли они в БД
+        try {
+            const r = await fetch('/api/stores');
+            const allStores = await r.json();
+            const validStoreCodes = new Set(allStores.map(s => s.store_code));
+            const validSavedStores = savedStores.filter(code => validStoreCodes.has(code));
+            
+            if (validSavedStores.length === 0) {
+                // Если нет валидных магазинов, очищаем localStorage
+                localStorage.removeItem('compareStores');
+                // Автоматически выбираем первый активный магазин
+                const activeStores = allStores.filter(s => s.is_active);
+                if (activeStores.length > 0) {
+                    localStorage.setItem('compareStores', JSON.stringify([activeStores[0].store_code]));
+                }
+            } else if (validSavedStores.length < savedStores.length) {
+                // Если некоторые магазины невалидны, обновляем localStorage
+                localStorage.setItem('compareStores', JSON.stringify(validSavedStores));
+            }
+        } catch (err) {
+            console.error('Ошибка валидации магазинов:', err);
+            localStorage.removeItem('compareStores');
+        }
+    } else {
+        // Если нет сохранённых магазинов, автоматически выбираем первый
+        try {
+            const r = await fetch('/api/stores?is_active=true&limit=1');
+            const stores = await r.json();
+            if (stores.length > 0) {
+                localStorage.setItem('compareStores', JSON.stringify([stores[0].store_code]));
+            }
+        } catch (err) {
+            console.error('Ошибка выбора первого магазина:', err);
+        }
+    }
+    
+    // Загружаем список магазинов в таблицу (после того как localStorage обновлён)
+    await loadStoresForComparison();
+    
+    // Загружаем категории и товары
+    await loadFilterState();
+    loadProducts();
+
+    // Валидируем список покупок (актуализируем цены/наличие из БД)
+    try {
+        await validateShoppingList();
+    } catch (e) {
+        console.error('Ошибка валидации списка покупок:', e);
+    }
+
+    // Подписываемся на обновления списка (от polling'а job'ов)
+    window.addEventListener('shoppingListUpdated', async () => {
+        const list = getShoppingList();
+        document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
+            const pid = parseInt(cb.dataset.productId);
+            const sc = cb.dataset.storeCode;
+            const inList = list.some(x => x.product_id === pid && x.store_code === sc);
+            cb.checked = inList;
+            const row = cb.closest('tr');
+            if (row) {
+                row.classList.toggle('selected-row', inList);
+            }
+        });
+        updateShoppingListCounter();
+    });
+
+    // Запускаем polling завершённых job'ов сканирования цен
+    startScanPolling();
+});
+
+// Поиск первого магазина с товарами
+async function findFirstStoreWithProducts(storeCodes) {
+    for (const code of storeCodes) {
+        try {
+            const response = await fetch(`/api/products?store_code=${encodeURIComponent(code)}&limit=1`);
+            const products = await response.json();
+            if (products.length > 0) {
+                return code;
+            }
+        } catch (e) {
+            console.warn(`Ошибка проверки магазина ${code}:`, e);
+        }
+    }
+    return null;
+}
+
+// ============================================
+// Новые функции для статистики и фильтров
+// ============================================
+
+// Загрузка статистики товаров
+async function loadProductStats() {
+    const statTotal = document.getElementById('statTotal');
+    const statInStock = document.getElementById('statInStock');
+    const statDiscount = document.getElementById('statDiscount');
+    if (!statTotal || !statInStock || !statDiscount) return;
+    
+    const selectedStores = getSelectedStores();
+    if (selectedStores.length === 0) return;
+    
+    try {
+        // Загружаем статистику для всех выбранных магазинов
+        const url = `/api/products/stats?store_code=${encodeURIComponent(selectedStores[0])}`;
+        const response = await fetch(url);
+        const stats = await response.json();
+        
+        statTotal.textContent = stats.total;
+        statInStock.textContent = stats.in_stock;
+        statDiscount.textContent = stats.with_price_decrease || 0;
+        
+        const statPromo = document.getElementById('statPromo');
+        if (statPromo) statPromo.textContent = stats.with_price_increase || 0;
+        
+        const statLastUpdate = document.getElementById('statLastUpdate');
+        if (statLastUpdate) {
+            if (stats.last_update) {
+                const date = new Date(stats.last_update);
+                statLastUpdate.textContent = date.toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
+            } else {
+                statLastUpdate.textContent = 'Нет данных';
+            }
+        }
+    } catch (e) {
+        console.error('Ошибка загрузки статистики:', e);
+    }
+}
+
+// Улучшенная функция loadProducts с поддержкой новых фильтров
+async function loadProductsEnhanced() {
+    const search = document.getElementById('searchFilter')?.value || '';
+    const sort = document.getElementById('sortFilter')?.value || 'name';
+    const stockFilter = document.getElementById('stockFilter')?.value || '';
+    const promoFilter = document.getElementById('promoFilter')?.value || '';
+    const minPrice = document.getElementById('minPrice')?.value || '';
+    const maxPrice = document.getElementById('maxPrice')?.value || '';
+    const savingsFilter = document.getElementById('savingsFilter')?.value || '';
+
+    const selectedStores = getSelectedStores();
+
+    if (selectedStores.length === 0) {
+        const listDiv = document.getElementById('products-list');
+        listDiv.innerHTML = '<p style="color: #666;">Выберите магазины для сравнения</p>';
+        return;
+    }
+    
+    // Проверка: если категории не выбраны, показываем сообщение
+    if (selectedCategoryIds.length === 0) {
+        const listDiv = document.getElementById('products-list');
+        listDiv.innerHTML = '<p style="color: #666;">Выберите категории для отображения товаров</p>';
+        return;
+    }
+
+    const listDiv = document.getElementById('products-list');
+    const storeWord = selectedStores.length === 1 ? 'магазина' : 'магазинов';
+    listDiv.innerHTML = `
+        <p style="color: #666;">
+            Загрузка товаров из ${selectedStores.length} ${storeWord}...
+            <br>
+            <span id="load-progress" style="font-weight: bold; color: #1976d2;">0/${selectedStores.length}</span>
+        </p>
+    `;
+
+    try {
+        // Загружаем товары из всех выбранных магазинов параллельно
+        const loadStartTime = performance.now();
+        let allProducts = [];
+        const productMap = {}; // Для дедупликации по product_id
+        let completedStores = 0;
+        const failedStores = [];
+
+        const updateProgress = (storeCode, success = true) => {
+            completedStores++;
+            if (!success) {
+                failedStores.push(storeCode);
+            }
+            const progressEl = document.getElementById('load-progress');
+            if (progressEl) {
+                const statusText = failedStores.length > 0 
+                    ? ` (${failedStores.length} ошибок)` 
+                    : '';
+                progressEl.textContent = `${completedStores}/${selectedStores.length}${statusText}`;
+                progressEl.style.color = failedStores.length > 0 ? '#f57c00' : '#1976d2';
+            }
+        };
+
+        // Создаём Promise для каждого магазина
+        const storeLoadPromises = selectedStores.map(async (storeCode) => {
+            const storeProducts = [];
+            let offset = 0;
+            let hasMore = true;
+            
+            try {
+                while (hasMore) {
+                    let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=1000&offset=${offset}`;
+                    if (selectedCategoryIds.length > 0) {
+                        url += `&category_ids=${selectedCategoryIds.join(',')}`;
+                    }
+                    if (search) url += `&search=${encodeURIComponent(search)}`;
+                    if (minPrice) url += `&min_price=${minPrice}`;
+                    if (maxPrice) url += `&max_price=${maxPrice}`;
+
+                    const response = await fetch(url);
+                    const products = await response.json();
+                    
+                    if (products.length === 0) {
+                        hasMore = false;
+                    } else {
+                        storeProducts.push(...products);
+                        offset += products.length;
+                    }
+                }
+                
+                updateProgress(storeCode, true);
+                return { storeCode, products: storeProducts, success: true };
+                
+            } catch (e) {
+                console.error(`Ошибка загрузки товаров из магазина ${storeCode}:`, e);
+                updateProgress(storeCode, false);
+                return { storeCode, products: storeProducts, success: false, error: e.message };
+            }
+        });
+
+        // Ждём завершения всех загрузок параллельно
+        const storeResults = await Promise.all(storeLoadPromises);
+
+        // Объединяем результаты и дедуплицируем
+        storeResults.forEach(({ storeCode, products, success }) => {
+            if (success || products.length > 0) {
+                products.forEach(p => {
+                    if (!productMap[p.product_id]) {
+                        productMap[p.product_id] = p;
+                        allProducts.push(p);
+                    }
+                });
+            }
+        });
+
+        // Логируем метрики производительности
+        const loadEndTime = performance.now();
+        const totalTime = Math.round(loadEndTime - loadStartTime);
+        const successCount = storeResults.filter(r => r.success).length;
+        const totalProducts = allProducts.length;
+        console.log(`📊 Загрузка завершена за ${totalTime}ms`);
+        console.log(`   Магазинов: ${successCount}/${selectedStores.length}`);
+        console.log(`   Товаров: ${totalProducts}`);
+        if (totalTime > 0) {
+            console.log(`   Скорость: ${Math.round(totalProducts / (totalTime / 1000))} товаров/сек`);
+        }
+
+        // Показываем предупреждение если были ошибки
+        if (failedStores.length > 0) {
+            console.warn(`Не удалось загрузить товары из магазинов: ${failedStores.join(', ')}`);
+        }
+        
+        let products = allProducts;
+        
+        // ОТЛАДКА: проверяем данные первых товаров
+        // Клиентская фильтрация
+        if (stockFilter === 'in_stock') {
+            products = products.filter(p => p.in_stock);
+        } else if (stockFilter === 'out_of_stock') {
+            products = products.filter(p => !p.in_stock);
+        } else if (stockFilter === 'low_stock') {
+            products = products.filter(p => p.is_low_stock);
+        }
+
+         // if (promoFilter === 'discount') {
+         //     products = products.filter(p => {
+         //         return p.price_change_percent > 0;
+         //     });
+         // } else if (promoFilter === 'promotion') {
+         //     products = products.filter(p => p.is_promotion);
+         // }
+
+        // Фильтрация по проценту экономии минимальной цены
+        if (savingsFilter && selectedStores.length > 1) {
+            const minSavingsPercent = parseInt(savingsFilter);
+            products = products.filter(p => {
+                // Получаем цены из других магазинов (будут загружены позже)
+                // Пока просто пропускаем фильтр, он будет применён после загрузки цен
+                return true;
+            });
+        }
+
+        if (products.length === 0) {
+            listDiv.innerHTML = '<p style="color: #666;">Товары не найдены</p>';
+            return;
+        }
+
+        // Загружаем информацию о магазинах для отображения названий в колонках
+        const activeStoreCode = selectedStores[0];
+        let storeInfoMap = {};
+        try {
+            const storesResp = await fetch('/api/stores');
+            const allStores = await storesResp.json();
+            allStores.forEach(store => {
+                // Форматируем: Тип - Адрес (только улица и здание)
+                let address = store.full_address || '';
+                // Ищем начало улицы: ищем "ул", "пер", "пр-кт" и т.д.
+                const ull = address.indexOf('ул');
+                const per = address.indexOf('пер');
+                const prkt = address.indexOf('пр-кт');
+                const pros = address.indexOf('проспект');
+                const terr = address.indexOf('тер');
+                const idxs = [ull, per, prkt, pros, terr].filter(x => x >= 0);
+                if (idxs.length > 0) {
+                    const start = Math.min(...idxs);
+                    address = address.substring(start);
+                } else {
+                    // Если не найдено, берём всё после последней запятой
+                    const lastComma = address.lastIndexOf(',');
+                    if (lastComma > 0) {
+                        address = address.substring(lastComma + 1).trim();
+                    }
+                }
+                // Убираем начальные запятые, дефисы и пробелы
+                address = address.replace(/^[\s,\-—]+/, '').trim();
+                storeInfoMap[store.store_code] = `${store.store_type} - ${address}`;
+            });
+        } catch (e) {
+            console.error('Ошибка загрузки магазинов:', e);
+        }
+
+        // Загружаем цены из всех выбранных магазинов для сравнения
+        let allStorePrices = {};
+        const productIds = products.map(p => p.product_id).join(',');
+        if (productIds && selectedStores.length > 0) {
+            try {
+                const pricesUrl = `/api/products/multi-prices?product_ids=${productIds}&store_codes=${selectedStores.join(',')}`;
+                const pricesResp = await fetch(pricesUrl);
+                allStorePrices = await pricesResp.json();
+            } catch (e) {
+                console.error('Ошибка загрузки цен из магазинов:', e);
+            }
+        }
+
+         // Применяем фильтр по проценту экономии после загрузки цен
+         if (savingsFilter && selectedStores.length > 0) {
+             const minSavingsPercent = parseInt(savingsFilter);
+             products = products.filter(p => {
+                 // Проверка 1: Изменение цены >= minSavingsPercent (только снижение)
+                 if (p.price_change_percent !== null && p.price_change_percent !== undefined && p.price_change_percent >= minSavingsPercent) {
+                     return true;
+                 }
+                 
+                 // Проверка 2: Разница в текущих ценах между магазинами >= minSavingsPercent
+                 if (selectedStores.length > 1) {
+                     const prices = [];
+                     for (const storeCode of selectedStores) {
+                         const priceInfo = allStorePrices[p.product_id]?.[storeCode];
+                         if (priceInfo && priceInfo.price) {
+                             prices.push(priceInfo.price);
+                         }
+                     }
+                     
+                     if (prices.length > 1) {
+                         const minPrice = Math.min(...prices);
+                         const allEqual = prices.every(x => x === minPrice);
+                         
+                         if (!allEqual) {
+                             // Используем ту же формулу, что и при отображении: средняя цена остальных магазинов
+                             const otherPrices = prices.filter(x => x !== minPrice);
+                             const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                             const savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+                            if (savingsPercent >= minSavingsPercent) {
+                                return true;
+                            }
+                        }
+                    }
+                }
+                
+                return false;
+            });
+        }
+
+        // Используем существующую логику рендеринга
+        renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv);
+
+        // Показываем предупреждение если были ошибки загрузки
+        if (failedStores.length > 0) {
+            const warningMsg = document.createElement('div');
+            warningMsg.style.cssText = 'padding: 8px 12px; margin-bottom: 12px; background: #fff3cd; border: 1px solid #ffc107; border-radius: 4px; color: #856404;';
+            const storeWord2 = failedStores.length === 1 ? 'магазина' : 'магазинов';
+            warningMsg.innerHTML = `⚠️ Не удалось загрузить товары из ${failedStores.length} ${storeWord2}. Показаны частичные результаты.`;
+            listDiv.insertBefore(warningMsg, listDiv.firstChild);
+        }
+        
+        // Обновляем статистику после загрузки товаров
+        loadProductStats();
+        
+    } catch (e) {
+        listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
+    }
+}
+
+// Вспомогательная функция для рендеринга списка товаров в иерархическом виде
+function renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv) {
+    // Очищаем контейнер от индикатора загрузки
+    listDiv.innerHTML = '';
+    
+    // Фильтруем товары по режиму цен
+    let filteredProducts = products;
+    if (showNewPriceMode) {
+        // Режим 1: только товары со сниженной ценой относительно предыдущего сканирования
+        filteredProducts = products.filter(p =>
+            p.price_change_percent !== null &&
+            p.price_change_percent !== undefined &&
+            p.price_change_percent > 0
+        );
+    }
+    // Режим 2: показываем все товары (без фильтрации)
+    
+    // Загружаем дерево категорий для иерархии
+    fetch('/api/categories/tree')
+        .then(r => r.json())
+        .then(categoriesTree => {
+            // Построение карты категорий
+            const categoryMap = {};
+            categoriesTree.forEach(root => {
+                categoryMap[root.id] = { ...root, children: root.children || [] };
+                if (root.children) {
+                    root.children.forEach(child => {
+                        categoryMap[child.id] = { ...child, parent: root.id };
+                    });
+                }
+            });
+            
+            // Группировка по родительской категории
+            const grouped = {};
+            filteredProducts.forEach(p => {
+                const catId = p.category_id || 0;
+                const cat = categoryMap[catId];
+                const parentId = cat && cat.parent ? cat.parent : (catId || 0);
+                const parentName = cat && cat.parent ? categoryMap[cat.parent]?.name : (p.category_name || 'Другое');
+                
+                if (!grouped[parentId]) {
+                    grouped[parentId] = { name: parentName, children: {} };
+                }
+                // Группируем по дочерней категории внутри родителя
+                const childName = p.category_name || 'Другое';
+                if (!grouped[parentId].children[catId]) {
+                    grouped[parentId].children[catId] = { name: childName, products: [] };
+                }
+                grouped[parentId].children[catId].products.push(p);
+            });
+            
+            const sortedParents = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+            
+            let html = `
+                <div style="margin-bottom: 12px; font-size: 14px; color: #666; display: flex; align-items: center; gap: 16px;">
+                    <span>Категорий: ${sortedParents.length}, Товаров: ${filteredProducts.length}${selectedStores.length > 0 ? ` | Магазинов: ${selectedStores.length}` : ''}</span>
+                    <button id="toggleAllCategoriesBtn" class="btn btn-sm btn-secondary" onclick="toggleAllCategoriesState()" style="margin: 0;">Раскрыть все</button>
+                </div>
+            `;
+            
+            // Заголовки колонок для цен всех выбранных магазинов
+            const storeHeaders = selectedStores.length > 0 
+                ? selectedStores.map(s => {
+                    const storeName = storeInfoMap[s] || s;  // Fallback на код магазина если нет информации
+                    return `<th style="padding:8px;text-align:left;font-size:11px;width:140px;">${escapeHtml(storeName)}</th>`;
+                }).join('')
+                : '';
+            
+            // При активном поиске по названию раскрываем все категории,
+            // чтобы пользователь сразу видел результаты без раскрытия вручную.
+            const isSearchActive = (document.getElementById('searchFilter')?.value || '').trim().length >= 3;
+
+            sortedParents.forEach(([parentId, parentData], pIndex) => {
+                const parentExpanded = isSearchActive || pIndex === 0;
+                const childCats = Object.entries(parentData.children).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+                const totalProducts = childCats.reduce((sum, [,c]) => sum + c.products.length, 0);
+                
+                html += `
+                    <div class="parent-category" style="margin-bottom: 8px;">
+                        <div class="parent-header" onclick="toggleParentCategory('${parentId}')" style="
+                            padding: 10px 12px;
+                            background: #f8f9fa;
+                            border: 1px solid #ddd;
+                            border-radius: 4px;
+                            cursor: pointer;
+                            display: flex;
+                            justify-content: space-between;
+                            align-items: center;
+                            font-weight: 500;
+                            font-size: 14px;
+                        ">
+                            <span>${escapeHtml(parentData.name)} <span style="color: #666; font-weight: normal;">(${totalProducts})</span></span>
+                            <span class="parent-arrow" style="transition: transform 0.3s; transform: ${parentExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                        </div>
+                        <div class="parent-content" id="parent-${parentId}" style="display: ${parentExpanded ? 'block' : 'none'}; padding: 8px 0;">
+                `;
+                
+                childCats.forEach(([catId, catData], cIndex) => {
+                    const catExpanded = isSearchActive || cIndex === 0;
+                    html += `
+                        <div class="child-category" style="margin-bottom: 6px; margin-left: 16px;">
+                            <div class="child-header" onclick="toggleChildCategory('${parentId}-${catId}')" style="
+                                padding: 8px 10px;
+                                background: #fff;
+                                border: 1px solid #ddd;
+                                border-radius: 4px;
+                                cursor: pointer;
+                                display: flex;
+                                justify-content: space-between;
+                                align-items: center;
+                                font-size: 14px;
+                            ">
+                                <span>${escapeHtml(catData.name)} <span style="color: #666;">(${catData.products.length})</span></span>
+                                <span class="child-arrow" style="transition: transform 0.3s; transform: ${catExpanded ? 'rotate(90deg)' : 'rotate(0deg)'};">▶</span>
+                            </div>
+                            <div class="child-content" id="child-${parentId}-${catId}" style="display: ${catExpanded ? 'block' : 'none'}; padding: 8px; background: #fff; border: 1px solid #ddd; border-top: none; border-radius: 0 0 4px 4px;">
+                                <table style="width: 100%; font-size: 14px; table-layout: auto;">
+                                    <thead>
+                                        <tr>
+                                            <th style="width: 40%; word-wrap: break-word;">Название</th>
+                                            ${storeHeaders}
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                    `;
+                    
+                     catData.products.forEach(p => {
+                         const promoBadge = '';
+                         
+                         // Сбор цен из всех выбранных магазинов
+                         const productPrices = {};
+                         selectedStores.forEach(storeCode => {
+                             const priceInfo = allStorePrices[p.product_id]?.[storeCode];
+                             if (priceInfo) {
+                                 productPrices[storeCode] = priceInfo;
+                             }
+                         });
+                         
+                         // Вычисляем минимальную цену и проверяем, все ли цены одинаковые
+                         const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
+                         const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
+                         const allEqual = allPrices.length > 0 && allPrices.every(x => x === minPrice);
+                         
+                         // Вычисляем процент экономии для минимальной цены
+                         let savingsPercent = null;
+                         if (!allEqual && minPrice !== null && allPrices.length > 1) {
+                             // Средняя цена всех цен кроме минимальной
+                             const otherPrices = allPrices.filter(x => x !== minPrice);
+                             const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                             savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+                         }
+                         
+                          // Ячейки цен для всех выбранных магазинов
+                          const storeCells = selectedStores.map(storeCode => {
+                               const priceInfo = productPrices[storeCode];
+                                if (!priceInfo) {
+                                     return `<td style="color:#999;text-align:left;">-</td>`;
+                                }
+                                  // Расчёт изменения цены
+                                   const changePercent = priceInfo.price_change_percent !== null && priceInfo.price_change_percent !== undefined ? priceInfo.price_change_percent : 0;
+                                   
+                                   // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                                   const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                                   
+                                   // Зелёная скидка или фиолетовое увеличение
+                                   const discountText = changePercent !== 0 
+                                       ? (changePercent > 0 
+                                           ? ` <span style="color:#28a745;">(↓${changePercent}%)</span>` 
+                                           : ` <span style="color:#9c27b0;">(↑${Math.abs(changePercent)}%)</span>`)
+                                       : '';
+                                  
+                                  // Красная разница между магазинами
+                                  const storeSavingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` <span style="color:#e31e25;">(-${savingsPercent}%)</span>` : '';
+                                  const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                                  const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                                  
+                                  // Tooltip с предыдущей ценой
+                                  const oldPriceText = priceInfo.previous_price
+                                      ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
+                                          ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                                          : ''} `
+                                      : '';
+                                // Информация для tooltip
+                                const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                                const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                                const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                                
+                                // Создаем ссылку на товар в Магните
+                                const seoCode = priceInfo.seo_code;
+                                const shopType = priceInfo.shop_type;
+                                const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+                                const priceLink = productUrl 
+                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${storeSavingsText}</span></a>`
+                                    : `<span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${storeSavingsText}</span>`;
+                                
+                                // Чекбокс для добавления в список покупок
+                                const checkboxId = `cb-${p.product_id}-${storeCode}`;
+                                const checkbox = `<label style="display: flex; align-items: flex-start; justify-content: flex-start; gap: 6px; cursor: pointer;">
+                                    <input 
+                                        type="checkbox" 
+                                        class="shopping-list-checkbox"
+                                        id="${checkboxId}"
+                                        data-product-id="${p.product_id}"
+                                        data-product-name="${escapeHtml(p.name)}"
+                                        data-store-code="${storeCode}"
+                                        data-price="${priceInfo.price}"
+                                        data-previous-price="${priceInfo.previous_price || ''}"
+                                        data-category-name="${escapeHtml(catData.name)}"
+                                        data-image-url="${escapeHtml(p.image_url || '')}"
+                                        onchange="toggleShoppingListItem(this)"
+                                        style="margin: 2px 0 0 0; width: 16px; height: 16px;"
+                                    >
+                                    <span>${priceLink}</span>
+                                </label>`;
+                                
+                                return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${checkbox}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                          }).join('');
+                         
+                          html += `
+                              <tr>
+                                  <td class="product-name-cell">
+                                       <strong>${highlightSearch(p.name)}</strong>
+                                      ${promoBadge}${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}
+                                  </td>
+                                  ${storeCells}
+                              </tr>
+                          `;
+                     });
+                    
+                    html += `
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    `;
+                });
+                
+                html += `
+                        </div>
+                    </div>
+                `;
+            });
+            
+            listDiv.innerHTML = html;
+
+            // Синхронизируем чекбоксы списка покупок после рендера DOM
+            syncCheckboxesFromLocalStorage();
+
+            if (isSearchActive) {
+                expandAllCategories();
+            }
+        })
+        .catch(err => {
+            // Fallback - простой список без иерархии
+            renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv);
+        });
+}
+
+// Простой fallback - без иерархии
+function renderSimpleList(products, selectedStores, activeStoreCode, otherStorePrices, storeInfoMap, listDiv) {
+    const grouped = {};
+    products.forEach(p => {
+        const catId = p.category_id || 0;
+        const catName = p.category_name || 'Другое';
+        if (!grouped[catId]) grouped[catId] = { name: catName, products: [] };
+        grouped[catId].products.push(p);
+    });
+    
+    const sorted = Object.entries(grouped).sort((a, b) => a[1].name.localeCompare(b[1].name, 'ru'));
+    
+    // Заголовки колонок для цен других магазинов
+    const otherStoreHeaders = selectedStores.length > 1 
+        ? selectedStores.filter(s => s !== activeStoreCode).map(s => {
+            const storeName = storeInfoMap[s] || s;
+            return `<th>${escapeHtml(storeName)}</th>`;
+        }).join('')
+        : '';
+    
+    let html = `<div style="margin-bottom: 16px;">Категорий: ${sorted.length}, Товаров: ${products.length}</div>`;
+    sorted.forEach(([catId, catData]) => {
+        html += `<h4>${escapeHtml(catData.name)} (${catData.products.length})</h4>`;
+        html += `<table><thead><tr><th>Название</th>${otherStoreHeaders}<th>Цена</th><th>Скидка</th><th>Наличие</th></tr></thead><tbody>`;
+             catData.products.forEach(p => {
+             const productPrices = otherStorePrices[p.product_id] || {};
+             // Добавляем цену активного магазина
+             productPrices[activeStoreCode] = { price: p.price };
+             
+             // Вычисляем минимальную цену и проверяем, все ли цены одинаковые
+             const allPrices = Object.values(productPrices).map(x => x.price).filter(x => x != null);
+             const minPrice = allPrices.length > 0 ? Math.min(...allPrices) : null;
+             const allEqual = allPrices.length > 0 && allPrices.every(p => p === minPrice);
+             
+             // Вычисляем процент экономии для минимальной цены
+             let savingsPercent = null;
+             if (!allEqual && minPrice !== null && allPrices.length > 1) {
+                 // Средняя цена всех цен кроме минимальной
+                 const otherPrices = allPrices.filter(p => p !== minPrice);
+                 const avgOtherPrice = otherPrices.reduce((a, b) => a + b, 0) / otherPrices.length;
+                 savingsPercent = Math.round(((avgOtherPrice - minPrice) / avgOtherPrice) * 100);
+             }
+             
+              const otherStoreCells = selectedStores.length > 1 
+                  ? selectedStores.filter(s => s !== activeStoreCode).map(storeCode => {
+                      const priceInfo = productPrices[storeCode];
+                      if (!priceInfo) return '<td style="color:#999;">-</td>';
+                        // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
+                        const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
+                        const savingsText = !allEqual && priceInfo.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+                        const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
+                        const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
+                        
+                         // Информация для tooltip
+                         const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                          const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                          const oldPriceText = priceInfo.previous_price
+                              ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
+                                  ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                                  : ''} | `
+                              : '';
+                          const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
+                          
+                          // Создаем ссылку на товар в Магните
+                          const seoCode = priceInfo.seo_code;
+                          const shopType = priceInfo.shop_type;
+                          const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
+                          const priceLink = productUrl 
+                              ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
+                              : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
+                          
+                          return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
+                  }).join('')
+                  : '';
+             
+              const activeSavingsText = !allEqual && p.price === minPrice && savingsPercent ? ` (-${savingsPercent}%)` : '';
+              const activeStoreCode = selectedStores[0];
+              const activePriceInfo = productPrices[activeStoreCode];
+              const activeShopType = activePriceInfo?.shop_type;
+              const activeSeoCode = activePriceInfo?.seo_code;
+              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}` : null;
+              const activePriceLink = activeProductUrl 
+                  ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeStoreCode}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
+                  : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
+               html += `<tr><td class="product-name-cell"><strong>${highlightSearch(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.price_change_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+         });
+         html += '</tbody></table>';
+    });
+    listDiv.innerHTML = html;
+}
+
+// Переключение родительской категории
+function toggleParentCategory(id) {
+    const el = document.getElementById('parent-' + id);
+    const arrow = el.previousElementSibling.querySelector('.parent-arrow');
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        arrow.style.transform = 'rotate(90deg)';
+    } else {
+        el.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// Переключение дочерней категории
+function toggleChildCategory(id) {
+    const el = document.getElementById('child-' + id);
+    const arrow = el.previousElementSibling.querySelector('.child-arrow');
+    if (el.style.display === 'none') {
+        el.style.display = 'block';
+        arrow.style.transform = 'rotate(90deg)';
+    } else {
+        el.style.display = 'none';
+        arrow.style.transform = 'rotate(0deg)';
+    }
+}
+
+// Развернуть/свернуть все
+function toggleAllProducts(expand) {
+    document.querySelectorAll('.parent-content').forEach(el => el.style.display = expand ? 'block' : 'none');
+    document.querySelectorAll('.child-content').forEach(el => el.style.display = expand ? 'block' : 'none');
+    document.querySelectorAll('.parent-arrow').forEach(el => el.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)');
+    document.querySelectorAll('.child-arrow').forEach(el => el.style.transform = expand ? 'rotate(90deg)' : 'rotate(0deg)');
+}
+
+// Свернуть все категории, кроме первой
+function collapseAllButFirst() {
+    const parentContents = document.querySelectorAll('.parent-content');
+    const parentArrows = document.querySelectorAll('.parent-arrow');
+    const childContents = document.querySelectorAll('.child-content');
+    const childArrows = document.querySelectorAll('.child-arrow');
+    
+    // Сворачиваем все родительские категории, кроме первой
+    parentContents.forEach((el, index) => {
+        if (index === 0) {
+            el.style.display = 'block';
+            parentArrows[index].style.transform = 'rotate(90deg)';
+        } else {
+            el.style.display = 'none';
+            parentArrows[index].style.transform = 'rotate(0deg)';
+        }
+    });
+    
+    // Сворачиваем все дочерние категории, кроме первой в первой родительской
+    childContents.forEach((el, index) => {
+        if (index === 0) {
+            el.style.display = 'block';
+            childArrows[index].style.transform = 'rotate(90deg)';
+        } else {
+            el.style.display = 'none';
+            childArrows[index].style.transform = 'rotate(0deg)';
+        }
+    });
+    
+    // Обновляем текст кнопки (если она есть)
+    const btn = document.getElementById('toggleAllCategoriesBtn');
+    if (btn) {
+        btn.textContent = 'Раскрыть все';
+    }
+    // Состояние устанавливаем всегда, чтобы не рассинхронизироваться с реальным DOM
+    allCategoriesExpanded = false;
+}
+
+// Debounce helper для фильтров цены
+function debounce(func, wait) {
+    let timeout;
+    return function executedFunction(...args) {
+        const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+        };
+        clearTimeout(timeout);
+        timeout = setTimeout(later, wait);
+    };
+}
+
+// Расчёт размера шрифта для процента экономии
+function getSavingsFontSize(savingsPercent) {
+    if (!savingsPercent) return '0px';
+    // Увеличение на 1px за каждый целый десяток процента: 10% -> +1, 15% -> +1, 20% -> +2, 23% -> +2 и т.д.
+    const fontSizeIncrease = Math.floor(savingsPercent / 10);
+    return `${fontSizeIncrease}px`;
+}
+
+// Состояние для отслеживания, развёрнуты ли все категории
+let allCategoriesExpanded = false;
+
+// Переключение состояния всех категорий
+function toggleAllCategoriesState() {
+    if (allCategoriesExpanded) {
+        collapseAllButFirst();
+        allCategoriesExpanded = false;
+    } else {
+        expandAllCategories();
+        allCategoriesExpanded = true;
+    }
+}
+
+// Раскрытие всех категорий
+function expandAllCategories() {
+    // Раскрываем все родительские категории
+    const parentHeaders = document.querySelectorAll('.parent-header');
+    parentHeaders.forEach(header => {
+        const parentId = header.parentElement.querySelector('.parent-content').id.replace('parent-', '');
+        const parentContent = document.getElementById(`parent-${parentId}`);
+        const arrow = header.querySelector('.parent-arrow');
+        if (parentContent) {
+            parentContent.style.display = 'block';
+            if (arrow) arrow.style.transform = 'rotate(90deg)';
+        }
+    });
+
+    // Раскрываем все дочерние категории
+    const childHeaders = document.querySelectorAll('.child-header');
+    childHeaders.forEach(header => {
+        const childContent = header.nextElementSibling;
+        const arrow = header.querySelector('.child-arrow');
+        if (childContent) {
+            childContent.style.display = 'block';
+            if (arrow) arrow.style.transform = 'rotate(90deg)';
+        }
+    });
+
+    // Обновляем текст кнопки (если она есть)
+    const btn = document.getElementById('toggleAllCategoriesBtn');
+    if (btn) {
+        btn.textContent = 'Свернуть все';
+    }
+    // Состояние устанавливаем всегда, чтобы не рассинхронизироваться с реальным DOM
+    allCategoriesExpanded = true;
+}
+
+// Переопределяем loadProducts для использования улучшенной версии
+const originalLoadProducts = loadProducts;
+loadProducts = loadProductsEnhanced;
+
+// Обработчики для новых фильтров
+document.addEventListener('DOMContentLoaded', () => {
+    console.log('[INIT] Второй DOMContentLoaded handler запущен');
+    // Загружаем статистику при загрузке
+    setTimeout(loadProductStats, 1000);
+    
+    // Обновляем статистику каждые 30 секунд
+    setInterval(loadProductStats, 30000);
+    
+    // Обработчики для фильтров
+    const stockFilterEl = document.getElementById('stockFilter');
+    const promoFilterEl = document.getElementById('promoFilter');
+    const minPriceEl = document.getElementById('minPrice');
+    const maxPriceEl = document.getElementById('maxPrice');
+    const savingsFilterEl = document.getElementById('savingsFilter');
+    const searchFilterEl = document.getElementById('searchFilter');
+
+    // Снимаем disabled с фильтров после загрузки страницы
+    document.querySelectorAll('#sortFilter, #stockFilter, #promoFilter, #minPrice, #maxPrice, #searchFilter').forEach(el => {
+        if (el) el.disabled = false;
+    });
+
+    // Защита от повторного disabled поискового поля (кэш, расширения браузера)
+    if (searchFilterEl) {
+        const searchObserver = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'disabled') {
+                    if (searchFilterEl.disabled) {
+                        console.warn('[searchFilter] disabled был принудительно снят');
+                        searchFilterEl.disabled = false;
+                    }
+                }
+            });
+        });
+        searchObserver.observe(searchFilterEl, { attributes: true, attributeFilter: ['disabled'] });
+    }
+
+    // Периодическая проверка: поисковое поле должно оставаться активным
+    let keepAliveCount = 0;
+    const keepAlive = setInterval(() => {
+        const sf = document.getElementById('searchFilter');
+        if (sf && sf.disabled) {
+            console.warn('[keepAlive] searchFilter был задизейблен, снимаем');
+            sf.disabled = false;
+        }
+        if (++keepAliveCount > 20) clearInterval(keepAlive);
+    }, 500);
+
+    // Поиск по названию товара (от 3 символов, debounce 300ms)
+    if (searchFilterEl) {
+        const searchClearBtn = document.getElementById('searchClearBtn');
+
+        // Восстанавливаем сохранённое значение
+        const savedSearch = localStorage.getItem('searchFilter');
+        if (savedSearch) {
+            searchFilterEl.value = savedSearch;
+        }
+
+        // Показываем/скрываем кнопку очистки
+        function updateClearBtn(value) {
+            if (!searchClearBtn) return;
+            searchClearBtn.style.display = value.trim().length > 0 ? 'flex' : 'none';
+        }
+
+        updateClearBtn(searchFilterEl.value);
+
+        let searchTimeout;
+        searchFilterEl.addEventListener('input', () => {
+            const value = searchFilterEl.value;
+            updateClearBtn(value);
+
+            // Сохраняем в localStorage
+            localStorage.setItem('searchFilter', value);
+
+            // Сбрасываем предыдущий таймер
+            clearTimeout(searchTimeout);
+
+            // Поиск только при >=3 символах, сброс при 0
+            searchTimeout = setTimeout(() => {
+                const trimmed = value.trim();
+                if (trimmed.length === 0 || trimmed.length >= 3) {
+                    loadProducts();
+                    // Раскрываем все категории при активном поиске для удобства просмотра
+                    // (после задержки, чтобы успел отрендериться HTML)
+                    if (trimmed.length >= 3) {
+                        setTimeout(expandAllCategories, 800);
+                    }
+                }
+            }, 300);
+        });
+
+        // Кнопка очистки поиска
+        if (searchClearBtn) {
+            searchClearBtn.addEventListener('click', () => {
+                searchFilterEl.value = '';
+                searchFilterEl.focus();
+                // Триггерим input event, чтобы обновить подсказку, кнопку, и вызвать loadProducts
+                searchFilterEl.dispatchEvent(new Event('input', { bubbles: true }));
+            });
+        }
+    }
+
+    if (stockFilterEl) stockFilterEl.addEventListener('change', loadProducts);
+    if (promoFilterEl) promoFilterEl.addEventListener('change', loadProducts);
+    if (savingsFilterEl) {
+        // Восстанавливаем сохранённый процент экономии
+        const savedSavings = localStorage.getItem('savingsFilter');
+        if (savedSavings) {
+            savingsFilterEl.value = savedSavings;
+        }
+        
+        savingsFilterEl.addEventListener('change', () => {
+            // Сохраняем выбранный процент в localStorage
+            localStorage.setItem('savingsFilter', savingsFilterEl.value);
+            loadProducts();
+            // Раскрываем все категории если выбран процент, иначе сворачиваем
+            if (savingsFilterEl.value !== '') {
+                setTimeout(expandAllCategories, 1000);
+            } else {
+                setTimeout(collapseAllButFirst, 1000);
+            }
+        });
+    }
+    
+    // Debounce для фильтров цены
+    const debouncedLoad = debounce(loadProducts, 500);
+    if (minPriceEl) minPriceEl.addEventListener('input', debouncedLoad);
+     if (maxPriceEl) maxPriceEl.addEventListener('input', debouncedLoad);
+     
+     // Обработчик для dropdown категорий - загружаем товары при изменении
+     const categoryFilterEl = document.getElementById('categoryFilter');
+     if (categoryFilterEl) {
+         categoryFilterEl.addEventListener('change', () => {
+             setTimeout(loadProducts, 100);
+         });
+     }
+     
+      // Применяем сохранённый процент экономии при загрузке страницы
+      const savedSavings = localStorage.getItem('savingsFilter');
+      if (savedSavings && savingsFilterEl) {
+          savingsFilterEl.value = savedSavings;
+          // Загружаем товары с применённым фильтром
+          // Не вызываем auto-expand — пусть пользователь сам решит, раскрывать или нет.
+          // Раньше вызывался setTimeout(expandAllCategories, 1500/2500), но это
+          // устанавливало allCategoriesExpanded=true ДО клика пользователя, и его
+          // первый клик выполнял collapse вместо ожидаемого expand.
+          setTimeout(() => {
+              loadProducts();
+          }, 100);
+      }
+
+      // Загружаем товары при загрузке страницы если есть выбранные магазины
+      const selectedStores = getSelectedStores();
+      if (selectedStores.length > 0) {
+          setTimeout(loadProducts, 500);
+      }
+     
+     // Синхронизация чекбоксов списка покупок при загрузке
+     syncCheckboxesFromLocalStorage();
+
+     // Защита: чекбокс "Новая цена" должен существовать и быть видимым
+     const newPriceCheckbox = document.getElementById('newPriceMode');
+     if (!newPriceCheckbox) {
+         console.warn('[newPriceMode] Чекбокс не найден в DOM, пересоздаём');
+         const formRow = document.querySelector('.form-row');
+         if (formRow) {
+             const div = document.createElement('div');
+             div.style.cssText = 'margin-left: 24px; display: flex; align-items: center;';
+             div.innerHTML = `
+                 <label style="margin: 0;">
+                     <input type="checkbox" id="newPriceMode" checked onchange="togglePriceMode()">
+                     Новая цена
+                 </label>
+             `;
+             formRow.appendChild(div);
+             loadPriceModeState();
+         }
+     } else {
+         newPriceCheckbox.style.display = 'inline-block';
+         newPriceCheckbox.parentElement.style.display = 'flex';
+     }
+     
+});
+
+// ============================================
+// Функции для работы со списком покупок
+// ============================================
+
+function toggleShoppingListItem(checkbox) {
+    const item = {
+        product_id: parseInt(checkbox.dataset.productId),
+        product_name: checkbox.dataset.productName,
+        store_code: checkbox.dataset.storeCode,
+        price: parseFloat(checkbox.dataset.price),
+        previous_price: checkbox.dataset.previousPrice ? parseFloat(checkbox.dataset.previousPrice) : null,
+        category_name: checkbox.dataset.categoryName,
+        image_url: checkbox.dataset.imageUrl || null,
+        added_at: new Date().toISOString()
+    };
+
+    let list = getShoppingList();
+
+    if (checkbox.checked) {
+        const exists = list.some(x =>
+            x.product_id === item.product_id && x.store_code === item.store_code
+        );
+        if (!exists) {
+            list.push(item);
+        }
+    } else {
+        list = list.filter(x =>
+            !(x.product_id === item.product_id && x.store_code === item.store_code)
+        );
+    }
+
+    saveShoppingList(list);
+
+    const row = checkbox.closest('tr');
+    if (row) {
+        row.classList.toggle('selected-row', checkbox.checked);
+    }
+
+    updateShoppingListCounter();
+}
+
+function updateShoppingListCounter() {
+    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const uniqueStores = new Set(list.map(x => x.store_code)).size;
+    const counter = document.getElementById('shoppingListCounter');
+    if (counter) {
+        counter.textContent = `Выбрано: ${list.length} товаров из ${uniqueStores} магазинов`;
+    }
+}
+
+function syncCheckboxesFromLocalStorage() {
+    const list = getShoppingList();
+    const allCheckboxes = document.querySelectorAll('input.shopping-list-checkbox');
+    console.log(`[SYNC] Список покупок: ${list.length} товаров, найдено чекбоксов в DOM: ${allCheckboxes.length}`);
+    let matched = 0;
+    list.forEach(item => {
+        const selector = `input.shopping-list-checkbox[data-product-id="${item.product_id}"][data-store-code="${item.store_code}"]`;
+        const checkbox = document.querySelector(selector);
+        if (checkbox) {
+            checkbox.checked = true;
+            const row = checkbox.closest('tr');
+            if (row) {
+                row.classList.add('selected-row');
+            }
+            matched++;
+        } else {
+            console.log(`[SYNC] Не найден чекбокс: product_id=${item.product_id} (${typeof item.product_id}), store_code=${item.store_code} (${typeof item.store_code})`);
+        }
+    });
+    console.log(`[SYNC] Совпало: ${matched}/${list.length}`);
+    updateShoppingListCounter();
+}
+
+function clearShoppingList() {
+     if (confirm('Вы уверены, что хотите удалить все товары из списка покупок?')) {
+         localStorage.removeItem('shoppingList');
+         document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
+             cb.checked = false;
+             const row = cb.closest('tr');
+             if (row) {
+                 row.classList.remove('selected-row');
+             }
+         });
+         updateShoppingListCounter();
+     }
+}
+
+function onSavingsFilterChange() {
+     productsState.allProducts = [];
+     productsState.offset = 0;
+     productsState.hasMore = true;
+     loadProducts();
+}
+
+</script>
+{% endblock %}

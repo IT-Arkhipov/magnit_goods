@@ -1,0 +1,26 @@
+{% if stores %}
+<table id="stores-table">
+    <thead>
+        <tr>
+            <th style="width:40px;"><input type="checkbox" id="select-all-stores" onchange="toggleAllStores(this.checked)"></th>
+            <th>Тип</th>
+            <th>Город</th>
+            <th>Адрес</th>
+            <th>Код</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for store in stores %}
+        <tr>
+            <td><input type="checkbox" class="store-checkbox" value="{{ store.id }}" onchange="updateDeleteButton()"></td>
+            <td><span class="badge badge-info">{{ store.store_type }}</span></td>
+            <td>{{ store.city }}</td>
+            <td><a href="https://yandex.ru/maps/?text={{ store.full_address | urlencode }}" target="_blank" style="color:#2c3e50;text-decoration:underline;">{{ store.full_address }}</a></td>
+            <td><code>{{ store.store_code }}</code></td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+{% else %}
+<p>Магазины не найдены. Добавьте первый магазин.</p>
+{% endif %}
