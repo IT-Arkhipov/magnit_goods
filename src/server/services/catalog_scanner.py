@@ -4,6 +4,7 @@
 """
 
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict
 import time
@@ -13,11 +14,15 @@ import logging
 from src.server.models import (
     Category,
     Product,
+    PriceHistory,
     ScanJob,
 )
+from src.server.constants import STALE_DAYS_DELETE
 from src.server.services.magnit_api import MagnitAPIClient
 
 logger = logging.getLogger(__name__)
+
+PRICE_HISTORY_RETENTION_DAYS = 30
 
 
 class CatalogScanner:
@@ -406,8 +411,12 @@ class CatalogScanner:
 
         self.db.commit()
 
-        # Удаляем устаревшие товары (7+ дней без обновлений)
-        deleted = self.cleanup_stale_products(days_threshold=7)
+        # Удаляем устаревшие товары (STALE_DAYS_DELETE+ дней без обновлений).
+        # Жизненный цикл: STALE_DAYS_VISIBLE (видно) → STALE_DAYS_HIDDEN (скрыто) → удаление.
+        deleted = self.cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)
+
+        # Удаляем устаревшие записи истории цен (>30 дней)
+        history_deleted = self.cleanup_price_history()
 
         result = {
             "scanned": total_scanned,
@@ -415,6 +424,7 @@ class CatalogScanner:
             "updated": total_updated,
             "price_changes": total_price_changes,
             "deleted": deleted,
+            "history_deleted": history_deleted,
         }
 
         if self.job_id:
@@ -430,11 +440,18 @@ class CatalogScanner:
         """
         Сохранить товары в БД с использованием bulk операций для оптимизации.
 
+        Логика цены:
+        - price_history хранит одну запись на день для каждого (product_id, store_code)
+        - previous_price / price_change_percent берутся из последнего дня сканирования
+          (предыдущая запись в price_history)
+        - last_change_price / last_change_date обновляются только при реальном изменении
+          цены относительно предыдущего дня
+
         Оптимизация:
         - Один SELECT для всех product_ids (вместо N+1 запросов)
         - Bulk INSERT для новых товаров
         - Bulk UPDATE для существующих товаров
-        - Bulk INSERT для истории цен
+        - Bulk INSERT/UPDATE для истории цен
         - Один COMMIT в конце
 
         Returns:
@@ -475,27 +492,51 @@ class CatalogScanner:
             .all()
         }
 
-        # 2. Разделяем на INSERT и UPDATE
+        # 2. Получаем последнюю цену ПРЕДЫДУЩЕГО дня для каждого товара
+        # (используется для previous_price / price_change_percent)
+        today = date.today()
+        yesterday = today - timedelta(days=1)
+        previous_day_prices: dict[int, float] = {}
+        if product_ids:
+            price_history_rows = (
+                self.db.query(
+                    PriceHistory.product_id,
+                    PriceHistory.scan_date,
+                    PriceHistory.price,
+                )
+                .filter(
+                    PriceHistory.product_id.in_(product_ids),
+                    PriceHistory.store_code == self.store_code,
+                    PriceHistory.scan_date < today,
+                )
+                .all()
+            )
+            latest_by_pid: dict[int, tuple[date, float]] = {}
+            for pid, sd, pr in price_history_rows:
+                if pid not in latest_by_pid or sd > latest_by_pid[pid][0]:
+                    latest_by_pid[pid] = (sd, pr)
+            previous_day_prices = {pid: pr for pid, (_, pr) in latest_by_pid.items()}
+
+        # 3. Разделяем на INSERT и UPDATE
         to_insert = []
         to_update = []
         now = datetime.utcnow()
+        price_changes_count = 0
 
         for product_data in products:
             product_id = product_data["product_id"]
             current_price = product_data["price"]
 
             existing = existing_products.get(product_id)
+            # Цена предыдущего дня (None если товар новый или истории нет)
+            prev_day_price = previous_day_prices.get(product_id)
 
             if existing:
-                # UPDATE: проверяем изменение цены
-                old_price_val = existing.price
-                new_price_val = current_price
-
-                # Обновляем поля
+                # UPDATE: обновляем поля
                 update_data = {
                     "id": existing.id,
                     "name": product_data.get("name", existing.name),
-                    "price": new_price_val,
+                    "price": current_price,
                     "category_id": db_category_id,
                     "sku": product_data.get("sku", existing.sku),
                     "unit": product_data.get("unit", existing.unit),
@@ -518,16 +559,35 @@ class CatalogScanner:
                     "unit_price": product_data.get("unit_price", existing.unit_price),
                 }
 
-                # Проверяем изменение цены
-                if abs(old_price_val - new_price_val) > 0.01:
-                    # Цена изменилась — сохраняем предыдущую цену
-                    update_data["previous_price"] = old_price_val
-                    change_percent = round((old_price_val - new_price_val) / old_price_val * 100, 1)
+                # previous_price и price_change_percent — от предыдущего дня
+                if prev_day_price is not None and abs(prev_day_price - current_price) > 0.01:
+                    update_data["previous_price"] = prev_day_price
+                    change_percent = round(
+                        (prev_day_price - current_price) / prev_day_price * 100, 1
+                    )
                     update_data["price_change_percent"] = change_percent
-                    update_data["last_price_change"] = now
-                    update_data["last_change_price"] = old_price_val
-                    # Дата предыдущего скана, когда старая цена была ещё актуальна
+                    if change_percent != 0:
+                        price_changes_count += 1
+                else:
+                    # Нет предыдущего дня или цена не изменилась
+                    update_data["previous_price"] = current_price
+                    update_data["price_change_percent"] = None
+
+                # last_change_price / last_change_date — обновляем только при реальном
+                # изменении относительно last_change_price
+                last_change_price = existing.last_change_price
+                if (
+                    last_change_price is not None
+                    and abs(last_change_price - current_price) > 0.01
+                ):
+                    update_data["last_change_price"] = last_change_price
                     update_data["last_change_date"] = existing.last_seen or now
+                    update_data["last_price_change"] = now
+                elif last_change_price is None and prev_day_price is not None and abs(prev_day_price - current_price) > 0.01:
+                    # Первое изменение после появления
+                    update_data["last_change_price"] = prev_day_price
+                    update_data["last_change_date"] = existing.last_seen or now
+                    update_data["last_price_change"] = now
 
                 to_update.append(update_data)
             else:
@@ -565,7 +625,7 @@ class CatalogScanner:
                     "first_seen": now,
                     "last_seen": now,
                     "last_scan_found": now,
-                    # Отслеживание цен
+                    # Отслеживание цен — нет истории, всё None/текущая цена
                     "previous_price": current_price,
                     "price_change_percent": None,
                     "last_price_change": None,
@@ -573,47 +633,120 @@ class CatalogScanner:
                     "last_change_date": None,
                 })
 
-        # 3. Bulk INSERT
+        # 4. Bulk INSERT
         added = 0
         if to_insert:
             self.db.bulk_insert_mappings(Product, to_insert)
             added = len(to_insert)
             logger.debug(f"DEBUG: Bulk inserted {added} products")
 
-        # 4. Bulk UPDATE
+        # 5. Bulk UPDATE
         updated = 0
         if to_update:
             self.db.bulk_update_mappings(Product, to_update)
             updated = len(to_update)
             logger.debug(f"DEBUG: Bulk updated {updated} products")
 
-        # 5. Один COMMIT для всех операций
+        # 6. Upsert в price_history за сегодняшнюю дату
+        self._upsert_price_history(products, today)
+
+        # 7. Один COMMIT для всех операций
         self.db.commit()
 
-        return added, updated, 0
+        return added, updated, price_changes_count
 
-    def cleanup_stale_products(self, days_threshold: int = 7) -> int:
+    def _upsert_price_history(
+        self, products_data: list[dict], scan_date: date
+    ) -> None:
+        """
+        Сохранить цены товаров в price_history (одна запись на день).
+        Если запись за этот день уже есть — обновляем цену, остаток и наличие.
+        """
+        if not products_data:
+            return
+
+        product_ids = [p["product_id"] for p in products_data]
+        existing_rows = {
+            (r.product_id, r.store_code): r
+            for r in self.db.query(PriceHistory)
+            .filter(
+                PriceHistory.product_id.in_(product_ids),
+                PriceHistory.store_code == self.store_code,
+                PriceHistory.scan_date == scan_date,
+            )
+            .all()
+        }
+
+        to_insert = []
+        to_update = []
+        for p in products_data:
+            pid = p["product_id"]
+            key = (pid, self.store_code)
+            if key in existing_rows:
+                to_update.append({
+                    "id": existing_rows[key].id,
+                    "price": p["price"],
+                    "quantity": p.get("quantity"),
+                    "in_stock": p.get("in_stock"),
+                })
+            else:
+                to_insert.append({
+                    "product_id": pid,
+                    "store_code": self.store_code,
+                    "price": p["price"],
+                    "quantity": p.get("quantity"),
+                    "in_stock": p.get("in_stock"),
+                    "scan_date": scan_date,
+                })
+
+        if to_insert:
+            self.db.bulk_insert_mappings(PriceHistory, to_insert)
+            logger.debug(f"DEBUG: Inserted {len(to_insert)} price_history records for {scan_date}")
+        if to_update:
+            self.db.bulk_update_mappings(PriceHistory, to_update)
+            logger.debug(f"DEBUG: Updated {len(to_update)} price_history records for {scan_date}")
+
+    def cleanup_stale_products(self, days_threshold: int = STALE_DAYS_DELETE) -> int:
         """
         Удалить товары, которые не обновлялись N дней.
-        
+
         Args:
-            days_threshold: Количество дней без обновлений (по умолчанию 7)
-            
+            days_threshold: Количество дней без обновлений (по умолчанию STALE_DAYS_DELETE)
+
         Returns:
             Количество удалённых товаров
         """
         cutoff_date = datetime.utcnow() - timedelta(days=days_threshold)
-        
+
         deleted = self.db.query(Product).filter(
             Product.last_seen < cutoff_date,
             Product.store_code == self.store_code,
         ).delete(synchronize_session=False)
-        
+
         if deleted > 0:
             self.db.commit()
             logger.info(f"Удалено {deleted} устаревших товаров для магазина {self.store_code}")
-        
+
         return deleted
+
+    def cleanup_price_history(self, days: int = PRICE_HISTORY_RETENTION_DAYS) -> int:
+        """
+        Удалить записи price_history старше N дней.
+        Вызывается после каждого сканирования.
+        """
+        try:
+            cutoff = date.today() - timedelta(days=days)
+            deleted = self.db.query(PriceHistory).filter(
+                PriceHistory.scan_date < cutoff
+            ).delete(synchronize_session=False)
+            if deleted > 0:
+                self.db.commit()
+                logger.info(f"Удалено {deleted} устаревших записей price_history старше {days} дней")
+            return deleted
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"ERROR cleanup_price_history: {e}")
+            return 0
 
     def close(self):
         """Закрыть клиент."""

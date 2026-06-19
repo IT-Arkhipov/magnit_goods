@@ -2,6 +2,14 @@
 Общие константы проекта.
 """
 
+# Жизненный цикл товара, который не находится в сканировании:
+# - STALE_DAYS_VISIBLE дней после last_seen товар ещё показывается в API/UI
+# - Далее STALE_DAYS_HIDDEN дней товар скрыт (не отображается, но хранится в БД)
+# - После суммы (STALE_DAYS_VISIBLE + STALE_DAYS_HIDDEN) дней товар удаляется
+STALE_DAYS_VISIBLE: int = 1
+STALE_DAYS_HIDDEN: int = 5
+STALE_DAYS_DELETE: int = STALE_DAYS_VISIBLE + STALE_DAYS_HIDDEN  # 6
+
 # Числовые коды типов магазинов (для API и БД)
 STORE_TYPE_CODES: dict[str, int] = {
     "Магнит": 1,

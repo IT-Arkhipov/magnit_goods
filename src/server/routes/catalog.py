@@ -11,7 +11,7 @@ import os
 import logging
 
 from src.server.database import get_db
-from src.server.models import Category, Product, Store
+from src.server.models import Category, Product, PriceHistory, Store
 
 logger = logging.getLogger(__name__)
 
@@ -262,7 +262,7 @@ def list_products(
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
     from datetime import timedelta
-    from sqlalchemy import func, or_
+    from sqlalchemy import func
 
     # Распарсиваем category_ids один раз
     cat_id_list: list[int] = []
@@ -283,39 +283,12 @@ def list_products(
         if max_price is not None:
             q = q.filter(Product.price <= max_price)
 
-        if store_code:
-            scan_query = db.query(
-                Product.category_id,
-                func.max(Product.last_scan_found).label('max_scan_time')
-            ).filter(
-                Product.store_code == store_code,
-                Product.last_scan_found.isnot(None)
-            )
-
-            if cat_id_list:
-                scan_query = scan_query.filter(Product.category_id.in_(cat_id_list))
-            elif category_id:
-                scan_query = scan_query.filter(Product.category_id == category_id)
-
-            max_scan_times = scan_query.group_by(Product.category_id).all()
-
-            scan_times_dict = {cat_id: max_time for cat_id, max_time in max_scan_times}
-
-            if scan_times_dict:
-                # Для каждой категории показываем товары, обновленные не позднее 1 часа
-                # от последнего обновления ИЛИ товары без last_scan_found
-                conditions = []
-                for cat_id, max_time in scan_times_dict.items():
-                    cutoff_time = max_time - timedelta(hours=1)
-                    conditions.append(
-                        (Product.category_id == cat_id) &
-                        (
-                            ((Product.last_scan_found >= cutoff_time) & (Product.last_scan_found <= max_time)) |
-                            (Product.last_scan_found.is_(None))
-                        )
-                    )
-
-                q = q.filter(or_(*conditions))
+        # Скрываем товары, которых не было в сканах дольше STALE_DAYS_VISIBLE дней.
+        # Жизненный цикл устаревшего товара: STALE_DAYS_VISIBLE (видим) →
+        # STALE_DAYS_HIDDEN (скрыт) → STALE_DAYS_DELETE (удалён).
+        from src.server.constants import STALE_DAYS_VISIBLE
+        visible_cutoff = datetime.utcnow().date() - timedelta(days=STALE_DAYS_VISIBLE)
+        q = q.filter(Product.last_seen >= visible_cutoff)
         return q
 
     if search and search.strip():
@@ -491,6 +464,37 @@ def get_product(
         if product.last_change_date
         else None,
     }
+
+
+@router.get("/products/{product_id}/history")
+def get_product_price_history(
+    product_id: int,
+    store_code: Optional[str] = Query(None),
+    days: int = Query(30, ge=1, le=365, description="Количество дней истории"),
+    db: Session = Depends(get_db),
+):
+    """История цен товара (по дням)."""
+    from datetime import date, timedelta
+
+    cutoff = date.today() - timedelta(days=days)
+    query = db.query(PriceHistory).filter(
+        PriceHistory.product_id == product_id,
+        PriceHistory.scan_date >= cutoff,
+    )
+    if store_code:
+        query = query.filter(PriceHistory.store_code == store_code)
+    rows = query.order_by(PriceHistory.scan_date.desc(), PriceHistory.store_code.asc()).all()
+
+    return [
+        {
+            "scan_date": r.scan_date.isoformat() if r.scan_date else None,
+            "store_code": r.store_code,
+            "price": r.price,
+            "quantity": r.quantity,
+            "in_stock": r.in_stock,
+        }
+        for r in rows
+    ]
 
 
 @router.post("/catalog/scan")
