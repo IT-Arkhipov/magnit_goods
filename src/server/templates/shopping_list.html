@@ -122,12 +122,64 @@
 .empty-state h3 {
     margin-bottom: 16px;
 }
+.product-item.unavailable {
+    opacity: 0.6;
+    background: #fafafa;
+}
+.product-item.unavailable .product-name {
+    text-decoration: line-through;
+    color: #999;
+}
+.product-item.unavailable .product-price {
+    color: #999;
+}
+.product-item.unavailable img,
+.product-item.unavailable .product-image-placeholder {
+    filter: grayscale(1);
+}
+.unavailable-badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 12px;
+    font-size: 12px;
+    font-weight: 600;
+    margin-left: 8px;
+}
+.unavailable-badge.missing {
+    background: #f8d7da;
+    color: #721c24;
+}
+.unavailable-badge.out-of-stock {
+    background: #fff3cd;
+    color: #856404;
+}
+.remove-unavailable-btn {
+    background: #ffc107;
+    color: #333;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 14px;
+}
+.remove-unavailable-btn:hover {
+    background: #e0a800;
+}
+.unavailable-count {
+    color: #856404;
+    font-size: 14px;
+    margin-right: 12px;
+}
 </style>
 
 <div class="card">
     <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
         <h2>Список покупок</h2>
-        <div style="display: flex; gap: 8px;">
+        <div style="display: flex; gap: 8px; align-items: center;">
+            <span id="unavailableCount" class="unavailable-count" style="display: none;"></span>
+            <button id="removeUnavailableBtn" class="remove-unavailable-btn" style="display: none;" onclick="removeUnavailableItems()">
+                Удалить недоступные
+            </button>
             <a href="/products" class="btn btn-secondary">← Вернуться к товарам</a>
             <button class="btn" style="background: #17a2b8; color: white;" onclick="exportToText()">
                 Экспорт в текст
@@ -144,9 +196,9 @@
 
 <script>
 function loadShoppingList() {
-    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const list = getShoppingList();
     const container = document.getElementById('shopping-list-content');
-    
+
     if (list.length === 0) {
         container.innerHTML = `
             <div class="empty-state">
@@ -157,12 +209,16 @@ function loadShoppingList() {
                 </a>
             </div>
         `;
+        updateUnavailableControls(0);
         return;
     }
-    
+
+    const unavailableCount = list.filter(x => x.missing || x.out_of_stock).length;
+    updateUnavailableControls(unavailableCount);
+
     const grouped = {};
     const storeInfo = {};
-    
+
     list.forEach(item => {
         if (!grouped[item.store_code]) {
             grouped[item.store_code] = {};
@@ -174,7 +230,7 @@ function loadShoppingList() {
         grouped[item.store_code][item.category_name].push(item);
         storeInfo[item.store_code].items.push(item);
     });
-    
+
     fetch('/api/stores')
         .then(res => res.json())
         .then(stores => {
@@ -182,7 +238,7 @@ function loadShoppingList() {
             stores.forEach(s => {
                 storeMap[s.store_code] = s;
             });
-            
+
             const sortedStores = Object.keys(grouped).sort((a, b) => {
                 const storeA = storeMap[a];
                 const storeB = storeMap[b];
@@ -191,99 +247,138 @@ function loadShoppingList() {
                 const nameB = `${storeB.store_type} - ${storeB.address}`;
                 return nameA.localeCompare(nameB, 'ru');
             });
-            
+
             let html = '';
             let totalSum = 0;
             let totalSavings = 0;
             let totalItems = 0;
+            let availableItems = 0;
             const uniqueCategories = new Set();
-            
+
             sortedStores.forEach(storeCode => {
                 const store = storeMap[storeCode];
-                const storeName = store 
-                    ? `${store.store_type} - ${store.address}` 
+                const storeName = store
+                    ? `${store.store_type} - ${store.address}`
                     : storeCode;
                 const categories = grouped[storeCode];
-                
-                const sortedCategories = Object.keys(categories).sort((a, b) => 
+
+                const sortedCategories = Object.keys(categories).sort((a, b) =>
                     a.localeCompare(b, 'ru')
                 );
-                
+
                 let storeSum = 0;
                 let storeSavings = 0;
-                
+
                 html += `
                     <div class="store-card">
                         <div class="store-header">
                             ${escapeHtml(storeName)} <span style="color: #666; font-weight: normal;">(код: ${storeCode})</span>
                         </div>
                 `;
-                
+
                 sortedCategories.forEach(categoryName => {
                     uniqueCategories.add(categoryName);
                     const products = categories[categoryName];
-                    
+
                     html += `
                         <div class="category-group">
                             <div class="category-title">${escapeHtml(categoryName)} (${products.length})</div>
                     `;
-                    
+
                     products.forEach(item => {
-                        const discount = item.previous_price && item.previous_price > item.price
-                            ? Math.round(((item.previous_price - item.price) / item.previous_price) * 100)
-                            : 0;
-                        const savings = item.previous_price && item.previous_price > item.price
-                            ? (item.previous_price - item.price).toFixed(2)
-                            : 0;
-                        
-                        storeSum += item.price;
-                        storeSavings += parseFloat(savings);
-                        totalSum += item.price;
-                        totalSavings += parseFloat(savings);
-                        totalItems++;
-                        
-                        const imageHtml = item.image_url 
+                        const isUnavailable = item.missing || item.out_of_stock;
+
+                        let badgeHtml = '';
+                        if (item.missing) {
+                            badgeHtml = '<span class="unavailable-badge missing">не найден в базе</span>';
+                        } else if (item.out_of_stock) {
+                            badgeHtml = '<span class="unavailable-badge out-of-stock">нет в наличии</span>';
+                        }
+
+                        const imageHtml = item.image_url
                             ? `<img src="${escapeHtml(item.image_url)}" class="product-image" onerror="this.style.display='none'; this.nextElementSibling.style.display='flex';">
                                <div class="product-image-placeholder" style="display: none;">Нет фото</div>`
                             : `<div class="product-image-placeholder">Нет фото</div>`;
-                        
-                        html += `
-                            <div class="product-item">
-                                ${imageHtml}
-                                <div class="product-info">
-                                    <div class="product-name">${escapeHtml(item.product_name)}</div>
-                                    <div>
-                                        <span class="product-price">${item.price} ₽</span>
-                                        ${discount > 0 ? `<span class="product-discount">-${discount}% (экономия ${savings} ₽)</span>` : ''}
+
+                        if (isUnavailable) {
+                            html += `
+                                <div class="product-item unavailable">
+                                    ${imageHtml}
+                                    <div class="product-info">
+                                        <div class="product-name">
+                                            ${escapeHtml(item.product_name)}
+                                            ${badgeHtml}
+                                        </div>
+                                        <div>
+                                            <span class="product-price">${item.price != null ? item.price + ' ₽' : '—'}</span>
+                                        </div>
                                     </div>
+                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${item.store_code}')">
+                                        ×
+                                    </button>
                                 </div>
-                                <button class="remove-btn" onclick="removeItem(${item.product_id}, '${item.store_code}')">
-                                    ×
-                                </button>
-                            </div>
-                        `;
+                            `;
+                        } else {
+                            const discount = item.previous_price && item.previous_price > item.price
+                                ? Math.round(((item.previous_price - item.price) / item.previous_price) * 100)
+                                : 0;
+                            const savings = item.previous_price && item.previous_price > item.price
+                                ? (item.previous_price - item.price).toFixed(2)
+                                : 0;
+
+                            storeSum += item.price;
+                            storeSavings += parseFloat(savings);
+                            totalSum += item.price;
+                            totalSavings += parseFloat(savings);
+                            totalItems++;
+                            availableItems++;
+
+                            html += `
+                                <div class="product-item">
+                                    ${imageHtml}
+                                    <div class="product-info">
+                                        <div class="product-name">${escapeHtml(item.product_name)}</div>
+                                        <div>
+                                            <span class="product-price">${item.price} ₽</span>
+                                            ${discount > 0 ? `<span class="product-discount">-${discount}% (экономия ${savings} ₽)</span>` : ''}
+                                        </div>
+                                    </div>
+                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${item.store_code}')">
+                                        ×
+                                    </button>
+                                </div>
+                            `;
+                        }
                     });
-                    
+
                     html += `</div>`;
                 });
-                
-                html += `
-                        <div class="store-total">
-                            <span>Итого:</span>
-                            <span>${storeSum.toFixed(2)} ₽ ${storeSavings > 0 ? `<span style="color: #28a745;">(экономия ${storeSavings.toFixed(2)} ₽)</span>` : ''}</span>
-                        </div>
-                    </div>
-                `;
+
+                if (storeSum > 0 || storeSavings > 0) {
+                    html += `
+                            <div class="store-total">
+                                <span>Итого:</span>
+                                <span>${storeSum.toFixed(2)} ₽ ${storeSavings > 0 ? `<span style="color: #28a745;">(экономия ${storeSavings.toFixed(2)} ₽)</span>` : ''}</span>
+                            </div>
+                    `;
+                }
+                html += `</div>`;
             });
-            
+
             html += `
                 <div class="summary-card">
                     <div class="summary-row">
-                        <span>Всего товаров:</span>
-                        <span>${totalItems} из ${uniqueCategories.size} категорий</span>
+                        <span>Доступно товаров:</span>
+                        <span>${availableItems} из ${totalItems + unavailableCount}${uniqueCategories.size > 0 ? ` (${uniqueCategories.size} категорий)` : ''}</span>
                     </div>
+                    ${unavailableCount > 0 ? `
+                    <div class="summary-row" style="color: #856404; font-size: 14px;">
+                        <span>Недоступно:</span>
+                        <span>${unavailableCount} ${unavailableCount === 1 ? 'товар' : unavailableCount < 5 ? 'товара' : 'товаров'} зачёркнуты</span>
+                    </div>
+                    ` : ''}
                     <div class="summary-row">
-                        <span>Общая сумма:</span>
+                        <span>Общая сумма (доступные):</span>
                         <span>${totalSum.toFixed(2)} ₽</span>
                     </div>
                     ${totalSavings > 0 ? `
@@ -294,7 +389,7 @@ function loadShoppingList() {
                     ` : ''}
                 </div>
             `;
-            
+
             container.innerHTML = html;
         })
         .catch(err => {
@@ -303,10 +398,36 @@ function loadShoppingList() {
         });
 }
 
+function updateUnavailableControls(count) {
+    const btn = document.getElementById('removeUnavailableBtn');
+    const label = document.getElementById('unavailableCount');
+    if (!btn || !label) return;
+    if (count > 0) {
+        btn.style.display = 'inline-block';
+        label.style.display = 'inline-block';
+        label.textContent = `Недоступно: ${count}`;
+    } else {
+        btn.style.display = 'none';
+        label.style.display = 'none';
+    }
+}
+
+function removeUnavailableItems() {
+    const list = getShoppingList();
+    const filtered = list.filter(x => !x.missing && !x.out_of_stock);
+    const removed = list.length - filtered.length;
+    if (removed === 0) return;
+    if (!confirm(`Удалить ${removed} недоступных ${removed === 1 ? 'товар' : removed < 5 ? 'товара' : 'товаров'}?`)) {
+        return;
+    }
+    saveShoppingList(filtered);
+    loadShoppingList();
+}
+
 function removeItem(productId, storeCode) {
-    let list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    let list = getShoppingList();
     list = list.filter(x => !(x.product_id === productId && x.store_code === storeCode));
-    localStorage.setItem('shoppingList', JSON.stringify(list));
+    saveShoppingList(list);
     loadShoppingList();
 }
 
@@ -318,14 +439,20 @@ function clearAllItems() {
 }
 
 function exportToText() {
-    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const list = getShoppingList();
     if (list.length === 0) {
         alert('Список покупок пуст');
         return;
     }
-    
+
+    const available = list.filter(x => !x.missing && !x.out_of_stock);
+    if (available.length === 0) {
+        alert('Нет доступных товаров для экспорта');
+        return;
+    }
+
     const grouped = {};
-    list.forEach(item => {
+    available.forEach(item => {
         if (!grouped[item.store_code]) grouped[item.store_code] = {};
         if (!grouped[item.store_code][item.category_name]) {
             grouped[item.store_code][item.category_name] = [];
@@ -423,12 +550,25 @@ function exportToText() {
 }
 
 function escapeHtml(text) {
+    if (text === null || text === undefined) return '';
     const div = document.createElement('div');
-    div.textContent = text;
+    div.textContent = String(text);
     return div.innerHTML;
 }
 
-window.addEventListener('DOMContentLoaded', loadShoppingList);
+window.addEventListener('DOMContentLoaded', async () => {
+    try {
+        await validateShoppingList();
+    } catch (e) {
+        console.error('Ошибка валидации списка покупок:', e);
+    }
+    loadShoppingList();
+    startScanPolling();
+});
+
+window.addEventListener('shoppingListUpdated', () => {
+    loadShoppingList();
+});
 </script>
 
 {% endblock %}

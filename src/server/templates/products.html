@@ -127,6 +127,13 @@
     border-radius: 4px;
     border: 2px solid #28a745;
 }
+tr.selected-row {
+    border-left: 4px solid #28a745 !important;
+    background: #f0fff4 !important;
+}
+tr.selected-row td:first-child {
+    border-left: none;
+}
 .price-cell {
     position: relative;
     cursor: help;
@@ -321,7 +328,7 @@ mark.search-highlight {
     <h2>Фильтры и поиск товаров</h2>
 
     <div class="form-row">
-        <div class="form-group" style="flex: 3;">
+        <div class="form-group" style="flex: 1.5;">
             <label>Категории</label>
             <div class="category-dropdown-container" style="position: relative;">
                 <button id="categoryDropdownButton" class="dropdown-button" onclick="toggleCategoryDropdown()" style="width: 100%; text-align: left; padding: 8px 12px; border: 1px solid #ddd; border-radius: 4px; background: white; cursor: pointer;">
@@ -343,10 +350,9 @@ mark.search-highlight {
         <div class="form-group">
             <label>Поиск</label>
             <div class="search-input-wrapper">
-                <input type="text" id="searchFilter" placeholder="Название товара (от 3 символов)" autocomplete="off">
+                <input type="text" id="searchFilter" placeholder="Название товара" autocomplete="off">
                 <button type="button" id="searchClearBtn" class="search-clear-btn" title="Очистить" style="display:none;">×</button>
             </div>
-            <small id="searchHint" style="color:#999; font-size: 12px;">Введите минимум 3 символа для поиска</small>
         </div>
         <div class="form-group">
             <label>Сортировка</label>
@@ -411,6 +417,15 @@ mark.search-highlight {
         <h2 id="compareModalTitle">Сравнение товара</h2>
         <div id="compareModalContent"></div>
         <button class="btn btn-danger" onclick="closeCompareModal()" style="margin-top: 16px;">Закрыть</button>
+    </div>
+</div>
+
+<!-- Модальное окно для истории цен -->
+<div id="priceHistoryModal" style="display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 1000; align-items: center; justify-content: center;">
+    <div class="card" style="max-width: 700px; width: 90%; max-height: 80vh; overflow-y: auto;">
+        <h2 id="priceHistoryModalTitle">История цен</h2>
+        <div id="priceHistoryModalContent"></div>
+        <button class="btn btn-danger" onclick="closePriceHistoryModal()" style="margin-top: 16px;">Закрыть</button>
     </div>
 </div>
 
@@ -1216,12 +1231,13 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
                  <span class="price-current">${priceText}</span>${tooltipHtml}
              </td>
              <td style="text-align: center;">${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
-             <td style="text-align: center;">
+             <td style="text-align: center; white-space: nowrap;">
+                  <button class="btn btn-sm btn-secondary" onclick="openPriceHistory(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">📈 История</button>
                   ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
              </td>
          </tr>
      `;
-}
+ }
 
 
 
@@ -1362,6 +1378,85 @@ async function compareInStores(productId, currentStoreCode, productName) {
 
 function closeCompareModal() {
     document.getElementById('compareModal').style.display = 'none';
+}
+
+async function openPriceHistory(productId, storeCode, productName) {
+    const modal = document.getElementById('priceHistoryModal');
+    const modalContent = document.getElementById('priceHistoryModalContent');
+    const modalTitle = document.getElementById('priceHistoryModalTitle');
+
+    modalTitle.textContent = `История цен: ${productName}`;
+    modalContent.innerHTML = '<p>Загрузка истории...</p>';
+    modal.style.display = 'flex';
+
+    try {
+        let url = `/api/products/${productId}/history?days=30`;
+        if (storeCode) url += `&store_code=${encodeURIComponent(storeCode)}`;
+        const resp = await fetch(url);
+        if (!resp.ok) {
+            modalContent.innerHTML = `<p style="color:#dc3545;">Ошибка загрузки: ${resp.status}</p>`;
+            return;
+        }
+        const rows = await resp.json();
+        if (!rows.length) {
+            modalContent.innerHTML = '<p>Нет данных за последние 30 дней.</p>';
+            return;
+        }
+        const grouped = {};
+        rows.forEach(r => {
+            const key = r.store_code;
+            if (!grouped[key]) grouped[key] = [];
+            grouped[key].push(r);
+        });
+        let html = '';
+        Object.entries(grouped).forEach(([sc, list]) => {
+            list.sort((a, b) => (a.scan_date < b.scan_date ? 1 : -1));
+            const minPrice = Math.min(...list.map(x => x.price));
+            const maxPrice = Math.max(...list.map(x => x.price));
+            html += `<h3 style="margin-top: 16px;">Магазин: ${escapeHtml(sc)}</h3>`;
+            html += `<div style="color:#666;font-size:12px;margin-bottom:6px;">Мин: ${minPrice} ₽ · Макс: ${maxPrice} ₽ · Записей: ${list.length}</div>`;
+            html += `<table style="width:100%;border-collapse:collapse;font-size:14px;">
+                <thead>
+                    <tr style="background:#f8f9fa;">
+                        <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd;">Дата</th>
+                        <th style="text-align:left;padding:6px;border-bottom:1px solid #ddd;">Цена</th>
+                        <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd;">Изменение</th>
+                        <th style="text-align:right;padding:6px;border-bottom:1px solid #ddd;">Остаток</th>
+                        <th style="text-align:center;padding:6px;border-bottom:1px solid #ddd;">В наличии</th>
+                    </tr>
+                </thead><tbody>`;
+            for (let i = 0; i < list.length; i++) {
+                const r = list[i];
+                const prev = i + 1 < list.length ? list[i + 1].price : null;
+                let changeHtml = '-';
+                if (prev !== null && Math.abs(prev - r.price) > 0.01) {
+                    const pct = Math.round((prev - r.price) / prev * 1000) / 10;
+                    changeHtml = pct > 0
+                        ? `<span style="color:#28a745;">↓${pct.toFixed(1)}%</span>`
+                        : `<span style="color:#9c27b0;">↑${Math.abs(pct).toFixed(1)}%</span>`;
+                }
+                const isMin = r.price === minPrice && list.length > 1;
+                const isMax = r.price === maxPrice && minPrice !== maxPrice;
+                const priceColor = isMin ? '#28a745' : (isMax ? '#dc3545' : '#333');
+                const priceWeight = isMin || isMax ? 'bold' : 'normal';
+                html += `<tr>
+                    <td style="padding:6px;border-bottom:1px solid #eee;">${r.scan_date}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;color:${priceColor};font-weight:${priceWeight};">${r.price} ₽</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${changeHtml}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:right;">${r.quantity != null ? r.quantity : '-'}</td>
+                    <td style="padding:6px;border-bottom:1px solid #eee;text-align:center;">${r.in_stock ? '✓' : '✗'}</td>
+                </tr>`;
+            }
+            html += `</tbody></table>`;
+        });
+        modalContent.innerHTML = html;
+    } catch (e) {
+        modalContent.innerHTML = `<p style="color:#dc3545;">Ошибка: ${e.message}</p>`;
+    }
+}
+
+function closePriceHistoryModal() {
+    document.getElementById('priceHistoryModal').style.display = 'none';
 }
 
 // Аккордеон категорий
@@ -1578,6 +1673,7 @@ function getSelectedStores() {
 
 // Загрузка магазинов при загрузке страницы
 document.addEventListener('DOMContentLoaded', async () => {
+    console.log('[INIT] Первый DOMContentLoaded handler запущен');
     loadPriceModeState();
     // Проверяем, есть ли сохранённые магазины для сравнения
     const savedStores = getSelectedStores();
@@ -1625,6 +1721,32 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Загружаем категории и товары
     await loadFilterState();
     loadProducts();
+
+    // Валидируем список покупок (актуализируем цены/наличие из БД)
+    try {
+        await validateShoppingList();
+    } catch (e) {
+        console.error('Ошибка валидации списка покупок:', e);
+    }
+
+    // Подписываемся на обновления списка (от polling'а job'ов)
+    window.addEventListener('shoppingListUpdated', async () => {
+        const list = getShoppingList();
+        document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
+            const pid = parseInt(cb.dataset.productId);
+            const sc = cb.dataset.storeCode;
+            const inList = list.some(x => x.product_id === pid && x.store_code === sc);
+            cb.checked = inList;
+            const row = cb.closest('tr');
+            if (row) {
+                row.classList.toggle('selected-row', inList);
+            }
+        });
+        updateShoppingListCounter();
+    });
+
+    // Запускаем polling завершённых job'ов сканирования цен
+    startScanPolling();
 });
 
 // Поиск первого магазина с товарами
@@ -1934,7 +2056,7 @@ async function loadProductsEnhanced() {
 
         // Используем существующую логику рендеринга
         renderProductsList(products, selectedStores, allStorePrices, storeInfoMap, listDiv);
-        
+
         // Показываем предупреждение если были ошибки загрузки
         if (failedStores.length > 0) {
             const warningMsg = document.createElement('div');
@@ -2196,6 +2318,10 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
             });
             
             listDiv.innerHTML = html;
+
+            // Синхронизируем чекбоксы списка покупок после рендера DOM
+            syncCheckboxesFromLocalStorage();
+
             if (isSearchActive) {
                 expandAllCategories();
             }
@@ -2444,6 +2570,7 @@ loadProducts = loadProductsEnhanced;
 
 // Обработчики для новых фильтров
 document.addEventListener('DOMContentLoaded', () => {
+    console.log('[INIT] Второй DOMContentLoaded handler запущен');
     // Загружаем статистику при загрузке
     setTimeout(loadProductStats, 1000);
     
@@ -2457,7 +2584,37 @@ document.addEventListener('DOMContentLoaded', () => {
     const maxPriceEl = document.getElementById('maxPrice');
     const savingsFilterEl = document.getElementById('savingsFilter');
     const searchFilterEl = document.getElementById('searchFilter');
-    const searchHintEl = document.getElementById('searchHint');
+
+    // Снимаем disabled с фильтров после загрузки страницы
+    document.querySelectorAll('#sortFilter, #stockFilter, #promoFilter, #minPrice, #maxPrice, #searchFilter').forEach(el => {
+        if (el) el.disabled = false;
+    });
+
+    // Защита от повторного disabled поискового поля (кэш, расширения браузера)
+    if (searchFilterEl) {
+        const searchObserver = new MutationObserver((mutations) => {
+            mutations.forEach(mutation => {
+                if (mutation.type === 'attributes' && mutation.attributeName === 'disabled') {
+                    if (searchFilterEl.disabled) {
+                        console.warn('[searchFilter] disabled был принудительно снят');
+                        searchFilterEl.disabled = false;
+                    }
+                }
+            });
+        });
+        searchObserver.observe(searchFilterEl, { attributes: true, attributeFilter: ['disabled'] });
+    }
+
+    // Периодическая проверка: поисковое поле должно оставаться активным
+    let keepAliveCount = 0;
+    const keepAlive = setInterval(() => {
+        const sf = document.getElementById('searchFilter');
+        if (sf && sf.disabled) {
+            console.warn('[keepAlive] searchFilter был задизейблен, снимаем');
+            sf.disabled = false;
+        }
+        if (++keepAliveCount > 20) clearInterval(keepAlive);
+    }, 500);
 
     // Поиск по названию товара (от 3 символов, debounce 300ms)
     if (searchFilterEl) {
@@ -2469,35 +2626,17 @@ document.addEventListener('DOMContentLoaded', () => {
             searchFilterEl.value = savedSearch;
         }
 
-        // Обновляем подсказку при загрузке
-        function updateSearchHint(value) {
-            if (!searchHintEl) return;
-            const len = value.trim().length;
-            if (len === 0) {
-                searchHintEl.textContent = 'Введите минимум 3 символа для поиска';
-                searchHintEl.style.color = '#999';
-            } else if (len < 3) {
-                const need = 3 - len;
-                searchHintEl.textContent = `Ещё ${need} симв.`;
-                searchHintEl.style.color = '#e31e25';
-            } else {
-                searchHintEl.textContent = '';
-            }
-        }
-
         // Показываем/скрываем кнопку очистки
         function updateClearBtn(value) {
             if (!searchClearBtn) return;
             searchClearBtn.style.display = value.trim().length > 0 ? 'flex' : 'none';
         }
 
-        updateSearchHint(searchFilterEl.value);
         updateClearBtn(searchFilterEl.value);
 
         let searchTimeout;
         searchFilterEl.addEventListener('input', () => {
             const value = searchFilterEl.value;
-            updateSearchHint(value);
             updateClearBtn(value);
 
             // Сохраняем в localStorage
@@ -2588,6 +2727,28 @@ document.addEventListener('DOMContentLoaded', () => {
      
      // Синхронизация чекбоксов списка покупок при загрузке
      syncCheckboxesFromLocalStorage();
+
+     // Защита: чекбокс "Новая цена" должен существовать и быть видимым
+     const newPriceCheckbox = document.getElementById('newPriceMode');
+     if (!newPriceCheckbox) {
+         console.warn('[newPriceMode] Чекбокс не найден в DOM, пересоздаём');
+         const formRow = document.querySelector('.form-row');
+         if (formRow) {
+             const div = document.createElement('div');
+             div.style.cssText = 'margin-left: 24px; display: flex; align-items: center;';
+             div.innerHTML = `
+                 <label style="margin: 0;">
+                     <input type="checkbox" id="newPriceMode" checked onchange="togglePriceMode()">
+                     Новая цена
+                 </label>
+             `;
+             formRow.appendChild(div);
+             loadPriceModeState();
+         }
+     } else {
+         newPriceCheckbox.style.display = 'inline-block';
+         newPriceCheckbox.parentElement.style.display = 'flex';
+     }
      
 });
 
@@ -2606,18 +2767,29 @@ function toggleShoppingListItem(checkbox) {
         image_url: checkbox.dataset.imageUrl || null,
         added_at: new Date().toISOString()
     };
-    
-    let list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
-    
+
+    let list = getShoppingList();
+
     if (checkbox.checked) {
-        list.push(item);
+        const exists = list.some(x =>
+            x.product_id === item.product_id && x.store_code === item.store_code
+        );
+        if (!exists) {
+            list.push(item);
+        }
     } else {
-        list = list.filter(x => 
+        list = list.filter(x =>
             !(x.product_id === item.product_id && x.store_code === item.store_code)
         );
     }
-    
-    localStorage.setItem('shoppingList', JSON.stringify(list));
+
+    saveShoppingList(list);
+
+    const row = checkbox.closest('tr');
+    if (row) {
+        row.classList.toggle('selected-row', checkbox.checked);
+    }
+
     updateShoppingListCounter();
 }
 
@@ -2631,15 +2803,25 @@ function updateShoppingListCounter() {
 }
 
 function syncCheckboxesFromLocalStorage() {
-    const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
+    const list = getShoppingList();
+    const allCheckboxes = document.querySelectorAll('input.shopping-list-checkbox');
+    console.log(`[SYNC] Список покупок: ${list.length} товаров, найдено чекбоксов в DOM: ${allCheckboxes.length}`);
+    let matched = 0;
     list.forEach(item => {
-        const checkbox = document.querySelector(
-            `input.shopping-list-checkbox[data-product-id="${item.product_id}"][data-store-code="${item.store_code}"]`
-        );
+        const selector = `input.shopping-list-checkbox[data-product-id="${item.product_id}"][data-store-code="${item.store_code}"]`;
+        const checkbox = document.querySelector(selector);
         if (checkbox) {
             checkbox.checked = true;
+            const row = checkbox.closest('tr');
+            if (row) {
+                row.classList.add('selected-row');
+            }
+            matched++;
+        } else {
+            console.log(`[SYNC] Не найден чекбокс: product_id=${item.product_id} (${typeof item.product_id}), store_code=${item.store_code} (${typeof item.store_code})`);
         }
     });
+    console.log(`[SYNC] Совпало: ${matched}/${list.length}`);
     updateShoppingListCounter();
 }
 
@@ -2648,6 +2830,10 @@ function clearShoppingList() {
          localStorage.removeItem('shoppingList');
          document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
              cb.checked = false;
+             const row = cb.closest('tr');
+             if (row) {
+                 row.classList.remove('selected-row');
+             }
          });
          updateShoppingListCounter();
      }
