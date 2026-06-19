@@ -1,0 +1,23 @@
+# Web-фреймворк и ASGI-сервер
+fastapi>=0.110
+uvicorn[standard]>=0.27
+starlette>=0.36
+
+# ORM и валидация
+SQLAlchemy>=2.0
+pydantic>=2.5
+
+# Планировщик фоновых задач
+APScheduler>=3.10
+
+# HTTP-клиент для API Магнита
+requests>=2.31
+
+# Браузерная автоматизация (category_verifier, product_opener, store_selector)
+playwright>=1.40
+
+# Управление .env (используется в routes/stores.py для обновления STORE_CODE/STORE_TYPE)
+python-dotenv>=1.0
+
+# Шаблоны (Jinja2Templates в FastAPI)
+Jinja2>=3.1
