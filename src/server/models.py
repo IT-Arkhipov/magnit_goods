@@ -135,6 +135,25 @@ class Product(Base):
     last_change_date = Column(DateTime, nullable=True)  # Дата последнего изменения цены
 
 
+class PriceHistory(Base):
+    """История сканирования цен товара (одна запись на день)."""
+
+    __tablename__ = "price_history"
+    __table_args__ = (
+        UniqueConstraint("product_id", "store_code", "scan_date", name="uq_price_history_day"),
+        Index("ix_price_history_lookup", "product_id", "store_code", "scan_date"),
+    )
+
+    id = Column(Integer, primary_key=True, index=True)
+    product_id = Column(Integer, nullable=False, index=True)
+    store_code = Column(String, nullable=False, index=True)
+    price = Column(Float, nullable=False)
+    quantity = Column(Integer, nullable=True)  # Остаток на момент скана
+    in_stock = Column(Boolean, nullable=True)  # Наличие на момент скана
+    scan_date = Column(Date, nullable=False)  # День сканирования (одна запись на день)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ScanJob(Base):
     """Задание на сканирование."""
 

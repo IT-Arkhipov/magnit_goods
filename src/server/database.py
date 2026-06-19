@@ -24,7 +24,7 @@ def get_db():
 def init_db():
     """Создать все таблицы при старте и выполнить миграции."""
     # Импортируем модели чтобы Base их знал
-    from src.server.models import Store, Category, Product, ScanJob  # noqa: F401
+    from src.server.models import Store, Category, Product, PriceHistory, ScanJob  # noqa: F401
     Base.metadata.create_all(bind=engine)
 
     # Выполняем миграции
@@ -40,6 +40,7 @@ def init_db():
         migrate_add_last_scan_found()
         migrate_add_scan_job_progress_fields()
         migrate_fix_previous_price(db)
+        migrate_create_price_history(db)
     finally:
         db.close()
 
@@ -410,3 +411,52 @@ def migrate_fix_previous_price(db):
     except Exception as e:
         db.rollback()
         print(f"ERROR migrate_fix_previous_price: {e}")
+
+
+def migrate_create_price_history(db):
+    """
+    Создать таблицу price_history и заполнить начальными данными.
+    Одна запись на день для каждого (product_id, store_code).
+    """
+    from datetime import date
+    from src.server.models import PriceHistory, Product
+    from sqlalchemy import inspect as sa_inspect
+
+    try:
+        print("Миграция: создание таблицы price_history...")
+
+        # 1. Создать таблицу если не существует
+        PriceHistory.__table__.create(engine, checkfirst=True)
+
+        # 2. Проверить, есть ли данные
+        count = db.query(PriceHistory).count()
+        if count > 0:
+            print(f"  - В price_history уже есть {count} записей, заполнение пропущено")
+            return
+
+        # 3. Заполнить начальными данными из текущих products (за сегодня)
+        today = date.today()
+        products = db.query(Product).all()
+        if not products:
+            print("  - Нет товаров в products для заполнения истории")
+            return
+
+        rows = [
+            {
+                "product_id": p.product_id,
+                "store_code": p.store_code,
+                "price": p.price,
+                "quantity": p.quantity,
+                "in_stock": p.in_stock,
+                "scan_date": today,
+            }
+            for p in products
+        ]
+        db.bulk_insert_mappings(PriceHistory, rows)
+        db.commit()
+        print(f"  + Заполнено {len(rows)} начальных записей в price_history за {today}")
+    except Exception as e:
+        db.rollback()
+        print(f"ERROR migrate_create_price_history: {e}")
+        import traceback
+        traceback.print_exc()
