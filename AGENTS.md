@@ -84,11 +84,11 @@ src/server/
 
 > `DailyPriceSnapshot` и поля акций (`old_price`, `discount_percent`, `is_promotion`, `promo_end_date`, `historical_*`) удалены миграцией `migrate_simplify_price_tracking`.
 
-## Миграции (выполняются при каждом старте, 11 шт.)
+## Миграции (выполняются при каждом старте, 12 шт.)
 
 Подробности: `docs/DATABASE.md`. Вызываются из `init_db()` (`database.py:24`):
 
-1. `migrate_simplify_price_tracking` — удалить поля акций, добавить `previous_price`/`price_change_percent`
+1. `migrate_simplify_price_tracking` — удалить поля акций, добавить `previous_price`/`price_change_percent` (больше НЕ удаляет `price_history`)
 2. `migrate_add_last_change_fields` — добавить `last_change_price`/`last_change_date`
 3. `migrate_add_product_indexes` — составные индексы для products
 4. `migrate_store_ids` — конвертация integer ID → MD5-хэши
@@ -99,6 +99,7 @@ src/server/
 9. `migrate_add_scan_job_progress_fields` — 10 полей прогресса в scan_jobs
 10. `migrate_fix_previous_price` — восстановить previous_price, испорченный старым кодом
 11. `migrate_create_price_history` — создать price_history (упрощённая, по дням)
+12. `migrate_backfill_price_history` — восстановить price_history из `last_change_price`/`last_change_date` (синтетические записи за день до изменения)
 
 ## API endpoints (актуальные пути)
 

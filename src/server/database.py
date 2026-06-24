@@ -41,6 +41,7 @@ def init_db():
         migrate_add_scan_job_progress_fields()
         migrate_fix_previous_price(db)
         migrate_create_price_history(db)
+        migrate_backfill_price_history(db)
     finally:
         db.close()
 
@@ -458,5 +459,87 @@ def migrate_create_price_history(db):
     except Exception as e:
         db.rollback()
         print(f"ERROR migrate_create_price_history: {e}")
+        import traceback
+        traceback.print_exc()
+
+
+def migrate_backfill_price_history(db):
+    """
+    Восстановить price_history из last_change_price / last_change_date.
+
+    Для каждого товара с заполненными last_change_price и last_change_date
+    создаёт синтетическую запись в price_history за день до последнего
+    изменения цены (scan_date = last_change_date - 1 день, price = last_change_price).
+    Это даёт начальную точку для сравнения при следующем сканировании,
+    если основная история была утеряна (например, из-за конфликта миграций).
+
+    Идемпотентна: пропускает записи, которые уже есть в price_history.
+    """
+    from datetime import datetime
+    from src.server.models import PriceHistory, Product
+
+    try:
+        print("Миграция: восстановление price_history из last_change_price...")
+
+        products = (
+            db.query(Product)
+            .filter(
+                Product.last_change_price.isnot(None),
+                Product.last_change_date.isnot(None),
+            )
+            .all()
+        )
+
+        if not products:
+            print("  - Нет товаров с last_change_price для восстановления")
+            return
+
+        # Синтетическая запись: за день до last_change_date, цена = last_change_price
+        synthetic_rows = []
+        for p in products:
+            if isinstance(p.last_change_date, datetime):
+                change_date = p.last_change_date.date()
+            else:
+                change_date = p.last_change_date
+            synthetic_date = change_date - timedelta(days=1)
+            synthetic_rows.append({
+                "product_id": p.product_id,
+                "store_code": p.store_code,
+                "price": p.last_change_price,
+                "quantity": p.quantity,
+                "in_stock": p.in_stock,
+                "scan_date": synthetic_date,
+            })
+
+        # Получить существующие ключи (product_id, store_code, scan_date) для проверки дубликатов
+        existing_keys = {
+            (r.product_id, r.store_code, r.scan_date)
+            for r in db.query(
+                PriceHistory.product_id,
+                PriceHistory.store_code,
+                PriceHistory.scan_date,
+            ).all()
+        }
+
+        to_insert = [
+            r for r in synthetic_rows
+            if (r["product_id"], r["store_code"], r["scan_date"]) not in existing_keys
+        ]
+
+        if to_insert:
+            db.bulk_insert_mappings(PriceHistory, to_insert)
+            db.commit()
+            print(
+                f"  + Восстановлено {len(to_insert)} записей "
+                f"(пропущено {len(synthetic_rows) - len(to_insert)} существующих)"
+            )
+        else:
+            print(
+                f"  - Нечего восстанавливать "
+                f"(все {len(synthetic_rows)} записей уже существуют)"
+            )
+    except Exception as e:
+        db.rollback()
+        print(f"ERROR migrate_backfill_price_history: {e}")
         import traceback
         traceback.print_exc()
