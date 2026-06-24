@@ -50,7 +50,10 @@ def migrate_simplify_price_tracking(db):
     Упрощение отслеживания цен:
     1. Удалить поля акций из products
     2. Добавить поля previous_price, price_change_percent
-    3. Удалить таблицы price_history, daily_price_snapshot
+    3. Удалить устаревшую таблицу daily_price_snapshot
+
+    Внимание: price_history НЕ удаляется — она пересоздаётся миграцией
+    migrate_create_price_history и используется для по-дневной истории цен.
     """
     try:
         print("Миграция: упрощение отслеживания цен...")
@@ -87,13 +90,10 @@ def migrate_simplify_price_tracking(db):
             except Exception:
                 print(f"  - Поле {col} уже удалено или не существует")
 
-        # Удалить таблицы
-        try:
-            db.execute(text("DROP TABLE IF EXISTS price_history"))
-            print("  + Таблица price_history удалена")
-        except Exception as e:
-            print(f"  ! Ошибка удаления price_history: {e}")
-
+        # Удалить устаревшие таблицы.
+        # Внимание: price_history НЕ удаляем — она пересоздаётся миграцией
+        # migrate_create_price_history и используется для отслеживания цен.
+        # Удаление здесь ломало накопление истории при каждом перезапуске сервера.
         try:
             db.execute(text("DROP TABLE IF EXISTS daily_price_snapshot"))
             print("  + Таблица daily_price_snapshot удалена")
