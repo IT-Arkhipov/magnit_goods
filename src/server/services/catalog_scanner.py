@@ -559,17 +559,34 @@ class CatalogScanner:
                     "unit_price": product_data.get("unit_price", existing.unit_price),
                 }
 
-                # previous_price и price_change_percent — от предыдущего дня
-                if prev_day_price is not None and abs(prev_day_price - current_price) > 0.01:
-                    update_data["previous_price"] = prev_day_price
+                # previous_price и price_change_percent
+                # Источник приоритета: price_history (предыдущий день) → existing.price
+                if prev_day_price is not None:
+                    # Есть история за предыдущий день — сравниваем с ней
+                    if abs(prev_day_price - current_price) > 0.01:
+                        update_data["previous_price"] = prev_day_price
+                        change_percent = round(
+                            (prev_day_price - current_price) / prev_day_price * 100, 1
+                        )
+                        update_data["price_change_percent"] = change_percent
+                        if change_percent != 0:
+                            price_changes_count += 1
+                    else:
+                        # Цена не изменилась относительно вчера
+                        update_data["previous_price"] = current_price
+                        update_data["price_change_percent"] = None
+                elif existing.price is not None and abs(existing.price - current_price) > 0.01:
+                    # Истории нет (например, после перезапуска с пустой price_history) —
+                    # fallback на цену из предыдущего скана в БД
+                    update_data["previous_price"] = existing.price
                     change_percent = round(
-                        (prev_day_price - current_price) / prev_day_price * 100, 1
+                        (existing.price - current_price) / existing.price * 100, 1
                     )
                     update_data["price_change_percent"] = change_percent
                     if change_percent != 0:
                         price_changes_count += 1
                 else:
-                    # Нет предыдущего дня или цена не изменилась
+                    # Нет ни истории, ни предыдущей цены, либо цена не изменилась
                     update_data["previous_price"] = current_price
                     update_data["price_change_percent"] = None
 
