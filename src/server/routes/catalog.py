@@ -257,6 +257,11 @@ def list_products(
      sort_by: str = Query("name", pattern="^(name|price|last_seen)$"),
      limit: int = Query(100, le=1000),
      offset: int = Query(0),
+     relax_stale: bool = Query(
+         False,
+         description="Расширить окно видимости устаревших товаров до STALE_DAYS_DELETE "
+                     "(используется в режиме «Последнее изменение» чекбокса «Новая цена»).",
+     ),
      db: Session = Depends(get_db),
 ):
     """Список товаров с фильтрацией и сортировкой."""
@@ -286,8 +291,14 @@ def list_products(
         # Скрываем товары, которых не было в сканах дольше STALE_DAYS_VISIBLE дней.
         # Жизненный цикл устаревшего товара: STALE_DAYS_VISIBLE (видим) →
         # STALE_DAYS_HIDDEN (скрыт) → STALE_DAYS_DELETE (удалён).
-        from src.server.constants import STALE_DAYS_VISIBLE
-        visible_cutoff = datetime.utcnow().date() - timedelta(days=STALE_DAYS_VISIBLE)
+        # При relax_stale=True (режим «Последнее изменение») расширяем окно до
+        # STALE_DAYS_DELETE, чтобы показывать товары со снижением на старом скане.
+        if relax_stale:
+            from src.server.constants import STALE_DAYS_DELETE
+            visible_cutoff = datetime.utcnow().date() - timedelta(days=STALE_DAYS_DELETE)
+        else:
+            from src.server.constants import STALE_DAYS_VISIBLE
+            visible_cutoff = datetime.utcnow().date() - timedelta(days=STALE_DAYS_VISIBLE)
         q = q.filter(Product.last_seen >= visible_cutoff)
         return q
 
