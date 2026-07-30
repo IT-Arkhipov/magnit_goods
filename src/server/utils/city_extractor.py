@@ -79,5 +79,36 @@ def extract_city_from_address(full_address: str) -> str:
                 continue
             return candidate
     
-    # Если не найдено ни города, ни села с явным указанием типа — возвращаем None
+    # ===== Fallback: город без типа "г" =====
+    # Формат: "Регион, Город, Улица, Дом" или "Город, Улица, Дом"
+    # Город — элемент, не являющийся регионом/улицей/домом.
+    STREET_PREFIXES = (
+        "ул", "улица", "проспект", "пр-т", "бульвар", "б-р",
+        "переулок", "пер", "набережная", "наб", "площадь", "пл",
+        "шоссе", "ш", "проезд", "тупик", "мкр", "микрорайон",
+    )
+    REGION_SUFFIXES = ("республика", "край", "область", "р-н", "район")
+    parts = [p.strip() for p in addr.split(",")]
+
+    def _is_valid_city(c: str) -> bool:
+        if not c or c.isdigit() or len(c) > 30:
+            return False
+        lo = c.lower()
+        if any(lo.startswith(p) for p in STREET_PREFIXES):
+            return False
+        if any(lo.startswith(p) for p in ("д ", "дом", "корп", "корпус", "стр", "строение", "офис")):
+            return False
+        if lo.endswith(("р-н", "район")):
+            return False
+        if any(s in lo for s in REGION_SUFFIXES):
+            return False
+        return True
+
+    # Пробуем parts[0] (город без региона), потом parts[1] (город после региона)
+    for idx in (0, 1):
+        if idx < len(parts):
+            candidate = parts[idx].strip()
+            if _is_valid_city(candidate):
+                return candidate
+
     return None

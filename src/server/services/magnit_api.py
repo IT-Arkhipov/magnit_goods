@@ -375,11 +375,11 @@ class StoresAPI:
     ) -> dict:
         """
         Поиск магазинов по адресу.
-        Выполняет отдельный запрос для каждого типа магазина и объединяет результаты.
+        Отправляет один запрос со всеми типами (как сайт Магнита).
 
         Args:
             query: Поисковый запрос (адрес, город, улица)
-            store_types: Список типов магазинов для фильтрации
+            store_types: Список API-кодов типов (MM, GM, ME, ...)
             limit: Кол-во результатов
             offset: Смещение для пагинации
 
@@ -393,74 +393,56 @@ class StoresAPI:
         self._rate_limit_wait()
 
         url = f"{self.base_url}/webgate/v1/stores-facade/search/detail"
-        
+
         # Сначала получаем cookies с главной страницы
         try:
             self.session.get(f"{self.base_url}/shops", timeout=10)
         except Exception as e:
             logger.warning(f"Warning: Could not get cookies: {e}")
-        
-        # Список типов для запроса
-        types_to_search = store_types if store_types else ALL_STORE_TYPES
-        
-        all_stores = []
-        
-        # Выполняем отдельный запрос для каждого типа магазина
-        for store_type in types_to_search:
-            payload = {
-                "filters": {
-                    "query": query,
-                    "storeTypeListV2": [store_type],  # Только один тип за запрос
-                },
-                "pagination": {
-                    "offset": offset,
-                    "size": limit,
-                },
-                "sorting": {
-                    "sortBy": "SORT_BY_CITY",
-                    "sortType": "SORT_TYPE_ASC",
-                }
+
+        types_to_search = store_types if store_types else list(ALL_STORE_TYPES)
+
+        payload = {
+            "filters": {
+                "query": query,
+                "storeTypeListV2": types_to_search,
+            },
+            "pagination": {
+                "offset": offset,
+                "size": limit,
+            },
+            "sorting": {
+                "sortBy": "SORT_BY_CITY",
+                "sortType": "SORT_TYPE_ASC",
             }
+        }
 
-            try:
-                logger.debug(f"DEBUG StoresAPI: POST {url} (type={store_type})")
-                logger.debug(f"DEBUG StoresAPI: Payload: {json.dumps(payload, ensure_ascii=False)}")
-                logger.debug(f"DEBUG StoresAPI: Cookies: {self.session.cookies.get_dict()}")
-                
-                response = self.session.post(url, json=payload, timeout=self.timeout)
-                
-                logger.debug(f"DEBUG StoresAPI: Response status: {response.status_code}")
-                logger.debug(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    # Ответ API имеет структуру: {"data": [...], "totalCount": N}
-                    stores = data.get("data", [])
-                    logger.debug(f"DEBUG StoresAPI: Found {len(stores)} stores for type {store_type}")
-                    all_stores.extend(stores)
-                else:
-                    logger.debug(f"DEBUG StoresAPI: Response text: {response.text[:500]}")
-                    
-            except requests.RequestException as e:
-                logger.error(f"ERROR StoresAPI for type {store_type}: {e}")
-                # Продолжаем поиск для остальных типов
+        try:
+            logger.debug(f"DEBUG StoresAPI: POST {url}")
+            logger.debug(f"DEBUG StoresAPI: Payload: {json.dumps(payload, ensure_ascii=False)}")
 
-        # Дедупликация по code
-        seen_codes = {}
-        for store in all_stores:
-            # API возвращает code в externalId.storeCode
-            external_id = store.get("externalId", {})
-            code = external_id.get("storeCode") or store.get("code") or store.get("store_code")
-            if code and code not in seen_codes:
-                seen_codes[code] = store
-        
-        unique_stores = list(seen_codes.values())
-        
-        logger.debug(f"DEBUG StoresAPI: Total unique stores: {len(unique_stores)}")
+            response = self.session.post(url, json=payload, timeout=self.timeout)
+
+            logger.debug(f"DEBUG StoresAPI: Response status: {response.status_code}")
+
+            if response.status_code == 200:
+                data = response.json()
+                stores = data.get("data", [])
+                logger.debug(f"DEBUG StoresAPI: Found {len(stores)} stores")
+                return {
+                    "stores": stores,
+                    "total": len(stores),
+                    "hasMore": False,
+                }
+            else:
+                logger.error(f"DEBUG StoresAPI: Response {response.status_code}: {response.text[:500]}")
+
+        except requests.RequestException as e:
+            logger.error(f"ERROR StoresAPI: {e}")
 
         return {
-            "stores": unique_stores,
-            "total": len(unique_stores),
+            "stores": [],
+            "total": 0,
             "hasMore": False,
         }
 
