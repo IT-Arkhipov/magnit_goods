@@ -267,6 +267,13 @@ class CatalogScanner:
         total_price_changes = 0
         total_scanned = 0
 
+        # Метка времени начала сканирования — для последующего определения
+        # товаров, которых не вернул API в текущем скане (→ признак отсутствия).
+        scan_start_ts = datetime.utcnow()
+        # magnit_id категорий, полностью просканированных в текущем запуске
+        # (без сбоев/отмен). Только для них помечаем отсутствующие товары.
+        fully_scanned_category_ids: list[int] = []
+
 # Сканируем по одной категории за раз
         for cat_idx, cat_magnit_id in enumerate(category_ids):
             # Проверка на отмену - сбрасываем кэш сессии
@@ -285,6 +292,7 @@ class CatalogScanner:
 
             offset = 0
             has_more = True
+            category_failed = False  # True если категория прервана (ошибки API)
             while has_more:
                 # Retry logic: попытаемся 3 раза с задержкой
                 max_retries = 3
@@ -352,6 +360,7 @@ class CatalogScanner:
                         logger.warning(
                             f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
                         )
+                    category_failed = True
                     break
 
                 products = result.get("items", [])
@@ -397,6 +406,13 @@ class CatalogScanner:
 
                 self.db.commit()
 
+            # Категория просканирована без сбоев и без отмены — помечаем для
+            # дальнейшего анализа отсутствующих товаров. При category_failed=True
+            # (ошибки API в paging) НЕ помечаем, чтобы не сбросить in_stock у
+            # товаров, которые просто не успели загрузиться.
+            if not category_failed:
+                fully_scanned_category_ids.append(cat_magnit_id)
+
         # Обновляем дату сканирования категорий
         for cat_magnit_id in category_ids:
             cat = (
@@ -410,6 +426,15 @@ class CatalogScanner:
                 cat.last_scanned = datetime.utcnow()
 
         self.db.commit()
+
+        # Помечаем отсутствующие товары: для полностью просканированных
+        # категорий все записи, не найденные в текущем скане (last_scan_found
+        # остался меньше scan_start_ts), помечаем in_stock=False, quantity=0.
+        # Это убирает их из списка «в наличии» и из уведомлений о скидках,
+        # если API Магнита перестал их возвращать (товар физически закончился).
+        marked_missing = self._mark_missing_products(
+            fully_scanned_category_ids, scan_start_ts
+        )
 
         # Удаляем устаревшие товары (STALE_DAYS_DELETE+ дней без обновлений).
         # Жизненный цикл: STALE_DAYS_VISIBLE (видно) → STALE_DAYS_HIDDEN (скрыто) → удаление.
@@ -425,14 +450,94 @@ class CatalogScanner:
             "price_changes": total_price_changes,
             "deleted": deleted,
             "history_deleted": history_deleted,
+            "marked_missing": marked_missing,
         }
 
         if self.job_id:
             self._update_job_progress(f"Товары сохранены: {total_scanned} шт.")
             if deleted > 0:
                 self._update_job_progress(f"Удалено устаревших товаров: {deleted}")
+            if marked_missing > 0:
+                self._update_job_progress(
+                    f"Помечено отсутствующими: {marked_missing}"
+                )
 
         return result
+
+    def _mark_missing_products(
+        self,
+        fully_scanned_category_ids: list[int],
+        scan_start_ts: datetime,
+    ) -> int:
+        """
+        Помечать товары, отсутствующие в текущем скане, как in_stock=False,
+        quantity=0, и сбрасывать поля скидок (previous_price,
+        price_change_percent, last_change_price, last_change_date,
+        last_price_change). Вызывается после успешного завершения
+        сканирования категорий.
+
+        Сброс полей скидок необходим, чтобы «висящая» скидка (зафиксированная
+        в последний день, когда API ещё возвращал товар) не показывалась в
+        списке как активная для товара, которого физически уже нет в
+        магазине. Если товар позже вернётся в API, скидка пересчитается
+        заново при первом же обновлении цены.
+
+        Args:
+            fully_scanned_category_ids: magnit_id категорий, пройденных без
+                сбоев (только для них безопасно сбрасывать остатки — иначе
+                можно пометить товары из непросканированных страниц).
+            scan_start_ts: метка времени начала текущего скана. Товары с
+                last_scan_found < scan_start_ts считаются не найденными в
+                текущем скане.
+
+        Returns:
+            Количество помеченных товаров.
+        """
+        if not fully_scanned_category_ids:
+            return 0
+
+        # magnit_id → db category_id
+        cat_rows = (
+            self.db.query(Category.id, Category.magnit_id)
+            .filter(Category.magnit_id.in_(fully_scanned_category_ids))
+            .all()
+        )
+        db_category_ids = [row[0] for row in cat_rows]
+        if not db_category_ids:
+            return 0
+
+        marked = (
+            self.db.query(Product)
+            .filter(
+                Product.store_code == self.store_code,
+                Product.category_id.in_(db_category_ids),
+                Product.last_scan_found < scan_start_ts,
+            )
+            .update(
+                {
+                    Product.in_stock: False,
+                    Product.quantity: 0,
+                    # Сбрасываем поля скидок: «нет в наличии» и «со скидкой»
+                    # взаимоисключающие статусы — показывать скидку для товара,
+                    # которого нет в последнем скане, вводит в заблуждение.
+                    Product.previous_price: None,
+                    Product.price_change_percent: None,
+                    Product.last_change_price: None,
+                    Product.last_change_date: None,
+                    Product.last_price_change: None,
+                },
+                synchronize_session=False,
+            )
+        )
+
+        if marked > 0:
+            self.db.commit()
+            logger.info(
+                f"Помечено отсутствующими {marked} товаров для магазина "
+                f"{self.store_code} (last_scan_found < {scan_start_ts.isoformat()})"
+            )
+
+        return marked
 
     def _save_products(
         self, products: list[dict], category_magnit_id: int

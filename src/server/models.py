@@ -154,6 +154,20 @@ class PriceHistory(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
 
+class SchemaMigration(Base):
+    """Реестр выполненных миграций схемы БД.
+
+    Каждая миграция при первом успешном выполнении регистрирует себя здесь.
+    При последующих запусках init_db() пропускает уже выполненные миграции,
+    благодаря чему в логе нет шума и не выполняется лишняя работа.
+    """
+
+    __tablename__ = "schema_migrations"
+
+    name = Column(String(64), primary_key=True)
+    applied_at = Column(DateTime, default=datetime.utcnow)
+
+
 class ScanJob(Base):
     """Задание на сканирование."""
 

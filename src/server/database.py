@@ -22,28 +22,64 @@ def get_db():
 
 
 def init_db():
-    """Создать все таблицы при старте и выполнить миграции."""
-    # Импортируем модели чтобы Base их знал
-    from src.server.models import Store, Category, Product, PriceHistory, ScanJob  # noqa: F401
+    """Создать все таблицы при старте и выполнить миграции.
+
+    Каждая миграция выполняется ровно один раз за всю жизнь БД: после
+    успешного выполнения её имя регистрируется в таблице schema_migrations,
+    и при последующих запусках она пропускается. Это убирает шум в логах
+    и лишние операции (ALTER TABLE / SELECT COUNT) при каждом старте.
+    """
+    from src.server.models import (  # noqa: F401
+        Store,
+        Category,
+        Product,
+        PriceHistory,
+        ScanJob,
+        SchemaMigration,
+    )
     Base.metadata.create_all(bind=engine)
 
-    # Выполняем миграции
     db = SessionLocal()
     try:
-        migrate_simplify_price_tracking(db)
-        migrate_add_last_change_fields(db)
-        migrate_add_product_indexes(db)
-        migrate_store_ids()
-        migrate_categories()
-        migrate_add_shop_type()
-        migrate_fill_shop_type()
-        migrate_add_last_scan_found()
-        migrate_add_scan_job_progress_fields()
-        migrate_fix_previous_price(db)
-        migrate_create_price_history(db)
-        migrate_backfill_price_history(db)
+        _run_migration(db, "simplify_price_tracking", migrate_simplify_price_tracking, db)
+        _run_migration(db, "add_last_change_fields", migrate_add_last_change_fields, db)
+        _run_migration(db, "add_product_indexes", migrate_add_product_indexes, db)
+        _run_migration(db, "store_ids", migrate_store_ids)
+        _run_migration(db, "categories", migrate_categories)
+        _run_migration(db, "add_shop_type", migrate_add_shop_type)
+        _run_migration(db, "fill_shop_type", migrate_fill_shop_type)
+        _run_migration(db, "add_last_scan_found", migrate_add_last_scan_found)
+        _run_migration(db, "add_scan_job_progress_fields", migrate_add_scan_job_progress_fields)
+        _run_migration(db, "fix_previous_price", migrate_fix_previous_price, db)
+        _run_migration(db, "create_price_history", migrate_create_price_history, db)
+        _run_migration(db, "backfill_price_history", migrate_backfill_price_history, db)
     finally:
         db.close()
+
+
+def _run_migration(db, name: str, func, *args, **kwargs):
+    """Запустить миграцию, если она ещё не была выполнена.
+
+    Использует таблицу schema_migrations как реестр применённых миграций.
+    При первом запуске на существующей БД все миграции выполнятся повторно
+    (они идемпотентны — try/except, early return, IF NOT EXISTS), после чего
+    зарегистрируются. При последующих запусках — мгновенный пропуск.
+    """
+    from src.server.models import SchemaMigration
+
+    applied = db.query(SchemaMigration).filter_by(name=name).first()
+    if applied:
+        return
+
+    print(f"Миграция: {name}...", flush=True)
+    func(*args, **kwargs)
+
+    try:
+        db.add(SchemaMigration(name=name, applied_at=datetime.utcnow()))
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"  ! Не удалось зарегистрировать миграцию {name}: {e}", flush=True)
 
 
 def migrate_simplify_price_tracking(db):

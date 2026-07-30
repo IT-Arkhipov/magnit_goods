@@ -30,6 +30,9 @@ def get_decreased_prices(
             Product.store_code == store_code,
             Product.price_change_percent >= min_discount_percent,
             Product.last_price_change.isnot(None),
+            # Не уведомлять о скидках на товары, которых уже нет в магазине
+            # (API перестал их возвращать в последнем скане → in_stock=False).
+            Product.in_stock == True,  # noqa: E712
         )
         .order_by(Product.price_change_percent.desc())
         .limit(limit)

@@ -969,6 +969,14 @@ async function loadMoreProductsFromAPI() {
               url += '&relax_stale=true';
           }
 
+          // Если выбран фильтр «Нет в наличии» — просим бэкенд вернуть и
+          // отсутствующие товары (in_stock=False), иначе они по умолчанию
+          // скрываются на сервере и фильтр вернёт пустой список.
+          const _stockFilter = document.getElementById('stockFilter')?.value || '';
+          if (_stockFilter === 'out_of_stock') {
+              url += '&include_out_of_stock=true';
+          }
+
          const response = await fetch(url);
          const products = await response.json();
 
@@ -1938,6 +1946,11 @@ async function loadProductsEnhanced() {
                     if (!showNewPriceMode) {
                         url += '&relax_stale=true';
                     }
+                    // Аналогично loadMoreProductsFromAPI: при фильтре «Нет в наличии»
+                    // просим бэкенд вернуть и отсутствующие, иначе список пуст.
+                    if (stockFilter === 'out_of_stock') {
+                        url += '&include_out_of_stock=true';
+                    }
 
                     const response = await fetch(url);
                     const products = await response.json();
@@ -2316,7 +2329,8 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                           : ''} `
                                       : '';
                                 // Информация для tooltip
-                                const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                                const _rawQty = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                                const quantity = (_rawQty === 0 || _rawQty === '0') && priceInfo.in_stock !== false ? 'в наличии' : _rawQty;
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
@@ -2444,9 +2458,10 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                         const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
                         const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
                         
-                         // Информация для tooltip
-                         const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
-                          const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
+                          // Информация для tooltip
+                          const _rawQty = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
+                          const quantity = (_rawQty === 0 || _rawQty === '0') && priceInfo.in_stock !== false ? 'в наличии' : _rawQty;
+                           const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                           const oldPriceText = priceInfo.previous_price
                               ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
                                   ? ' (' + formatDate(priceInfo.last_change_date) + ')'

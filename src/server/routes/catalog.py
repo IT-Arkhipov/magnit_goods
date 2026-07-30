@@ -257,13 +257,20 @@ def list_products(
      sort_by: str = Query("name", pattern="^(name|price|last_seen)$"),
      limit: int = Query(100, le=1000),
      offset: int = Query(0),
-     relax_stale: bool = Query(
+relax_stale: bool = Query(
          False,
          description="Расширить окно видимости устаревших товаров до STALE_DAYS_DELETE "
                      "(используется в режиме «Последнее изменение» чекбокса «Новая цена»).",
      ),
+     include_out_of_stock: bool = Query(
+         False,
+         description="Включить товары, которых не вернул последний скан (in_stock=False). "
+                     "По умолчанию (False) такие товары скрываются — они физически "
+                     "отсутствуют в магазине, даже если по старому скану у них числится "
+                     "скидка.",
+     ),
      db: Session = Depends(get_db),
-):
+ ):
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
     from datetime import timedelta
@@ -300,6 +307,18 @@ def list_products(
             from src.server.constants import STALE_DAYS_VISIBLE
             visible_cutoff = datetime.utcnow().date() - timedelta(days=STALE_DAYS_VISIBLE)
         q = q.filter(Product.last_seen >= visible_cutoff)
+
+        # Скрываем отсутствующие товары: учитываем оба признака отсутствия —
+        # in_stock=False (API Магнита перестал возвращать товар) и quantity=0
+        # (товар остался в каталоге, но с нулевым остатком). Логика идентична
+        # проверке в validateShoppingList (base.html), чтобы список товаров и
+        # список покупок не расходились в оценке наличия.
+        # include_out_of_stock=True отключает фильтр (для UI-фильтра
+        # «Нет в наличии»).
+        if not include_out_of_stock:
+            q = q.filter(
+                (Product.in_stock == True) & (Product.quantity > 0)  # noqa: E712
+            )
         return q
 
     if search and search.strip():
