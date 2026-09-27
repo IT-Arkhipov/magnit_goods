@@ -1,0 +1,65 @@
+{
+  "version": 1,
+  "skills": {
+    "koda-cli-subagent": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-cli-subagent/SKILL.md",
+      "computedHash": "2d43b6367b2ac4c0365224a4168e57df2f170cc14993d62afa115e0fc53d554d"
+    },
+    "koda-coder": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-coder/SKILL.md",
+      "computedHash": "78686b1f8c9812b66fd67a189b8d268f7bbacd7f9977f9bcf15bb152da3f108e"
+    },
+    "koda-helper": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-helper/SKILL.md",
+      "computedHash": "cf6a68a1fce38dd0343ac6851ede7c6d31e4c8a5027d13de55be0e7c127a0b14"
+    },
+    "koda-jetbrains-helper": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-jetbrains-helper/SKILL.md",
+      "computedHash": "cf596e409518cb7f1d5a1a39c829e861b35d8c121c5cfa687f2a9c5c502e41c1"
+    },
+    "koda-learn": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-learn/SKILL.md",
+      "computedHash": "6853d74e5fcc36c97d1594e6d87f9a8d155515b9613c8a0dc172a596a7b3b11a"
+    },
+    "koda-plan": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-plan/SKILL.md",
+      "computedHash": "e6e41a09da1903531a89a757946ea48fd50cf2c2762718e5845b6a18adbfad7c"
+    },
+    "koda-skill-maker": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-skill-maker/SKILL.md",
+      "computedHash": "8befbbfc444220f1437e1cb5fd9469509ed9fe7a18cc5180a15139ff37818952"
+    },
+    "koda-todo": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-todo/SKILL.md",
+      "computedHash": "991b873e1f4ab381a8c2e29f5adef56074f5936ab7ae6b3e8b6853a5a33010c6"
+    },
+    "koda-vscode-helper": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-vscode-helper/SKILL.md",
+      "computedHash": "edfd55da2e50714a76928fd67413f5671f34244f0dfedad645c63b72ce249af1"
+    },
+    "koda-zensical": {
+      "source": "XCode-NLP/KodaSkills",
+      "sourceType": "github",
+      "skillPath": "skills/koda-zensical/SKILL.md",
+      "computedHash": "932918ecfc935020e0966a988c3a0dfcfb9df4638ec6461d030be8aa1fb86520"
+    }
+  }
+}
