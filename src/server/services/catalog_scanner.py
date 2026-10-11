@@ -596,7 +596,6 @@ class CatalogScanner:
         # 2. Получаем последнюю цену ПРЕДЫДУЩЕГО дня для каждого товара
         # (используется для previous_price / price_change_percent)
         today = date.today()
-        yesterday = today - timedelta(days=1)
         previous_day_prices: dict[int, float] = {}
         if product_ids:
             price_history_rows = (

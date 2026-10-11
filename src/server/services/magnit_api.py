@@ -236,8 +236,7 @@ class MagnitAPIClient:
 
             # Цена — конвертируем из копеек в рубли
             current_price = item.get("price")
-            product_name = item.get("name") or item.get("title", "")
-            
+
             # API всегда возвращает цены в копейках, делим на 100
             if current_price:
                 current_price = current_price / 100
