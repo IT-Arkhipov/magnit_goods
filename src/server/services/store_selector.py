@@ -64,7 +64,7 @@ class MagnitStoreSelector:
                         btn.click()
                         time.sleep(1)
                         return True
-                except:
+                except Exception:
                     continue
         except Exception as e:
             print(f"Предупреждение: не удалось выбрать режим: {e}")
@@ -85,7 +85,7 @@ class MagnitStoreSelector:
                         btn.click()
                         time.sleep(1)
                         return True
-                except:
+                except Exception:
                     continue
         except Exception as e:
             print(f"Предупреждение: не удалось кликнуть кнопку выбора: {e}")
@@ -111,7 +111,7 @@ class MagnitStoreSelector:
                         input_field.press("Enter")
                         time.sleep(2)  # Ждём результатов
                         return True
-                except:
+                except Exception:
                     continue
         except Exception as e:
             print(f"Ошибка ввода адреса: {e}")
@@ -147,7 +147,7 @@ class MagnitStoreSelector:
                             el.click()
                             time.sleep(1)
                             return True
-                    except:
+                    except Exception:
                         continue
         except Exception as e:
             print(f"Ошибка выбора типа магазина: {e}")
@@ -183,7 +183,7 @@ class MagnitStoreSelector:
                     store_data = self._parse_store_text(text)
                     if store_data:
                         stores.append(store_data)
-                except:
+                except Exception:
                     continue
         except Exception as e:
             print(f"Ошибка сбора магазинов: {e}")
