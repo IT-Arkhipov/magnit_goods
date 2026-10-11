@@ -5,7 +5,6 @@
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
-from sqlalchemy.orm import Session
 from datetime import datetime
 import logging
 
@@ -57,7 +56,7 @@ def update_prices_job(store_code: str, category_ids: list[int] = None):
         job.items_updated = result["updated"]
         db.commit()
 
-        logger.info(f"[Scheduler] Обновление цен завершено")
+        logger.info("[Scheduler] Обновление цен завершено")
 
         scanner.close()
 

@@ -23,7 +23,7 @@ def open_product_with_store(product_url: str, store_code: str, store_type: str):
             context = browser.new_context()
             page = context.new_page()
             
-            print(f"Открываем magnit.ru для выбора магазина...")
+            print("Открываем magnit.ru для выбора магазина...")
             
             # Переходим на главную страницу Магнита
             page.goto("https://magnit.ru/", wait_until="domcontentloaded")

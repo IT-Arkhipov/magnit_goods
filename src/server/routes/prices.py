@@ -1,14 +1,13 @@
 """
 Маршруты для работы с ценами.
 """
-from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks, Body
+from fastapi import APIRouter, Depends, HTTPException, Query, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime, date, timedelta
+from datetime import datetime
 
 from src.server.database import get_db
 from src.server.models import ScanJob, Product
-from src.server.schemas import ScanJobResponse
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
 

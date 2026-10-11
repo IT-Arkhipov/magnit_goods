@@ -2,7 +2,6 @@
 Сервис для обновления каталога категорий из API Магнита.
 """
 
-import os
 import json
 import time
 import logging
@@ -10,7 +9,7 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 import requests
 from src.server.database import SessionLocal
-from src.server.models import Category, Store
+from src.server.models import Category
 
 logger = logging.getLogger(__name__)
 

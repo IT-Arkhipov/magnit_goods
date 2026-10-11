@@ -457,7 +457,6 @@ def migrate_create_price_history(db):
     """
     from datetime import date
     from src.server.models import PriceHistory, Product
-    from sqlalchemy import inspect as sa_inspect
 
     try:
         print("Миграция: создание таблицы price_history...")

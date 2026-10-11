@@ -274,7 +274,6 @@ relax_stale: bool = Query(
     """Список товаров с фильтрацией и сортировкой."""
     from sqlalchemy.orm import joinedload
     from datetime import timedelta
-    from sqlalchemy import func
 
     # Распарсиваем category_ids один раз
     cat_id_list: list[int] = []
@@ -551,9 +550,9 @@ def scan_products(
         except ValueError:
             raise HTTPException(status_code=400, detail="Неверный формат category_ids")
 
-    logger.debug(f"DEBUG: Creating CatalogScanner...")
+    logger.debug("DEBUG: Creating CatalogScanner...")
     scanner = CatalogScanner(db, store_code=store_code)
-    logger.debug(f"DEBUG: CatalogScanner created successfully")
+    logger.debug("DEBUG: CatalogScanner created successfully")
 
     try:
         logger.debug(
@@ -583,7 +582,6 @@ def scan_all_stores(
     """
     from src.server.services.catalog_scanner import CatalogScanner
     from src.server.models import Store, ScanJob
-    import traceback
     import json
 
     # Получаем все магазины

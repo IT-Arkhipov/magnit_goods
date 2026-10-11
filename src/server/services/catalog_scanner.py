@@ -4,11 +4,9 @@
 """
 
 from sqlalchemy.orm import Session
-from sqlalchemy import func
 from datetime import datetime, date, timedelta
 from typing import Optional, Dict
 import time
-import os
 import logging
 
 from src.server.models import (
@@ -245,7 +243,6 @@ class CatalogScanner:
                 logger.debug(f"DEBUG: category_ids (first 5): {category_ids[:5]}")
             except Exception as e:
                 logger.error(f"ERROR in category_ids extraction: {e}")
-                import traceback
 
                 logger.exception("Traceback")
                 raise
@@ -380,7 +377,7 @@ class CatalogScanner:
                 
                 # Если нет товаров, выходим из цикла (даже если hasMore=True)
                 if not products:
-                    logger.debug(f"DEBUG: No products returned, breaking pagination loop")
+                    logger.debug("DEBUG: No products returned, breaking pagination loop")
                     break
                 
                 # Если next_offset не определён, но есть товары, вычисляем сами
@@ -580,7 +577,6 @@ class CatalogScanner:
             )
         except Exception as e:
             logger.error(f"ERROR in _save_products finding category: {e}")
-            import traceback
 
             logger.exception("Traceback")
             raise

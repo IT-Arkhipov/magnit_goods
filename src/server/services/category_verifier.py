@@ -97,17 +97,17 @@ class CategoryVerifier:
                                     print(f"  ⚠️ '{cat_title}' → '{cap['api_title']}'")
                                     category["title"] = cap["api_title"]
                                 else:
-                                    print(f"  ✓ OK")
+                                    print("  ✓ OK")
                                 print(f"  Подкатегории: {len(cap['subcategories'])}")
                             else:
-                                print(f"  ⚠️ API не перехвачен")
+                                print("  ⚠️ API не перехвачен")
 
                         back = self.page.locator('button:has-text("Назад")').first
                         if back.count() > 0:
                             back.click()
                             time.sleep(1)
                     else:
-                        print(f"  ⚠️ Не найдена")
+                        print("  ⚠️ Не найдена")
                 except Exception as e:
                     print(f"  ❌ {e}")
 

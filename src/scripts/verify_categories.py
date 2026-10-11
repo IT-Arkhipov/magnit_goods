@@ -121,9 +121,9 @@ class CategoryVerifier:
                                 for sub in captured["subcategories"]:
                                     print(f"    - {sub['title']} (ID: {sub['id']})")
                             else:
-                                print(f"  ⚠️ API запрос не перехвачен")
+                                print("  ⚠️ API запрос не перехвачен")
                         else:
-                            print(f"  ⚠️ Не найдена ссылка 'Все товары этой категории'")
+                            print("  ⚠️ Не найдена ссылка 'Все товары этой категории'")
                     else:
                         print(f"  ⚠️ Категория '{cat_title}' не найдена в сайдбаре")
 

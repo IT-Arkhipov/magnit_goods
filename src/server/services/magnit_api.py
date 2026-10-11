@@ -19,7 +19,6 @@ import logging
 
 from src.server.constants import (
     STORE_TYPE_MAP,
-    REVERSE_STORE_TYPE_MAP,
     API_STORE_TYPE_CODE,
 )
 
