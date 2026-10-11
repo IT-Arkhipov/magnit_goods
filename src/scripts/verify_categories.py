@@ -70,9 +70,6 @@ class CategoryVerifier:
             catalog_button.click()
             time.sleep(2)
 
-            sidebar = self.page.locator(
-                '[class*="sidebar"], [class*="drawer"], [class*="panel"]'
-            ).first
             time.sleep(1)
 
             for idx, category in enumerate(root_categories):

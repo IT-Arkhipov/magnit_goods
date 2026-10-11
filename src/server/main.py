@@ -1,16 +1,14 @@
 from fastapi import FastAPI, Request, Depends, Query, BackgroundTasks
-from starlette.responses import HTMLResponse, FileResponse, RedirectResponse
-from starlette.templating import Jinja2Templates, _TemplateResponse as TemplateResponse
+from starlette.responses import HTMLResponse, RedirectResponse
+from starlette.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
-from typing import Optional
 import os
 import logging
 
-from src.server.database import engine, init_db, get_db, SessionLocal
+from src.server.database import init_db, get_db, SessionLocal
 from src.server.models import Store
-from src.server.schemas import StoreCreate
 from src.server.routes import stores, jobs, catalog, prices
 from src.server.scheduler import init_scheduler, shutdown_scheduler
 from sqlalchemy import text
@@ -119,23 +117,6 @@ async def page_products(request: Request, db: Session = Depends(get_db)):
     )
 
 
-@app.get("/test-discount", response_class=HTMLResponse)
-async def page_test_discount(request: Request):
-    return render_template(
-        "test_discount.html",
-        {"request": request},
-    )
-
-
-@app.get("/test-stores-loading", response_class=HTMLResponse)
-async def page_test_stores_loading(request: Request):
-    return render_template(
-        "test_stores_loading.html",
-        {"request": request},
-    )
-
-
-
 @app.get("/jobs", response_class=HTMLResponse)
 async def page_jobs(request: Request, db: Session = Depends(get_db)):
     stores = db.query(Store).filter(Store.is_active == True).all()  # noqa: E712
@@ -151,41 +132,6 @@ async def page_shopping_list(request: Request):
     return render_template(
         "shopping_list.html",
         {"request": request, "page": "shopping-list"},
-    )
-
-
-# Заглушки для HTMX POST
-@app.post("/api/stores")
-async def create_store_htmx(
-    request: Request,
-    db: Session = Depends(get_db),
-):
-    """HTMX-совместимое создание магазина (form data)."""
-    form = await request.form()
-    store_data = StoreCreate(
-        store_code=form["store_code"],
-        store_type=form["store_type"],
-        city=form["city"],
-        address=form["address"],
-        full_address=form["full_address"],
-        name=form.get("name"),
-    )
-    existing = db.query(Store).filter(Store.store_code == store_data.store_code).first()
-    if existing:
-        return HTMLResponse("Магазин с таким кодом уже существует", status_code=409)
-    db_store = Store(**store_data.model_dump())
-    db.add(db_store)
-    db.commit()
-    db.refresh(db_store)
-    # Вернуть обновлённую таблицу
-    stores_list = (
-        db.query(Store)
-        .order_by(text("store_type COLLATE NOCASE, full_address COLLATE NOCASE"))
-        .all()
-    )
-    return templates.TemplateResponse(
-        name="stores_table.html",
-        context={"request": request, "stores": stores_list},
     )
 
 
