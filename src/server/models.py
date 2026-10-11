@@ -67,7 +67,7 @@ class Category(Base):
     created_at = Column(DateTime, default=datetime.utcnow)
 
     # Relationships
-    children = relationship("Category", backref="parent", remote_side=[id])
+    parent = relationship("Category", backref="children", remote_side=[id])
 
     def __repr__(self):
         return f"<Category id={self.id} magnit_id={self.magnit_id} name={self.name}>"

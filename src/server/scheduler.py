@@ -79,14 +79,13 @@ def scan_catalog_job(store_code: str):
     Запускается еженедельно.
     """
     db = SessionLocal()
-    job_id = None
 
     try:
         logger.info(
             f"[Scheduler] Запуск сканирования каталога для магазина {store_code}"
         )
 
-        # Сканируем категории
+        # Фаза 1: сканируем категории
         job_categories = ScanJob(
             job_type="catalog",
             store_code=store_code,
@@ -98,7 +97,17 @@ def scan_catalog_job(store_code: str):
         db.refresh(job_categories)
 
         scanner = CatalogScanner(db, store_code=store_code, job_id=job_categories.id)
-        cat_result = scanner.scan_categories()
+        try:
+            cat_result = scanner.scan_categories()
+        except Exception as e:
+            logger.error(f"[Scheduler] Ошибка сканирования категорий: {e}")
+            job_categories.status = "failed"
+            job_categories.error_message = str(e)
+            job_categories.finished_at = datetime.utcnow()
+            db.commit()
+            return
+        finally:
+            scanner.close()
 
         job_categories.status = "completed"
         job_categories.finished_at = datetime.utcnow()
@@ -108,7 +117,7 @@ def scan_catalog_job(store_code: str):
 
         logger.info(f"[Scheduler] Категории: {cat_result}")
 
-        # Сканируем товары из отслеживаемых категорий
+        # Фаза 2: сканируем товары из отслеживаемых категорий
         job_products = ScanJob(
             job_type="prices",
             store_code=store_code,
@@ -120,7 +129,17 @@ def scan_catalog_job(store_code: str):
         db.refresh(job_products)
 
         scanner = CatalogScanner(db, store_code=store_code, job_id=job_products.id)
-        prod_result = scanner.scan_products(tracked_only=True)
+        try:
+            prod_result = scanner.scan_products(tracked_only=True)
+        except Exception as e:
+            logger.error(f"[Scheduler] Ошибка сканирования товаров: {e}")
+            job_products.status = "failed"
+            job_products.error_message = str(e)
+            job_products.finished_at = datetime.utcnow()
+            db.commit()
+            return
+        finally:
+            scanner.close()
 
         job_products.status = "completed"
         job_products.finished_at = datetime.utcnow()
@@ -131,17 +150,6 @@ def scan_catalog_job(store_code: str):
 
         logger.info(f"[Scheduler] Товары: {prod_result}")
 
-        scanner.close()
-
-    except Exception as e:
-        logger.error(f"[Scheduler] Ошибка сканирования каталога: {e}")
-        if job_id:
-            job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
-            if job:
-                job.status = "failed"
-                job.error_message = str(e)
-                job.finished_at = datetime.utcnow()
-                db.commit()
     finally:
         db.close()
 
@@ -170,8 +178,9 @@ def init_scheduler(store_code: str):
             )
             .all()
         )
+        # scan_products ожидает magnit_id категорий, а не их PK
         category_ids = (
-            [cat.id for cat in tracked_categories] if tracked_categories else None
+            [cat.magnit_id for cat in tracked_categories] if tracked_categories else None
         )
     finally:
         db.close()
