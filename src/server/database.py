@@ -341,7 +341,7 @@ def migrate_fill_shop_type():
     db_session = SessionLocal()
     try:
         # Проверяем, есть ли уже заполненные значения
-        filled_count = db_session.query(Store).filter(Store.shop_type != None).count()
+        filled_count = db_session.query(Store).filter(Store.shop_type != None).count()  # noqa: E711
         if filled_count > 0:
             return  # уже заполнено
 

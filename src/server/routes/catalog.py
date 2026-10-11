@@ -223,7 +223,7 @@ def update_categories_tracking(
     child_ids = [cid for cid in category_ids if cid is not None]
     actual_child_ids = db.query(Category.id).filter(
         Category.id.in_(child_ids),
-        Category.parent_id != None
+        Category.parent_id != None  # noqa: E711
     ).all()
     actual_child_ids = [c.id for c in actual_child_ids]
     
@@ -238,7 +238,7 @@ def update_categories_tracking(
 
     db.commit()
 
-    tracked_count = db.query(Category).filter(Category.is_tracked == True).count()
+    tracked_count = db.query(Category).filter(Category.is_tracked == True).count()  # noqa: E712
     return {
         "status": "success",
         "tracked_count": tracked_count,
@@ -399,7 +399,7 @@ def get_products_stats(
 
     row = db.query(
         func.count().label("total"),
-        func.sum(case((Product.in_stock == True, 1), else_=0)).label("in_stock"),
+        func.sum(case((Product.in_stock == True, 1), else_=0)).label("in_stock"),  # noqa: E712
         func.sum(case((Product.price_change_percent > 0, 1), else_=0)).label("with_price_decrease"),
         func.sum(case((Product.price_change_percent < 0, 1), else_=0)).label("with_price_increase"),
         func.max(Product.last_seen).label("last_update"),
@@ -592,7 +592,7 @@ def scan_all_stores(
     # Получаем отслеживаемые категории (только дочерние, не корневые)
     tracked_cats = db.query(Category).filter(
         Category.is_tracked == True,  # noqa: E712
-        Category.parent_id != None
+        Category.parent_id != None  # noqa: E711
     ).all()
     if not tracked_cats:
         raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий (только дочерние)")
@@ -812,7 +812,7 @@ def _fetch_and_update_categories_background():
             logger.debug("DEBUG: No STORE_CODE/STORE_TYPE in env, trying to get from DB")
             # Получаем первый активный магазин для запроса
             db = SessionLocal()
-            store = db.query(Store).filter(Store.is_active == True).first()
+            store = db.query(Store).filter(Store.is_active == True).first()  # noqa: E712
             db.close()
             if store:
                 logger.debug(
