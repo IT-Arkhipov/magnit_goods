@@ -114,7 +114,7 @@ Engine создаётся с `connect_args={"check_same_thread": False, "timeout
 | SQLAlchemy error в фоновой задаче | Используется закрытая сессия из `get_db` | Создать `SessionLocal()` внутри задачи |
 | Бан API Магнита | Убрали rate limiting | Вернуть `_rate_limit_wait()` |
 | Рассинхрон `.env` и БД | Ручное редактирование `.env` | Использовать `POST /api/stores/select` |
-| N+1 запросов в дереве категорий | Рекурсивный `build_tree` с SELECT на каждый узел | Один SELECT + сборка в памяти (см. `code_review_2026-06-12.md`) |
+| N+1 запросов в дереве категорий | Рекурсивный `build_tree` с SELECT на каждый узел | Один SELECT + сборка в памяти (см. code review от 2026-06-12) |
 | `Integer` для `shop_type` не заполняется | Создание `Store` без использования конструктора | Использовать `Store(**data)` (конструктор проставит `shop_type`) |
 | Отменённое задание стало `completed` | Статус присвоен напрямую после работы | Писать итог через `finalize_job` |
 | Товар не находится поиском | Запись товара в обход `_save_products` — не заполнен `name_search` | Заполнять `name_search = name.casefold()` |
@@ -139,7 +139,7 @@ Engine создаётся с `connect_args={"check_same_thread": False, "timeout
 
 ### Замечания из code review
 
-Полный отчёт: `docs/code_review_2026-06-12.md`. Нерешённое:
+Нерешённое:
 
 | # | Проблема | Файл | Приоритет |
 |---|---------|------|-----------|

@@ -32,4 +32,4 @@ API Магнита (`services/magnit_api.py`, с rate limiting) → `CatalogScan
 ### Прочее
 
 - Каталоги `.agents/`, `.kilo/`, `.koda/`, `.opencode/`, `opencode_temp/`, `openspec/`, PNG-скриншоты в корне — артефакты других агентов/сессий, не часть приложения.
-- Перед изменением кода сверяйся с `docs/DEVELOPMENT.md` (техдолг) и последним ревью `docs/code_review_2026-09-27.md` / `docs/PLAN_FIXES_2026-09-27.md`.
+- Перед изменением кода сверяйся с `docs/DEVELOPMENT.md` (техдолг) и `docs/DEVELOPMENT.md` (замечания из code review).

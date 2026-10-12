@@ -234,7 +234,7 @@ CORS_ORIGINS=   # разрешённые origins (CSV), по умолчанию 
 - Ключ товара `(product_id, store_code)` не включает тип магазина (техдолг №1)
 - `NotificationService` и `store_selector.py` не подключены (см. `docs/DEVELOPMENT.md`)
 - `print` остался только в Playwright-модулях (`store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py`)
-- Остальное — см. `docs/code_review_2026-06-12.md`
+- Остальное — см. `docs/DEVELOPMENT.md` (раздел «Замечания из code review»)
 
 ---
 

@@ -120,7 +120,7 @@ src/server/
 - `load_catalog_from_json.py` ожидает `data["root_categories"]`, но `categories.json` — плоский массив `[{id, title}]`.
 - `query_product.py` ссылается на удалённое поле `historical_discount_percent` — упадёт при запуске.
 - `POST /api/stores` в `main.py:158` (HTMX) перекрыт роутером и недостижим.
-- Производительность: 4 COUNT в `get_products_stats`, `commit()` внутри циклов — см. `docs/code_review_2026-06-12.md`.
+- Производительность: 4 COUNT в `get_products_stats`, `commit()` внутри циклов — см. `docs/DEVELOPMENT.md`.
 
 ---
 

@@ -74,8 +74,6 @@ src/server/
 | [docs/SERVICES.md](docs/SERVICES.md) | Детальное описание 8 сервисов, rate limiting, bulk-операции, Playwright |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Переменные окружения, запуск, scheduler, конфигурация |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Конвенции, критические особенности, типичные ошибки, техдолг |
-| [docs/scan_jobs.md](docs/scan_jobs.md) | Зачем нужны статусы фоновых заданий |
-| [docs/code_review_2026-06-12.md](docs/code_review_2026-06-12.md) | Отчёт ревью кода с проблемами производительности |
 | [AGENTS.md](AGENTS.md) | Краткая инструкция для AI-агентов с критическими особенностями |
 
 ## Основной рабочий процесс

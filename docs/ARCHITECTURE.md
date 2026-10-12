@@ -323,5 +323,3 @@ SQLite работает в режиме WAL с `busy_timeout` 30 с (`database.p
 - `docs/DEPLOYMENT.md` — запуск, env, scheduler
 - `docs/DEVELOPMENT.md` — конвенции, критические особенности
 - `docs/USER_GUIDE.md` — использование веб-интерфейса
-- `docs/scan_jobs.md` — зачем нужны статусы заданий
-- `docs/code_review_2026-06-12.md` — отчёт ревью с проблемами производительности
