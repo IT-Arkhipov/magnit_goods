@@ -4,7 +4,10 @@
 """
 
 from playwright.sync_api import sync_playwright
+import logging
 import time
+
+logger = logging.getLogger(__name__)
 
 
 def open_product_with_store(product_url: str, store_code: str, store_type: str):
@@ -23,7 +26,7 @@ def open_product_with_store(product_url: str, store_code: str, store_type: str):
             context = browser.new_context()
             page = context.new_page()
             
-            print("Открываем magnit.ru для выбора магазина...")
+            logger.info("Открываем magnit.ru для выбора магазина...")
             
             # Переходим на главную страницу Магнита
             page.goto("https://magnit.ru/", wait_until="domcontentloaded")
@@ -49,18 +52,19 @@ def open_product_with_store(product_url: str, store_code: str, store_type: str):
                             first_result.click()
                             time.sleep(2)
             except Exception as e:
-                print(f"Не удалось автоматически выбрать магазин: {e}")
-                print("Пользователь может выбрать магазин вручную")
+                logger.warning(f"Не удалось автоматически выбрать магазин: {e}")
+                logger.info("Пользователь может выбрать магазин вручную")
             
             # Переходим на страницу товара
-            print(f"Переходим на страницу товара: {product_url}")
+            logger.info(f"Переходим на страницу товара: {product_url}")
             page.goto(product_url, wait_until="domcontentloaded")
             
             # Оставляем браузер открытым для пользователя
-            print("Браузер открыт. Закройте его вручную когда закончите.")
+            logger.info("Браузер открыт. Закройте его вручную когда закончите.")
             
             # Ждем, пока пользователь не закроет браузер
             # (не закрываем автоматически)
             
-    except Exception as e:
-        print(f"Ошибка при открытии товара в браузере: {e}")
+    except Exception:
+        # traceback в лог приложения (поток запускается через run_logged)
+        logger.exception("Ошибка при открытии товара в браузере")

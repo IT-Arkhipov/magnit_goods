@@ -3,231 +3,69 @@
 """
 
 import json
-import time
 import logging
 from pathlib import Path
-from typing import Dict, List, Tuple
-import requests
+from typing import Dict, List, Optional
 from src.server.database import SessionLocal
-from src.server.models import Category
+from src.server.models import Category, Product
+from src.server.services.magnit_api import MagnitAPIClient
 
 logger = logging.getLogger(__name__)
+
+# Корневые категории: плоский массив [{"id": ..., "title": ...}]
+CATEGORIES_FILE = Path(__file__).parent.parent.parent / "data" / "categories.json"
+
+
+def load_root_categories(categories_file: Path = CATEGORIES_FILE) -> List[Dict]:
+    """Загрузить корневые категории из JSON-файла (без обращения к API и магазину).
+
+    Возвращает [{"id", "title"}]; при отсутствии файла или ошибке чтения — [].
+    """
+    if not categories_file.exists():
+        logger.warning(f"Categories file not found: {categories_file}")
+        return []
+    try:
+        with open(categories_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return [{"id": cat["id"], "title": cat["title"]} for cat in data]
+    except Exception as e:
+        logger.error(f"Error loading categories from file: {e}")
+        return []
 
 
 class CatalogUpdater:
     """Обновляет каталог категорий из API Магнита."""
 
-    def __init__(self, store_code: str = None, store_type: str = None):
-        self.base_url = "https://magnit.ru/webgate/v2/goods/search"
-        self.store_code = store_code or "210117"
-        self.store_type = store_type or "9"
-        self.rate_limit = 0.5  # seconds between requests
-        self._last_request_time = 0
-        self.categories_file = (
-            Path(__file__).parent.parent.parent / "data" / "categories.json"
-        )
-        self.headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
-            "Accept": "application/json",
-            "Content-Type": "application/json",
-        }
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
+    def __init__(self, store_code: Optional[str] = None, store_type: Optional[str] = None):
+        # Запросы идут через MagnitAPIClient: единый формат типа магазина,
+        # заголовки и ограничение частоты запросов. Код магазина — из аргумента
+        # или из STORE_CODE; захардкоженного магазина по умолчанию нет.
+        self.client = MagnitAPIClient(store_code=store_code, store_type=store_type)
+        if not self.client.store_code:
+            self.client.close()
+            raise ValueError("Не выбран магазин: задайте STORE_CODE или передайте store_code")
+        self.store_code = self.client.store_code
+        self.store_type = self.client.store_type
+        self.categories_file = CATEGORIES_FILE
 
-    def _rate_limit_wait(self):
-        """Пауза между запросами для соблюдения rate limiting."""
-        if self._last_request_time > 0:
-            elapsed = time.time() - self._last_request_time
-            if elapsed < self.rate_limit:
-                time.sleep(self.rate_limit - elapsed)
-        self._last_request_time = time.time()
-
-    def fetch_category_data(self, category_id: int) -> Dict:
+    def fetch_category_data(self, category_id: int) -> Optional[Dict]:
         """Получить данные категории из API Магнита."""
-        payload = {
-            "sort": {"order": "desc", "type": "popularity"},
-            "pagination": {"limit": 32, "offset": 0},
-            "categories": [category_id],
-            "includeAdultGoods": True,
-            "storeCode": self.store_code,
-            "storeType": self.store_type,
-            "catalogType": "1",
-        }
+        return self.client.fetch_category_raw(category_id)
 
-        try:
-            self._rate_limit_wait()
-            response = self.session.post(self.base_url, json=payload, timeout=15)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error fetching category {category_id}: {e}")
-            return None
+    def close(self):
+        """Закрыть HTTP-клиент."""
+        self.client.close()
 
     def load_root_categories_from_file(self) -> List[Dict]:
         """Загрузить корневые категории из JSON файла."""
-        if not self.categories_file.exists():
-            logger.warning(f"Categories file not found: {self.categories_file}")
-            return []
-        try:
-            with open(self.categories_file, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            return [{"id": cat["id"], "title": cat["title"]} for cat in data]
-        except Exception as e:
-            logger.error(f"Error loading categories from file: {e}")
-            return []
-
-    def update_category_from_api(
-        self, db, category: Category, api_data: Dict
-    ) -> Tuple[int, int, int]:
-        """
-        Обновить категорию и её подкатегории из данных API.
-        Возвращает (updated_count, added_count, deleted_count)
-        """
-        updated = 0
-        added = 0
-        deleted = 0
-
-        if not api_data or "category" not in api_data:
-            return updated, added, deleted
-
-        cat_info = api_data["category"]
-        subcats_from_api = api_data.get("fastCategoriesExtended", [])
-
-        # Обновляем название корневой категории если изменилось
-        if category.name != cat_info.get("title", category.name):
-            category.name = cat_info["title"]
-            updated += 1
-
-        # Получаем текущие подкатегории из БД
-        current_children = (
-            db.query(Category).filter(Category.parent_id == category.id).all()
-        )
-        current_ids = {child.magnit_id: child for child in current_children}
-        api_ids = {sub["id"] for sub in subcats_from_api}
-
-        # Удаляем подкатегории, которых нет в API
-        for magnit_id, child in current_ids.items():
-            if magnit_id not in api_ids:
-                db.delete(child)
-                deleted += 1
-
-        # Добавляем или обновляем подкатегории из API
-        for sub in subcats_from_api:
-            sub_id = sub["id"]
-            sub_name = sub["title"]
-
-            if sub_id in current_ids:
-                # Обновляем существующую подкатегорию
-                child = current_ids[sub_id]
-                if child.name != sub_name:
-                    child.name = sub_name
-                    updated += 1
-            else:
-                # Добавляем новую подкатегорию
-                new_child = Category(
-                    name=sub_name, url="", magnit_id=sub_id, parent_id=category.id
-                )
-                db.add(new_child)
-                added += 1
-
-        db.commit()
-        return updated, added, deleted
-
-    def update_all_categories(self) -> Dict:
-        """
-        Обновить все корневые категории из JSON файла через API Магнита.
-        Возвращает статистику обновления.
-        """
-        db = SessionLocal()
-
-        try:
-            root_categories_from_file = self.load_root_categories_from_file()
-            if not root_categories_from_file:
-                return {
-                    "total": 0,
-                    "processed": 0,
-                    "updated": 0,
-                    "added": 0,
-                    "deleted": 0,
-                    "errors": ["Categories file not found or empty"],
-                }
-
-            stats = {
-                "total": len(root_categories_from_file),
-                "processed": 0,
-                "updated": 0,
-                "added": 0,
-                "deleted": 0,
-                "errors": [],
-            }
-
-            for cat_data in root_categories_from_file:
-                try:
-                    magnit_id = cat_data["id"]
-                    expected_title = cat_data["title"]
-
-                    logger.info(f"Updating category: {expected_title} ({magnit_id})")
-
-                    api_data = self.fetch_category_data(magnit_id)
-
-                    if not api_data:
-                        stats["errors"].append(
-                            f"Failed to fetch data for {expected_title}"
-                        )
-                        stats["processed"] += 1
-                        continue
-
-                    cat_info = api_data.get("category", {})
-                    api_title = cat_info.get("title", expected_title)
-
-                    db_category = (
-                        db.query(Category)
-                        .filter(Category.magnit_id == magnit_id)
-                        .filter(Category.parent_id.is_(None))
-                        .first()
-                    )
-
-                    if not db_category:
-                        db_category = Category(
-                            magnit_id=magnit_id, name=api_title, url="", parent_id=None
-                        )
-                        db.add(db_category)
-                        db.commit()
-                        db.refresh(db_category)
-                        stats["added"] += 1
-
-                    if db_category.name != api_title:
-                        db_category.name = api_title
-                        db.commit()
-                        stats["updated"] += 1
-
-                    if api_data.get("fastCategoriesExtended"):
-                        upd, add, deleted = self.update_category_from_api(
-                            db, db_category, api_data
-                        )
-                        stats["updated"] += upd
-                        stats["added"] += add
-                        stats["deleted"] += deleted
-
-                    stats["processed"] += 1
-
-                except Exception as e:
-                    error_msg = (
-                        f"Error updating {cat_data.get('title', 'unknown')}: {str(e)}"
-                    )
-                    logger.error(error_msg)
-                    stats["errors"].append(error_msg)
-                    stats["processed"] += 1
-
-            return stats
-
-        finally:
-            db.close()
+        return load_root_categories(self.categories_file)
 
     def replace_all_categories(self) -> Dict:
         """
-        Полная замена всех категорий: получить все из API, затем очистить БД и заполнить заново.
-        Сохраняет is_tracked для категорий с совпадающим magnit_id.
+        Полная замена всех категорий: получить все из API, затем синхронизировать БД
+        по magnit_id (upsert): существующие категории сохраняют внутренний id и
+        is_tracked, новые добавляются с is_tracked=False, исчезнувшие из API удаляются.
+        Ничего не меняет в БД, если хотя бы одна корневая категория не получена.
 
         Возвращает статистику или ошибку.
         """
@@ -295,76 +133,109 @@ class CatalogUpdater:
                 f"DEBUG: Successfully fetched {len(all_categories_data)} categories from API"
             )
 
-            # Шаг 4: Сохранить старые is_tracked значения
-            old_tracked_status = {}
-            existing_categories = (
-                db.query(Category).filter(Category.magnit_id.isnot(None)).all()
-            )
-            for cat in existing_categories:
-                old_tracked_status[cat.magnit_id] = cat.is_tracked
+            # Шаг 4: Upsert по magnit_id в одной транзакции.
+            # Внутренние ID и is_tracked существующих категорий сохраняются,
+            # поэтому Product.category_id остаётся валидным.
+            unique_data = []
+            seen_magnit_ids = set()
+            for magnit_id, title, parent_magnit_id in all_categories_data:
+                if magnit_id in seen_magnit_ids:
+                    logger.warning(
+                        f"WARN: Дубль magnit_id={magnit_id} ({title}) в ответе API — пропущен"
+                    )
+                    continue
+                seen_magnit_ids.add(magnit_id)
+                unique_data.append((magnit_id, title, parent_magnit_id))
 
-            # Шаг 5: Очистить таблицу категорий
-            logger.debug("DEBUG: Clearing categories table...")
-            db.query(Category).delete()
-            db.commit()
+            # Существующие категории: при дублях magnit_id остаётся запись с минимальным id
+            existing_by_magnit_id = {}
+            duplicate_rows = []
+            for cat in db.query(Category).order_by(Category.id).all():
+                if cat.magnit_id is not None and cat.magnit_id not in existing_by_magnit_id:
+                    existing_by_magnit_id[cat.magnit_id] = cat
+                else:
+                    duplicate_rows.append(cat)
 
-            # Шаг 6: Заполнить новыми данными
             added_count = 0
-            updated_count = 0  # для случаев, когда is_tracked восстановлен
-
-            # Создать словарь для быстрого поиска ID по magnit_id
+            updated_count = 0  # переименованные или перенесённые
+            kept_ids = set()
             magnit_to_db_id = {}
 
-            # Сначала добавить корневые категории
-            for magnit_id, title, parent_magnit_id in all_categories_data:
-                if parent_magnit_id is None:  # корневая категория
-                    new_cat = Category(
-                        magnit_id=magnit_id,
-                        name=title,
-                        url="",
-                        parent_id=None,
-                        is_tracked=old_tracked_status.get(magnit_id, False),
+            # Сначала корневые категории
+            for magnit_id, title, parent_magnit_id in unique_data:
+                if parent_magnit_id is not None:
+                    continue
+                cat = existing_by_magnit_id.get(magnit_id)
+                if cat is None:
+                    cat = Category(
+                        magnit_id=magnit_id, name=title, url="", parent_id=None,
+                        is_tracked=False,
                     )
-                    db.add(new_cat)
+                    db.add(cat)
                     db.flush()  # получить ID
-                    magnit_to_db_id[magnit_id] = new_cat.id
-
-                    if old_tracked_status.get(magnit_id, False):
-                        updated_count += 1
-
                     added_count += 1
+                elif cat.name != title or cat.parent_id is not None:
+                    cat.name = title
+                    cat.parent_id = None
+                    updated_count += 1
+                magnit_to_db_id[magnit_id] = cat.id
+                kept_ids.add(cat.id)
 
-            # Затем добавить подкатегории
-            for magnit_id, title, parent_magnit_id in all_categories_data:
-                if parent_magnit_id is not None:  # подкатегория
-                    parent_id = magnit_to_db_id.get(parent_magnit_id)
-                    if parent_id is None:
-                        logger.warning(
-                            f"WARN: Parent category {parent_magnit_id} not found for {title}"
-                        )
-                        continue
-
-                    new_cat = Category(
-                        magnit_id=magnit_id,
-                        name=title,
-                        url="",
-                        parent_id=parent_id,
-                        is_tracked=old_tracked_status.get(magnit_id, False),
+            # Затем подкатегории
+            for magnit_id, title, parent_magnit_id in unique_data:
+                if parent_magnit_id is None:
+                    continue
+                parent_id = magnit_to_db_id.get(parent_magnit_id)
+                if parent_id is None:
+                    logger.warning(
+                        f"WARN: Parent category {parent_magnit_id} not found for {title}"
                     )
-                    db.add(new_cat)
-
-                    if old_tracked_status.get(magnit_id, False):
-                        updated_count += 1
-
+                    continue
+                cat = existing_by_magnit_id.get(magnit_id)
+                if cat is None:
+                    cat = Category(
+                        magnit_id=magnit_id, name=title, url="", parent_id=parent_id,
+                        is_tracked=False,
+                    )
+                    db.add(cat)
+                    db.flush()
                     added_count += 1
+                elif cat.name != title or cat.parent_id != parent_id:
+                    cat.name = title
+                    cat.parent_id = parent_id
+                    updated_count += 1
+                kept_ids.add(cat.id)
+
+            # Шаг 5: Удалить категории, которых нет в ответе API.
+            # Товары дублей переносим на оставшуюся запись, товары остальных
+            # удаляемых категорий отвязываем (category_id = NULL).
+            removed_ids = []
+            for cat in db.query(Category).all():
+                if cat.id in kept_ids:
+                    continue
+                removed_ids.append(cat.id)
+            for dup in duplicate_rows:
+                keeper = existing_by_magnit_id.get(dup.magnit_id) if dup.magnit_id is not None else None
+                if keeper is not None and keeper.id in kept_ids:
+                    db.query(Product).filter(Product.category_id == dup.id).update(
+                        {"category_id": keeper.id}, synchronize_session=False
+                    )
+            if removed_ids:
+                db.query(Product).filter(Product.category_id.in_(removed_ids)).update(
+                    {"category_id": None}, synchronize_session=False
+                )
+                db.query(Category).filter(Category.id.in_(removed_ids)).delete(
+                    synchronize_session=False
+                )
 
             db.commit()
 
             return {
                 "status": "success",
-                "total": len(all_categories_data),
+                "total": len(unique_data),
                 "added": added_count,
-                "updated": updated_count,  # восстановлены is_tracked
+                "updated": updated_count,
+                "deleted": len(removed_ids),
                 "errors": [],
             }
 
@@ -385,15 +256,6 @@ class CatalogUpdater:
             db.close()
 
 
-def update_catalog_from_api(store_code: str = None, store_type: str = None) -> Dict:
-    """
-    Обновить каталог из API Магнита.
-    Возвращает статистику обновления.
-    """
-    updater = CatalogUpdater(store_code=store_code, store_type=store_type)
-    return updater.update_all_categories()
-
-
 def replace_catalog_from_api(store_code: str = None, store_type: str = None) -> Dict:
     """
     Полная замена каталога из API Магнита.
@@ -401,4 +263,7 @@ def replace_catalog_from_api(store_code: str = None, store_type: str = None) -> 
     Возвращает статистику или ошибку.
     """
     updater = CatalogUpdater(store_code=store_code, store_type=store_type)
-    return updater.replace_all_categories()
+    try:
+        return updater.replace_all_categories()
+    finally:
+        updater.close()

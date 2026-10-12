@@ -42,11 +42,10 @@ src\data\categories.json                 # ЗАМЕНИТЬ на дерево К
 ```
 STORE_CODE=<код магазина Косметик>     # из /api/stores/preview
 STORE_TYPE=DG                          # API-код; либо "М.Косметик"
-GOODS_URL=https://magnit.ru/webgate/v2/goods/search
 CORS_ORIGINS=*
 ```
 > `STORE_TYPE` можно задать и как `DG`, и как `М.Косметик` — `MagnitAPIClient.search()`
-> нормализует оба варианта через `STORE_TYPE_MAP` → `API_STORE_TYPE_CODE`.
+> нормализует оба варианта (и числовой код) через `constants.py:resolve_store_type_code`.
 
 ### Шаг 3. Категории — ключевой шаг
 У «Косметика» **своё дерево категорий** (косметика/бытовая химия ≠ продуктовое).
@@ -80,7 +79,7 @@ CORS_ORIGINS=*
 
 Возможен, потому что `store_type` хранится в таблице `stores`, а
 `CatalogScanner` читает тип из БД по `store_code`
-(`catalog_scanner.py:60-64`). Товары уже разделены по `store_code`
+(`catalog_scanner.py`). Товары уже разделены по `store_code`
 (uniqueness `uq_product_store`). **Но категории — узкое место:**
 
 ### Проблема: категории универсальные

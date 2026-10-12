@@ -19,7 +19,8 @@ import logging
 
 from src.server.constants import (
     STORE_TYPE_MAP,
-    API_STORE_TYPE_CODE,
+    get_configured_store_type,
+    resolve_store_type_code,
 )
 
 logger = logging.getLogger(__name__)
@@ -38,7 +39,7 @@ class MagnitAPIClient:
     ):
         self.base_url = base_url.rstrip("/")
         self.store_code = store_code or os.getenv("STORE_CODE")
-        self.store_type = store_type or os.getenv("STORE_TYPE", "MM")
+        self.store_type = store_type or get_configured_store_type()
         self.timeout = timeout
         self.rate_limit = rate_limit
         self.session = requests.Session()
@@ -106,43 +107,7 @@ class MagnitAPIClient:
 
         url = f"{self.base_url}/webgate/v2/goods/search"
 
-        # Строим payload с правильным форматом для API
-        # s_type может быть:
-        # 1. API код (MM, MM_MINI, ME, DG, GM, MO, MC, ZARYAD)
-        # 2. Русское название (Магнит, Мини, Экстра, и т.д.)
-        # 3. Числовой код (1, 2, 3, и т.д.)
-        
-        # Сначала преобразуем API код в русское название, если нужно
-        if s_type in STORE_TYPE_MAP:
-            # s_type это API код (MM, MM_MINI, и т.д.)
-            russian_name = STORE_TYPE_MAP[s_type]
-        else:
-            # s_type это русское название или числовой код
-            russian_name = s_type
-        
-        # Теперь преобразуем русское название в числовой код
-        s_type_code = API_STORE_TYPE_CODE.get(russian_name, russian_name)
-        
-        payload = {
-            "sort": {
-                "order": "desc",
-                "type": "popularity",
-            },
-            "pagination": {
-                "limit": limit,
-                "offset": offset,
-            },
-            "includeAdultGoods": True,
-            "storeCode": code,
-            "storeType": s_type_code,
-            "catalogType": "1",
-        }
-
-        # Если ищем товары по категориям, добавляем categories
-        if category_ids:
-            payload["categories"] = category_ids
-        else:
-            payload["categories"] = []
+        payload = self._build_payload(code, s_type, category_ids, limit, offset)
 
         try:
             logger.debug(f"DEBUG: POST {url}")
@@ -209,6 +174,62 @@ class MagnitAPIClient:
             logger.error(f"ERROR: {e}")
             raise Exception(f"Ошибка при поиске: {str(e)}")
 
+    def _build_payload(
+        self,
+        store_code: str,
+        store_type: Optional[str],
+        category_ids: Optional[list],
+        limit: int,
+        offset: int,
+    ) -> dict:
+        """
+        Payload запроса /webgate/v2/goods/search. Единственное место, где
+        строится запрос каталога: тип магазина (API-код, русское название или
+        числовой код) приводится к числовому коду через resolve_store_type_code.
+        """
+        return {
+            "sort": {
+                "order": "desc",
+                "type": "popularity",
+            },
+            "pagination": {
+                "limit": limit,
+                "offset": offset,
+            },
+            "includeAdultGoods": True,
+            "storeCode": store_code,
+            "storeType": resolve_store_type_code(store_type),
+            "catalogType": "1",
+            "categories": list(category_ids) if category_ids else [],
+        }
+
+    def fetch_category_raw(
+        self,
+        category_id: int,
+        store_code: Optional[str] = None,
+        store_type: Optional[str] = None,
+    ) -> Optional[dict]:
+        """
+        Сырой ответ API для одной категории (поля `category` и
+        `fastCategoriesExtended` — название и подкатегории). С ограничением
+        частоты запросов. При ошибке возвращает None.
+        """
+        self._rate_limit_wait()
+        code = store_code or self.store_code
+        if not code:
+            raise ValueError("store_code не указан")
+        payload = self._build_payload(
+            code, store_type or self.store_type, [category_id], limit=32, offset=0
+        )
+        url = f"{self.base_url}/webgate/v2/goods/search"
+        try:
+            response = self.session.post(url, json=payload, timeout=self.timeout)
+            response.raise_for_status()
+            return response.json()
+        except Exception as e:
+            logger.error(f"Error fetching category {category_id}: {e}")
+            return None
+
     def _parse_category(self, item: dict) -> Optional[dict]:
         """Парсинг данных категории из ответа API."""
         try:
@@ -240,6 +261,11 @@ class MagnitAPIClient:
             # API всегда возвращает цены в копейках, делим на 100
             if current_price:
                 current_price = current_price / 100
+
+            # Товар без цены не сохраняем: цена 0 дала бы ложное «снижение на 100%»
+            if not current_price or current_price <= 0:
+                logger.warning(f"Товар {product_id} без цены — пропущен")
+                return None
 
             # Параметры заказа
             order_props = item.get("orderProperties") or {}
@@ -273,7 +299,7 @@ class MagnitAPIClient:
                 "product_id": int(product_id),
                 "name": item.get("name") or item.get("title", "Без названия"),
                 "sku": item.get("sku") or item.get("article"),
-                "price": float(current_price) if current_price else 0.0,
+                "price": float(current_price),
                 "currency": "₽",
                 "unit": item.get("unit") or item.get("measureUnit", "шт"),
                 "image_url": image_url,
@@ -303,10 +329,6 @@ class MagnitAPIClient:
             import traceback
             traceback.print_exc()
             return None
-
-    def set_store_code(self, store_code: str):
-        """Установить код магазина."""
-        self.store_code = store_code
 
     def close(self):
         """Закрыть сессию."""

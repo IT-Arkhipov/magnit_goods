@@ -5,7 +5,7 @@
 
 from sqlalchemy.orm import Session
 from datetime import datetime, date, timedelta
-from typing import Optional, Dict
+from typing import Callable, Optional, Dict
 import time
 import logging
 
@@ -14,13 +14,70 @@ from src.server.models import (
     Product,
     PriceHistory,
     ScanJob,
+    Store,
 )
-from src.server.constants import STALE_DAYS_DELETE
+from src.server.constants import STALE_DAYS_DELETE, get_configured_store_type
 from src.server.services.magnit_api import MagnitAPIClient
 
 logger = logging.getLogger(__name__)
 
 PRICE_HISTORY_RETENTION_DAYS = 30
+
+
+class AmbiguousStoreError(ValueError):
+    """Код магазина есть у нескольких типов, а тип не указан."""
+
+
+def resolve_store_type(db: Session, store_code: Optional[str], store_type: Optional[str] = None) -> str:
+    """
+    Тип магазина для сканирования.
+
+    Явно переданный тип используется как есть. Иначе — тип единственного
+    магазина с таким кодом; если типов несколько — AmbiguousStoreError
+    (подставлять произвольный нельзя: скан уйдёт в каталог другого типа);
+    если магазина в БД нет — тип из конфигурации.
+    """
+    if store_type:
+        return store_type
+    if not store_code:
+        return get_configured_store_type()
+    types = sorted({
+        row[0]
+        for row in db.query(Store.store_type).filter(Store.store_code == store_code).all()
+        if row[0]
+    })
+    if len(types) == 1:
+        return types[0]
+    if len(types) > 1:
+        raise AmbiguousStoreError(
+            f"Несколько магазинов с кодом {store_code} ({', '.join(types)}) — укажите store_type"
+        )
+    return get_configured_store_type()
+
+
+def get_tracked_category_magnit_ids(db: Session) -> list[int]:
+    """
+    magnit_id отслеживаемых категорий — единое определение для всех операций
+    сканирования (ручное и плановое обновление цен, scan-prices, scan-all-stores).
+
+    Отслеживаемая категория — подкатегория (есть родитель) с is_tracked=True.
+    Корневые категории товаров не сканируются, даже если у них стоит is_tracked.
+    Набор читается в момент вызова, поэтому новые отметки в UI учитываются сразу.
+    """
+    rows = (
+        db.query(Category.magnit_id)
+        .filter(
+            Category.is_tracked.is_(True),
+            Category.parent_id.isnot(None),
+            Category.magnit_id.isnot(None),
+        )
+        .order_by(Category.id)
+        .all()
+    )
+    return [row[0] for row in rows]
+
+# Прогресс задания пишется в БД не чаще одного раза в N секунд (кроме обязательных сообщений)
+PROGRESS_MIN_INTERVAL = 2.0
 
 
 class CatalogScanner:
@@ -32,16 +89,18 @@ class CatalogScanner:
         store_code: Optional[str] = None,
         address: Optional[str] = None,
         job_id: Optional[int] = None,
+        store_type: Optional[str] = None,
     ):
         self.db = db
         self.store_code = store_code
         self.address = address or ""
         self.job_id = job_id
-        
-        # Получаем store_type из БД по store_code
-        from src.server.models import Store
-        store = self.db.query(Store).filter(Store.store_code == store_code).first() if store_code else None
-        self.store_type = store.store_type if store and store.store_type else "Магнит"
+        self._last_progress_ts = 0.0
+        self._pending_progress: dict = {}
+
+        # Тип магазина: явный → единственный в БД для этого кода → из конфигурации;
+        # при нескольких типах у одного кода — AmbiguousStoreError
+        self.store_type = resolve_store_type(self.db, store_code, store_type)
         
         self.api = (
             MagnitAPIClient(store_code=store_code, store_type=self.store_type)
@@ -49,26 +108,52 @@ class CatalogScanner:
             else None
         )
 
-    def _update_job_progress(self, message: str):
-        """Обновить прогресс задания (только message, progress обновляется в catalog.py)."""
-        if self.job_id:
+    def _queue_progress(self, values: dict, force: bool):
+        """Накопить значения прогресса и записать их, если прошёл интервал или force=True."""
+        if not self.job_id:
+            return
+        self._pending_progress.update(values)
+        if force or time.monotonic() - self._last_progress_ts >= PROGRESS_MIN_INTERVAL:
+            self._flush_progress()
+
+    def _flush_progress(self):
+        """Записать накопленный прогресс одним UPDATE + commit."""
+        if self.job_id and self._pending_progress:
             self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(
-                {"progress_message": message}
+                self._pending_progress
             )
             self.db.commit()
+            self._pending_progress = {}
+            self._last_progress_ts = time.monotonic()
 
-    def _update_job_progress_full(self, **kwargs):
-        """Обновить прогресс задания с детальными полями."""
-        if self.job_id:
-            self.db.query(ScanJob).filter(ScanJob.id == self.job_id).update(kwargs)
-            self.db.commit()
+    def _update_job_progress(self, message: str, force: bool = False):
+        """Обновить сообщение прогресса (не чаще PROGRESS_MIN_INTERVAL, если не force)."""
+        self._queue_progress({"progress_message": message}, force)
+
+    def _update_job_progress_full(self, force: bool = False, **kwargs):
+        """Обновить прогресс задания с детальными полями (с тем же троттлингом)."""
+        self._queue_progress(kwargs, force)
+
+    def _is_cancelled(self) -> bool:
+        """
+        Проверить, отменено ли задание. Читается одна колонка status, без
+        загрузки сущности и без expire_all(). commit() предварительно завершает
+        текущую транзакцию, чтобы увидеть отмену из другой сессии (в режиме WAL
+        чтение внутри открытой транзакции видит старый снимок).
+        """
+        if not self.job_id:
+            return False
+        self.db.commit()
+        row = self.db.query(ScanJob.status).filter(ScanJob.id == self.job_id).first()
+        return bool(row) and row[0] == "cancelled"
 
     def scan_categories(self) -> dict:
         """
         Сканировать подкатегории из API Магнита для всех корневых категорий.
 
         Логика:
-        1. Получает все корневые категории из БД
+        1. Получает все корневые категории из БД (независимо от is_tracked —
+           в UI отмечаются только подкатегории, корни никогда не «отслеживаются»)
         2. Для каждой корневой категории вызывает API с её magnit_id
         3. Получает category.title + fastCategoriesExtended (подкатегории)
         4. Обновляет название корневой категории
@@ -83,16 +168,17 @@ class CatalogScanner:
         if self.job_id:
             self._update_job_progress("Получение списка корневых категорий из БД...")
 
-        # Получаем все отслеживаемые корневые категории из БД
+        # Все корневые категории с magnit_id; is_tracked подкатегорий не затрагивается
         root_categories = (
             self.db.query(Category)
-            .filter(Category.parent_id.is_(None), Category.is_tracked == True)  # noqa: E712
+            .filter(Category.parent_id.is_(None), Category.magnit_id.isnot(None))
+            .order_by(Category.id)
             .all()
         )
 
         if not root_categories:
             if self.job_id:
-                self._update_job_progress("Нет отслеживаемых корневых категорий")
+                self._update_job_progress("Нет корневых категорий — загрузите каталог")
             return {"scanned": 0, "added": 0, "updated": 0, "deleted": 0}
 
         if self.job_id:
@@ -184,42 +270,40 @@ class CatalogScanner:
         }
 
         if self.job_id:
-            self._update_job_progress(f"Категории синхронизированы: {total_processed}")
+            self._update_job_progress(f"Категории синхронизированы: {total_processed}", force=True)
 
         return result
 
-    def _fetch_category_data(self, category_id: int) -> Dict:
-        """Получить данные категории (включая fastCategoriesExtended) из API."""
-        payload = {
-            "sort": {"order": "desc", "type": "popularity"},
-            "pagination": {"limit": 32, "offset": 0},
-            "categories": [category_id],
-            "includeAdultGoods": True,
-            "storeCode": self.store_code,
-            "storeType": self.store_type,
-            "catalogType": "1",
-        }
+    def _fetch_category_data(self, category_id: int) -> Optional[Dict]:
+        """Получить данные категории (включая fastCategoriesExtended) из API.
 
-        try:
-            url = f"{self.api.base_url}/webgate/v2/goods/search"
-            response = self.api.session.post(url, json=payload, timeout=15)
-            response.raise_for_status()
-            return response.json()
-        except Exception as e:
-            logger.error(f"Error fetching category {category_id}: {e}")
-            return None
+        Идёт через MagnitAPIClient: единый формат типа магазина и ограничение
+        частоты запросов.
+        """
+        return self.api.fetch_category_raw(
+            category_id, store_code=self.store_code, store_type=self.store_type
+        )
 
     def scan_products(
         self,
         category_ids: Optional[list] = None,
         tracked_only: bool = False,
+        on_category_start: Optional[Callable[[int, int, int], None]] = None,
     ) -> dict:
         """
         Сканировать товары из указанных категорий для магазина.
 
+        Очистка устаревших товаров и истории цен и пометка отсутствующих
+        выполняются один раз в конце вызова — поэтому для сканирования
+        магазина его нужно вызывать один раз со всеми категориями.
+
         Args:
-            category_ids: magnit_id категорий (если None — все отслеживаемые)
+            category_ids: magnit_id категорий. Если None — отслеживаемые
+                (tracked_only=True, см. get_tracked_category_magnit_ids) или
+                все категории с magnit_id (tracked_only=False)
             tracked_only: Если True, сканировать только отслеживаемые категории
+            on_category_start: колбэк (номер категории с 1, всего категорий,
+                magnit_id) перед сканированием каждой категории — для прогресса
 
         Returns:
             {"scanned": N, "added": N, "updated": N, "price_changes": N}
@@ -230,17 +314,17 @@ class CatalogScanner:
         # Определяем категории
         if category_ids is None:
             try:
-                query = self.db.query(Category)
                 if tracked_only:
-                    query = query.filter(Category.is_tracked == True)  # noqa: E712
-                categories = query.all()
-                logger.debug(f"DEBUG: Found {len(categories)} tracked categories")
-                if categories:
-                    logger.debug(
-                        f"DEBUG: First category: id={categories[0].id}, magnit_id={categories[0].magnit_id}, name={categories[0].name}"
-                    )
-                category_ids = [cat.magnit_id for cat in categories]
-                logger.debug(f"DEBUG: category_ids (first 5): {category_ids[:5]}")
+                    category_ids = get_tracked_category_magnit_ids(self.db)
+                else:
+                    category_ids = [
+                        row[0]
+                        for row in self.db.query(Category.magnit_id)
+                        .filter(Category.magnit_id.isnot(None))
+                        .order_by(Category.id)
+                        .all()
+                    ]
+                logger.debug(f"DEBUG: {len(category_ids)} категорий для скана, первые 5: {category_ids[:5]}")
             except Exception as e:
                 logger.error(f"ERROR in category_ids extraction: {e}")
 
@@ -256,8 +340,16 @@ class CatalogScanner:
 
         if self.job_id:
             self._update_job_progress(
-                f"Сканирование товаров из {len(category_ids)} категорий..."
+                f"Сканирование товаров из {len(category_ids)} категорий...", force=True
             )
+
+        # Имена категорий — одним запросом до цикла (для сообщений прогресса)
+        category_names = {
+            magnit_id: name
+            for magnit_id, name in self.db.query(Category.magnit_id, Category.name)
+            .filter(Category.magnit_id.in_(category_ids))
+            .all()
+        }
 
         total_added = 0
         total_updated = 0
@@ -273,17 +365,18 @@ class CatalogScanner:
 
 # Сканируем по одной категории за раз
         for cat_idx, cat_magnit_id in enumerate(category_ids):
-            # Проверка на отмену - сбрасываем кэш сессии
-            self.db.expire_all()
+            # Проверка на отмену
+            if self._is_cancelled():
+                logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0, "cancelled": True}
+
+            if on_category_start:
+                on_category_start(cat_idx + 1, len(category_ids), cat_magnit_id)
+
+            cat_name = category_names.get(cat_magnit_id, f"ID:{cat_magnit_id}")
+            category_scanned = 0  # загружено товаров в текущей категории
             if self.job_id:
-                job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
-                if job and job.status == "cancelled":
-                    logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
-                    return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
-                
                 # Показать магазин и категорию
-                cat = self.db.query(Category).filter(Category.magnit_id == cat_magnit_id).first()
-                cat_name = cat.name if cat else f"ID:{cat_magnit_id}"
                 clean_address = (self.address or "").replace("\n", " ").replace("\r", " ").strip()
                 self._update_job_progress(f"{self.store_type}: {clean_address} | 📁 {cat_name}")
 
@@ -298,13 +391,10 @@ class CatalogScanner:
 
                 while retry_count < max_retries:
                     # Проверка на отмену перед каждым запросом
-                    self.db.expire_all()
-                    if self.job_id:
-                        job = self.db.query(ScanJob).filter(ScanJob.id == self.job_id).first()
-                        if job and job.status == "cancelled":
-                            logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
-                            return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0}
-                    
+                    if self._is_cancelled():
+                        logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                        return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0, "cancelled": True}
+
                     try:
                         logger.debug(
                             f"DEBUG: Calling search with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
@@ -351,7 +441,7 @@ class CatalogScanner:
                     if "invalid_service_pair" in err_msg or "service not found" in err_msg:
                         msg = f"⚠️ Категория {cat_name} недоступна для {self.store_type}"
                         if self.job_id:
-                            self._update_job_progress(msg)
+                            self._update_job_progress(msg, force=True)
                         logger.warning(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
                     else:
                         logger.warning(
@@ -394,11 +484,12 @@ class CatalogScanner:
                 total_updated += updated
                 total_price_changes += price_changes
                 total_scanned += len(products)
+                category_scanned += len(products)
 
                 # Обновляем количество загруженных товаров в категории
                 if self.job_id:
                     self._update_job_progress_full(
-                        current_category_items_loaded=total_scanned
+                        current_category_items_loaded=category_scanned
                     )
 
                 self.db.commit()
@@ -451,12 +542,12 @@ class CatalogScanner:
         }
 
         if self.job_id:
-            self._update_job_progress(f"Товары сохранены: {total_scanned} шт.")
+            self._update_job_progress(f"Товары сохранены: {total_scanned} шт.", force=True)
             if deleted > 0:
-                self._update_job_progress(f"Удалено устаревших товаров: {deleted}")
+                self._update_job_progress(f"Удалено устаревших товаров: {deleted}", force=True)
             if marked_missing > 0:
                 self._update_job_progress(
-                    f"Помечено отсутствующими: {marked_missing}"
+                    f"Помечено отсутствующими: {marked_missing}", force=True
                 )
 
         return result
@@ -636,6 +727,8 @@ class CatalogScanner:
                 update_data = {
                     "id": existing.id,
                     "name": product_data.get("name", existing.name),
+                    # нормализованное название для поиска — от итогового name
+                    "name_search": (product_data.get("name", existing.name) or "").casefold(),
                     "price": current_price,
                     "category_id": db_category_id,
                     "sku": product_data.get("sku", existing.sku),
@@ -690,20 +783,18 @@ class CatalogScanner:
                     update_data["previous_price"] = current_price
                     update_data["price_change_percent"] = None
 
-                # last_change_price / last_change_date — обновляем только при реальном
-                # изменении относительно last_change_price
-                last_change_price = existing.last_change_price
+                # last_change_price / last_change_date / last_price_change — только при
+                # реальном изменении относительно последней сохранённой цены
+                # (existing.price): срабатывает ровно один раз на изменение, повторные
+                # сканы с той же ценой поля не трогают.
+                # last_change_price — цена до изменения, last_change_date — момент изменения.
                 if (
-                    last_change_price is not None
-                    and abs(last_change_price - current_price) > 0.01
+                    existing.price
+                    and existing.price > 0
+                    and abs(existing.price - current_price) > 0.01
                 ):
-                    update_data["last_change_price"] = last_change_price
-                    update_data["last_change_date"] = existing.last_seen or now
-                    update_data["last_price_change"] = now
-                elif last_change_price is None and prev_day_price is not None and abs(prev_day_price - current_price) > 0.01:
-                    # Первое изменение после появления
-                    update_data["last_change_price"] = prev_day_price
-                    update_data["last_change_date"] = existing.last_seen or now
+                    update_data["last_change_price"] = existing.price
+                    update_data["last_change_date"] = now
                     update_data["last_price_change"] = now
 
                 to_update.append(update_data)
@@ -712,6 +803,7 @@ class CatalogScanner:
                 to_insert.append({
                     "product_id": product_id,
                     "name": product_data.get("name", "Без названия"),
+                    "name_search": (product_data.get("name", "Без названия") or "").casefold(),
                     "sku": product_data.get("sku"),
                     "category_id": db_category_id,
                     "store_code": self.store_code,

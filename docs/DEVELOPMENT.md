@@ -16,10 +16,11 @@
 - Линтер: **ruff** (в проекте есть `.ruff_cache/`). Запускайте `ruff check` перед коммитом.
 - НЕ добавляйте комментарии, если явно не просят.
 - Импорты: сторонние библиотеки → локальные модули (`from src.server...`).
-- Логирование: используется `logging` (`logging.getLogger(__name__)`). Часть старых модулей ещё использует `print()` — постепенно заменяется.
+- Логирование: используется `logging` (`logging.getLogger(__name__)`). `print()` остался только в Playwright-модулях (`store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py`).
+- **Поведение и документация меняются в одном изменении.** Изменили эндпоинт, миграцию, правило сканирования — поправьте `AGENTS.md` и затронутые файлы `docs/` сразу. Ссылайтесь на код как `файл:функция`, не по номерам строк (они устаревают).
 
 ### Структура
-- **Роуты** (`routes/`) — только HTTP-слой: валидация, вызов сервисов, форматирование ответа. Никакой бизнес-логики сканирования.
+- **Роуты** (`routes/`) — только HTTP-слой: разбор параметров, вызов сервисов, форматирование ответа. Никакой бизнес-логики сканирования и выборки (выборка товаров — `services/product_query.py`).
 - **Сервисы** (`services/`) — бизнес-логика, работа с БД и внешними API. Не знают про HTTP.
 - **Модели** (`models.py`) — только описание таблиц и `store_hash_id()`. Без логики.
 - **Константы** (`constants.py`) — общие для нескольких модулей (типы магазинов).
@@ -36,7 +37,7 @@ from src.server.models import store_hash_id
 store_id = store_hash_id(store_code, store_type, full_address)  # 12 символов
 ```
 
-Конструктор `Store.__init__` (`models.py:46`) автоматически вычисляет `id` и `shop_type` — но при ручном создании через `Store(id=..., ...)` передавайте корректный хэш.
+Конструктор `Store.__init__` (`models.py`) автоматически вычисляет `id` и `shop_type` — но при ручном создании через `Store(id=..., ...)` передавайте корректный хэш.
 
 ### 2. Порядок endpoint definitions в FastAPI 🔴
 FastAPI матчит маршруты в порядке регистрации. **Статические пути ДО параметрических:**
@@ -50,14 +51,13 @@ FastAPI матчит маршруты в порядке регистрации. 
 Если нарушить порядок — статический сегмент (`stats`, `multi-prices`, `active`, `search`) попадёт в path-параметр и приведёт к 422 (для `int`) или 404 (для `str`).
 
 ### 3. Rate limiting — НЕ убирать 🔴
-- `MagnitAPIClient._rate_limit_wait()` (`magnit_api.py:63`): 0.5s + `random.uniform(0.1, 0.5)`.
+- `MagnitAPIClient._rate_limit_wait()` (`magnit_api.py`): 0.5s + `random.uniform(0.1, 0.5)`. Через этого клиента идут **все** запросы каталога: товары (`search`), подкатегории (`fetch_category_raw`), в том числе из `CatalogUpdater` — собственного HTTP-клиента без ограничения частоты у него нет.
 - `StoresAPI`: 0.3s.
-- `CatalogUpdater._rate_limit_wait()` (`catalog_updater.py:38`): 0.5s.
 
 API Магнита блокирует при превышении частоты запросов. Случайная пауза защищает от детектирования ботов.
 
 ### 4. `.env` — НЕ редактировать вручную 🔴
-Обновляется только через `POST /api/stores/select` (`routes/stores.py:164`), который атомарно меняет `STORE_CODE` и `STORE_TYPE` через `dotenv.load_dotenv()`. Ручное редактирование рассинхронизирует состояние с БД.
+`.env` загружается при старте (`main.py`, `load_dotenv(override=False)`: переменные окружения процесса приоритетнее). Обновляется только через `POST /api/stores/select` (`routes/stores.py:select_store`), который меняет `STORE_CODE` и `STORE_TYPE` в файле, в `os.environ` работающего процесса и перерегистрирует задания планировщика — перезапуск не нужен. Ручное редактирование рассинхронизирует состояние с БД и планировщиком.
 
 > `store_selector.py` **не обновляет `.env`** — это Playwright-сканер магазинов. Фактическое обновление — только в `routes/stores.py`.
 
@@ -77,11 +77,13 @@ def run_update():
         bg_db.close()
 ```
 
+Итоговый статус `ScanJob` пишите через `services/jobs.py:finalize_job(db, job_id, status, **fields)`: он перечитывает задание из БД и **не затирает `cancelled`** (отмена приходит из другой сессии). Потоки (`threading.Thread`) запускайте через `utils/threads.py:run_logged` — иначе исключение потока теряется.
+
 ### 6. Bulk operations
-`CatalogScanner._save_products()` (`catalog_scanner.py:435`) использует `bulk_insert_mappings` / `bulk_update_mappings` для `Product` и `PriceHistory`. **Не заменяйте** на построчные `db.add()` / `db.commit()` — потеряете производительность при 5000+ товаров.
+`CatalogScanner._save_products()` (`catalog_scanner.py`) использует `bulk_insert_mappings` / `bulk_update_mappings` для `Product` и `PriceHistory`. **Не заменяйте** на построчные `db.add()` / `db.commit()` — потеряете производительность при 5000+ товаров.
 
 ### 7. Категории универсальные
-Категории в `Category` **не привязаны** к конкретному магазину (`store_code` нет в таблице). Дерево общее для всех магазинов. При полной замене через `CatalogUpdater.replace_all_categories()` флаг `is_tracked` **сохраняется** по `magnit_id`.
+Категории в `Category` **не привязаны** к конкретному магазину (`store_code` нет в таблице). Дерево общее для всех магазинов. Полная замена (`CatalogUpdater.replace_all_categories()`) — upsert по `magnit_id`: внутренние `id` и `is_tracked` существующих категорий **сохраняются**, поэтому `Product.category_id` остаётся валидным; удаляются только категории, которых нет в API. **Отслеживаемые** категории — подкатегории (`parent_id IS NOT NULL`) с `is_tracked`; единый набор для всех операций сканирования — `catalog_scanner.py:get_tracked_category_magnit_ids`.
 
 ### 8. Знак `price_change_percent`
 - **Положительное** значение (`+15`) = цена **снизилась** (зелёная стрелка `↓` в UI).
@@ -90,10 +92,16 @@ def run_update():
 Формула: `(previous_price - current_price) / previous_price * 100`.
 
 ### 9. SQLite и кириллица
-`LOWER()` в SQLite **не работает** с кириллицей. Поиск по `search` в `list_products` (`catalog.py:249`) выполняется в Python через `casefold()` (Unicode-aware). Не пытайтесь перенести поиск в SQL `LIKE LOWER()`.
+`LOWER()` в SQLite **не работает** с кириллицей. Поиск по названию идёт по колонке `Product.name_search` (`name.casefold()`, заполняется при сохранении товара и миграцией `add_product_name_search`) — `services/product_query.py`. Не переносите поиск на `LIKE LOWER(name)`; при новом пути записи товаров не забывайте заполнять `name_search`. Спецсимволы `%`, `_`, `\` в поисковом запросе экранируются.
 
-### 10. `check_same_thread=False`
-Engine создаётся с `connect_args={"check_same_thread": False}` (`database.py:10`) — один engine для разных потоков (scheduler, фоновые задачи). Но **каждая задача создаёт свою сессию**, не делит сессию между потоками.
+### 10. Подключение к SQLite: потоки и WAL
+Engine создаётся с `connect_args={"check_same_thread": False, "timeout": 30}` (`database.py`) — один engine для разных потоков (scheduler, фоновые задачи). Но **каждая задача создаёт свою сессию**, не делит сессию между потоками. При каждом подключении включаются `journal_mode=WAL` и `busy_timeout` 30 с (`_set_sqlite_pragma`): чтение не блокируется записью сканера, конкурирующая запись ждёт. Файлы `magnit.db-wal`/`-shm` в `.gitignore`.
+
+### 11. Тип магазина в запросах к API
+Только через `constants.py:resolve_store_type_code()` (API-код / русское название / число → числовой код). Не хардкодите коды магазинов и типов. Один код магазина может быть у нескольких типов — сканирование тогда требует явного `store_type` (`catalog_scanner.py:resolve_store_type`).
+
+### 12. Миграции
+Миграция выполняется один раз и регистрируется в `schema_migrations` **только при успехе**; внутри функции ошибки не глушатся (подробно — `docs/DATABASE.md`). Старые миграции не должны запрашивать всю сущность (`db.query(Product)`): колонки, добавленные позже, в старой БД могут отсутствовать.
 
 ---
 
@@ -108,6 +116,9 @@ Engine создаётся с `connect_args={"check_same_thread": False}` (`datab
 | Рассинхрон `.env` и БД | Ручное редактирование `.env` | Использовать `POST /api/stores/select` |
 | N+1 запросов в дереве категорий | Рекурсивный `build_tree` с SELECT на каждый узел | Один SELECT + сборка в памяти (см. `code_review_2026-06-12.md`) |
 | `Integer` для `shop_type` не заполняется | Создание `Store` без использования конструктора | Использовать `Store(**data)` (конструктор проставит `shop_type`) |
+| Отменённое задание стало `completed` | Статус присвоен напрямую после работы | Писать итог через `finalize_job` |
+| Товар не находится поиском | Запись товара в обход `_save_products` — не заполнен `name_search` | Заполнять `name_search = name.casefold()` |
+| Миграция «выполнена», а колонки/индекса нет | Ошибка внутри миграции была подавлена | Бросать исключение — `_run_migration` не зарегистрирует её и повторит |
 
 ---
 
@@ -115,35 +126,27 @@ Engine создаётся с `connect_args={"check_same_thread": False}` (`datab
 
 ### Активные расхождения в коде
 
-#### 1. `load_catalog_from_json.py` ожидает другой формат `categories.json`
-`load_catalog_from_json.py:52` читает `data["root_categories"]`, но фактический `src/data/categories.json` — **плоский массив** `[{id, title}]` без ключа `root_categories`. Эндпоинты `POST /api/categories/load-from-json`, `/build-from-playwright`, `/seed-from-playwright` могут не работать с текущим файлом.
+#### 1. Ключ товара не включает тип магазина
+`Product` идентифицируется парой (`product_id`, `store_code`) (`uq_product_store`). Магазины одного кода и разных типов (допустимы: уникальна пара `store_code`+`store_type`) делят строки в `products` и `price_history`: каждый скан перезаписывает данные другого типа. Сканирование в таком случае требует явного `store_type` (иначе 400), но данные смешиваются.
 
-**Решение:** либо привести `categories.json` к формату `{"root_categories": [{id, title}]}`, либо исправить чтение в `load_catalog_from_json.py` на плоский массив.
+**Решение:** добавить тип магазина (или `Store.id`) в ключ `products`/`price_history` с миграцией данных; пока — не заводить два магазина с одним кодом и сканировать только один из них.
 
-#### 2. `query_product.py` использует устаревшие поля
-`query_product.py:11` ссылается на `historical_discount_percent`, который удалён миграцией `migrate_simplify_price_tracking`. Скрипт упадёт при запуске.
+#### 2. Не подключённые модули
+- `services/notifications.py` (`NotificationService`) — формирование отчётов; не вызывается: `daily_report` в планировщике закомментирован.
+- `services/store_selector.py` (`MagnitStoreSelector`) — Playwright-сканер магазинов; роуты его не используют (поиск магазинов идёт через `StoresAPI`).
 
-**Решение:** удалить `historical_discount_percent` из SELECT.
-
-#### 3. Дублирование `POST /api/stores` в `main.py`
-`main.py:158` (`create_store_htmx`) определён для HTMX form-data, но `app.include_router(stores.router)` (`main.py:81`) регистрирует `create_store` (`stores.py:71`) раньше — HTMX-вариант **перекрыт и недостижим**.
-
-**Решение:** либо удалить HTMX-заглушку, либо вынести на отдельный путь (`/api/stores/htmx`).
+Модули не удалены: за ними стоят возможные сценарии (ежедневные отчёты, браузерный поиск магазинов). Решение об их судьбе — за владельцем проекта.
 
 ### Замечания из code review
 
-Полный отчёт: `docs/code_review_2026-06-12.md`. Ключевые нерешённые проблемы:
+Полный отчёт: `docs/code_review_2026-06-12.md`. Нерешённое:
 
 | # | Проблема | Файл | Приоритет |
 |---|---------|------|-----------|
-| 1 | N+1 в `get_categories_tree` (рекурсивные SELECT) — хотя в `catalog.py:128` сейчас реализация с одним SELECT, проверьте | `routes/catalog.py` | 🔴 |
-| 2 | 4 COUNT в `get_products_stats` вместо одного с CASE WHEN | `routes/catalog.py:388` | 🟠 |
-| 3 | `print(DEBUG)` вместо `logging` в части модулей | несколько файлов | 🟡 |
-| 4 | `commit()` внутри циклов обновления подкатегорий | `catalog_updater.py`, `catalog_scanner.py` | 🟡 |
+| 1 | `commit()` внутри циклов обновления подкатегорий | `catalog_scanner.py` (`scan_categories`) | 🟡 |
+| 2 | `print()` вместо `logging` в Playwright-модулях | `store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py` | 🟡 |
 
-### Исторические планы
-- `PLAN_SIMPLIFY_PRICE_TRACKING.md` — упрощение отслеживания цен (выполнено).
-- `PLAN_TWO_PRICE_MODES.md` — два режима отображения цен (выполнено).
+Остальные пункты ревью (N+1 в дереве категорий, 4 COUNT в статистике товаров и др.) закрыты: дерево собирается одним SELECT, статистика — одним запросом с `CASE`.
 
 ---
 

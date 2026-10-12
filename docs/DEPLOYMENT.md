@@ -38,18 +38,21 @@ playwright install chromium
 ```env
 STORE_CODE=992104
 STORE_TYPE=Магнит
-GOODS_URL=https://magnit.ru/webgate/v1/goods
 CORS_ORIGINS=*
 ```
 
 | Переменная | Обязательная | По умолчанию | Назначение |
 |-----------|--------------|--------------|-----------|
-| `STORE_CODE` | для scheduler | — | Код магазина для автоматических заданий (напр. `992104`) |
-| `STORE_TYPE` | нет | `MM` | Тип магазина: русское название (`Магнит`, `Мини`, `Экстра`) или API-код (`MM`, `ME`, `MM_MINI`, `DG`, `GM`, `MO`, `MC`, `ZARYAD`) |
-| `GOODS_URL` | нет | `https://magnit.ru/webgate/v1/goods` | Эндпоинт API товаров |
+| `STORE_CODE` | для scheduler | — | Код магазина для автоматических заданий (напр. `992104`). Пусто — планировщик не запускается, пока магазин не выбран через `POST /api/stores/select` |
+| `STORE_TYPE` | нет | `Магнит` | Тип магазина: русское название (`Магнит`, `Мини`, `Экстра`, ...), API-код (`MM`, `ME`, `MM_MINI`, `DG`, `GM`, `MO`, `MC`, `ZARYAD`) или числовой код (1–9, см. таблицу ниже). Нераспознанное значение → предупреждение в логе и `Магнит` |
 | `CORS_ORIGINS` | нет | `*` | Разрешённые origins (CSV), напр. `http://localhost:8000,http://localhost:3000` |
 
-> 🔴 **Не редактируйте `.env` вручную.** Используйте `POST /api/stores/select` — он атомарно обновляет `STORE_CODE` и `STORE_TYPE` через `dotenv.load_dotenv()` (`routes/stores.py:164`). Ручное редактирование может рассинхронизировать состояние с БД.
+> 🔴 **Не редактируйте `.env` вручную.** Используйте `POST /api/stores/select` — он атомарно обновляет `STORE_CODE` и `STORE_TYPE` (`routes/stores.py:select_store`). Ручное редактирование может рассинхронизировать состояние с БД.
+
+**Как читается `.env`:**
+- При старте сервер загружает `.env` из корня репозитория (`main.py`, `load_dotenv(override=False)`) **до** запуска планировщика. Запускать uvicorn с `--env-file` не нужно.
+- Переменные, уже заданные в окружении процесса, приоритетнее значений из `.env`.
+- `POST /api/stores/select` (при `update_env=true`) кроме записи в `.env` обновляет `os.environ` работающего процесса и перерегистрирует задания планировщика на выбранный магазин — перезапуск не требуется. Если планировщик не был запущен (при старте не было `STORE_CODE`), он запускается. Ответ содержит `scheduler_updated`.
 
 ### Типы магазинов (`constants.py`)
 
@@ -78,14 +81,13 @@ python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```bash
 python -m src.server.main
 ```
-(`main.py:226` — `uvicorn.run("src.server.main:app", host="0.0.0.0", port=8000, reload=True)`)
+(`main.py` — `uvicorn.run("src.server.main:app", host="0.0.0.0", port=8000, reload=True)`)
 
 ### Endpoints после запуска
 | URL | Назначение |
 |-----|-----------|
 | http://localhost:8000 | Главная (выбор магазина) |
 | http://localhost:8000/docs | Swagger UI |
-| http://localhost:8000/stores | Управление магазинами |
 | http://localhost:8000/catalog | Категории |
 | http://localhost:8000/products | Товары |
 | http://localhost:8000/jobs | Фоновые задания |
@@ -95,21 +97,22 @@ python -m src.server.main
 
 ## Что происходит при старте
 
-1. `init_db()` — создание таблиц + 11 миграций (идемпотентные). См. `docs/DATABASE.md`.
-2. `_mark_all_running_failed_on_startup()` — все зависшие `ScanJob` со статусом `running` помечаются `failed` (процесс был убит).
-3. `init_scheduler(store_code)` — если в `.env` есть `STORE_CODE`, запускаются автоматические задания.
+0. При импорте `main.py` загружается `.env` (`load_dotenv(override=False)`).
+1. `init_db()` — создание таблиц + 15 миграций. Каждая выполняется один раз и регистрируется в `schema_migrations` только при успехе; упавшая миграция даёт `WARNING` в логе и повторяется при следующем старте. См. `docs/DATABASE.md`.
+2. `mark_unfinished_jobs_failed()` (`services/jobs.py`) — все зависшие `ScanJob` со статусами `pending` и `running` помечаются `failed` (процесс был остановлен).
+3. `init_scheduler(store_code)` — если задан `STORE_CODE`, запускаются автоматические задания.
 
 ---
 
 ## Scheduler (APScheduler)
 
-`BackgroundScheduler` (`src/server/scheduler.py`). Запускается в `lifespan` (`main.py:43`), останавливается в `shutdown_scheduler()` (`main.py:48`).
+`BackgroundScheduler` (`src/server/scheduler.py`). Запускается в `lifespan` (`main.py`), останавливается в `shutdown_scheduler()` (`main.py`).
 
 | Job ID | Расписание | Функция | Что делает |
 |--------|-----------|---------|-----------|
-| `update_prices` | Ежедневно 08:00 | `update_prices_job()` (`scheduler.py:21`) | Обновление цен для отслеживаемых категорий. Создаёт `ScanJob(job_type="prices")`. |
-| `scan_catalog` | Воскресенье 06:00 | `scan_catalog_job()` (`scheduler.py:77`) | Полное сканирование: сначала категории (`ScanJob(job_type="catalog")`), затем товары (`ScanJob(job_type="prices")`). |
-| `daily_report` | Ежедневно 20:00 | — | **Закомментирован** (`scheduler.py:201`). Формирование отчёта через `NotificationService`. |
+| `update_prices` | Ежедневно 08:00 | `update_prices_job()` (`scheduler.py`) | Обновление цен для отслеживаемых категорий. Создаёт `ScanJob(job_type="prices")`. |
+| `scan_catalog` | Воскресенье 06:00 | `scan_catalog_job()` (`scheduler.py`) | Полное сканирование: сначала категории (`ScanJob(job_type="catalog")`), затем товары (`ScanJob(job_type="prices")`). |
+| `daily_report` | Ежедневно 20:00 | — | **Закомментирован** (`scheduler.py`). Формирование отчёта через `NotificationService`. |
 
 Расписание задаётся через `CronTrigger`:
 ```python
@@ -117,9 +120,9 @@ CronTrigger(hour=8, minute=0)                      # update_prices
 CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 ```
 
-`init_scheduler` получает список отслеживаемых категорий (`Category.is_tracked == True`) из БД и передаёт их в `update_prices_job` (`scheduler.py:165-178`).
+Отслеживаемые категории задания читают из БД **в момент запуска** (`catalog_scanner.py:get_tracked_category_magnit_ids`), поэтому новые отметки в UI учитываются без перезапуска. Тип магазина берётся из `STORE_TYPE`; если у кода магазина в БД несколько типов и `STORE_TYPE` не задан — задание завершится `failed`. `register_jobs()` можно вызывать повторно (его использует `POST /api/stores/select`).
 
-> Scheduler работает в отдельном потоке (`BackgroundScheduler`). Каждое задание создаёт **свою `SessionLocal()`** и закрывает в `finally` (`scheduler.py:26`, `:74`).
+> Scheduler работает в отдельном потоке (`BackgroundScheduler`). Каждое задание создаёт **свою `SessionLocal()`** и закрывает в `finally` (`scheduler.py`).
 
 ---
 
@@ -127,8 +130,11 @@ CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 
 - **Путь:** `src/data/magnit.db` (SQLite, в `.gitignore`)
 - **Создание:** автоматически при старте через `init_db()`
-- **Миграции:** 11 штук, выполняются при каждом старте (идемпотентные). См. `docs/DATABASE.md`.
-- **Backup:** для резервного копирования остановите сервер и скопируйте `magnit.db`.
+- **Миграции:** 15 штук; каждая выполняется один раз и регистрируется в `schema_migrations` при успехе. См. `docs/DATABASE.md`.
+- **Режим журнала — WAL.** При каждом подключении включаются `PRAGMA journal_mode=WAL` и `busy_timeout=30000` (`database.py:_set_sqlite_pragma`): HTTP-запросы на чтение не блокируются фоновой записью сканера, а конкурирующая запись ждёт до 30 с вместо ошибки `database is locked`. Рядом с БД появляются служебные файлы `magnit.db-wal` и `magnit.db-shm` (в `.gitignore`).
+- **WAL требует локального диска.** Не размещайте `src/data/` на сетевой папке (SMB/NFS) — WAL там работает некорректно.
+- **Backup:** остановите сервер и копируйте `magnit.db` **вместе с** `magnit.db-wal` (если он есть) либо сделайте копию на живой БД командой `sqlite3 src/data/magnit.db ".backup 'backup.db'"`. Копирование одного `magnit.db` при работающем сервере может потерять последние записи.
+- **Откат режима:** при остановленном сервере `sqlite3 src/data/magnit.db "PRAGMA journal_mode=DELETE"`.
 
 ---
 
@@ -137,5 +143,5 @@ CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 - **CORS:** по умолчанию `allow_origins=["*"]`. Для продакшна ограничьте через `CORS_ORIGINS`.
 - **Rate limiting:** 0.5s в `MagnitAPIClient` + случайная пауза 0.1-0.5s. **Не убирайте** — API Магнита блокирует. См. `docs/SERVICES.md`.
 - **SQLite:** подходит для однопользовательского приложения. При высокой нагрузке рассмотрите PostgreSQL.
-- **Логи:** `logging.basicConfig(level=INFO)` в `main.py:20`. Уровень можно изменить.
+- **Логи:** `logging.basicConfig(level=INFO)` в `main.py`. Уровень можно изменить.
 - **Playwright:** `product_opener.py` запускает **видимое окно браузера** — не работает на серверах без дисплея. Для headless-режима используйте `category_verifier.py` и `store_selector.py` (параметр `headless=True`).

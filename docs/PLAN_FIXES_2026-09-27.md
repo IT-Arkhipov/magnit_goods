@@ -129,6 +129,8 @@ stale_cutoff = datetime.utcnow() - timedelta(minutes=30)
 
 ### Шаг 2.1 — SQLite: WAL + busy_timeout (проблема №13)
 
+> ✅ **Выполнено** в OpenSpec-изменении `harden-runtime-reliability`: WAL и `busy_timeout` включаются в `database.py:_set_sqlite_pragma`.
+
 **Файл:** `src/server/database.py`.
 
 **Что делать:**
@@ -159,6 +161,8 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
 
 ### Шаг 2.2 — Миграции: честная регистрация (проблема №12)
 
+> ✅ **Выполнено** в OpenSpec-изменении `unify-store-type-and-tracking`: контракт «регистрация только при успехе», `logging` вместо `print`, миграция `ensure_product_last_scan_index`.
+
 **Файл:** `src/server/database.py`.
 
 **Что делать:**
@@ -179,6 +183,8 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
 ---
 
 ### Шаг 2.3 — Уникальность (store_code, store_type) (проблема №11)
+
+> ✅ **Выполнено** в OpenSpec-изменении `unify-store-type-and-tracking`: индекс `uq_store_code_type`, миграция `add_store_code_type_unique`, явный `store_type` в сканере.
 
 **Файлы:** `src/server/models.py`, `src/server/database.py` (новая миграция).
 
@@ -207,6 +213,8 @@ def _set_sqlite_pragma(dbapi_connection, connection_record):
 
 ### Шаг 3.1 — Реакция на смену магазина (проблема №7)
 
+> ✅ **Выполнено** в OpenSpec-изменении `fix-data-integrity-bugs`: `register_jobs()` в `scheduler.py`, вызов из `select_store`; плюс загрузка `.env` при старте.
+
 **Файлы:** `src/server/routes/stores.py` (`select_store`), `src/server/scheduler.py`.
 
 **Что делать (вариант A — проще):**
@@ -228,6 +236,8 @@ scheduler'а убедиться, что задания перерегистри�
 
 ### Шаг 3.2 — Потоки с обработкой ошибок (проблема №23)
 
+> ✅ **Выполнено** в OpenSpec-изменении `harden-runtime-reliability`: `utils/threads.py:run_logged` для потоков открытия товара и замены каталога.
+
 **Файл:** `src/server/main.py` (`open-product-in-browser`).
 
 **Что делать:** обернуть `open_product_with_store` в функцию-обёртку с
@@ -246,6 +256,8 @@ try/except и `logger.exception(...)`.
 ## Этап 4. Устранение дублирования (DRY)
 
 ### Шаг 4.1 — Одна реализация синхронизации категорий (проблема №8)
+
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: дубли в `CatalogUpdater` удалены; запросы категорий идут через `MagnitAPIClient.fetch_category_raw` (вместе с `unify-store-type-and-tracking`).
 
 **Файлы:** `src/server/services/catalog_scanner.py`, `catalog_updater.py`.
 
@@ -269,6 +281,8 @@ try/except и `logger.exception(...)`.
 
 ### Шаг 4.2 — Один роут обновления категорий (проблема №9)
 
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: основной `update-catalog`, `/categories/scan` — `deprecated`, алиасы `build-`/`seed-from-playwright` удалены.
+
 **Файл:** `src/server/routes/catalog.py`.
 
 **Что делать:** оставить `POST /api/categories/update-catalog`;
@@ -285,6 +299,8 @@ UI/шаблоны их не вызывают — поиском по `templates/
 ---
 
 ### Шаг 4.3 — Единые дефолты store_type, убрать хардкод (проблема №17)
+
+> ✅ **Выполнено** в OpenSpec-изменении `unify-store-type-and-tracking`: `resolve_store_type_code`, `DEFAULT_STORE_TYPE`, `MagnitAPIClient.fetch_category_raw`; хардкод `210117`/`"9"`/`"6"` удалён.
 
 **Файлы:** `src/server/constants.py`, `catalog_updater.py`, `catalog_scanner.py`.
 
@@ -307,6 +323,8 @@ UI/шаблоны их не вызывают — поиском по `templates/
 
 ### Шаг 5.1 — Поиск без полной загрузки (проблема №15)
 
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: поиск через `Product.name_search` (SQL `LIKE`), в 10–13 раз быстрее.
+
 **Файлы:** `src/server/models.py`, `database.py` (миграция), `routes/catalog.py`.
 
 **Что делать:**
@@ -328,6 +346,8 @@ UI/шаблоны их не вызывают — поиском по `templates/
 ---
 
 ### Шаг 5.2 — Проверка отмены без expire_all (проблема №16)
+
+> ✅ **Выполнено** в OpenSpec-изменении `harden-runtime-reliability`: `CatalogScanner._is_cancelled()` читает одну колонку статуса.
 
 **Файл:** `src/server/services/catalog_scanner.py`.
 
@@ -359,6 +379,8 @@ identity map — все объекты перечитываются из БД.
 
 ### Шаг 5.3 — Прогресс без commit-шторма (проблема №14)
 
+> ✅ **Выполнено** в OpenSpec-изменении `harden-runtime-reliability`: троттлинг прогресса (`PROGRESS_MIN_INTERVAL`, `force=True` для обязательных сообщений).
+
 **Файл:** `src/server/services/catalog_scanner.py`.
 
 **Что делать:** `_update_job_progress` вызывать не чаще, чем раз в N секунд
@@ -379,6 +401,8 @@ identity map — все объекты перечитываются из БД.
 
 ### Шаг 6.1 — Open redirect (проблема №20)
 
+> ✅ **Выполнено** в OpenSpec-изменении `harden-runtime-reliability`: `main.py:_is_magnit_url` для `/redirect-to-product` и `/open-product-in-browser`.
+
 **Файл:** `src/server/main.py`, `redirect_to_product`.
 
 **Что делать:** валидировать `url`:
@@ -391,6 +415,8 @@ if not url.startswith("https://magnit.ru/"):
 
 ### Шаг 6.2 — `!= None` → `is not None` (проблема №22)
 
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: все `!= None` в запросах заменены на `.isnot(None)`.
+
 **Файлы:** `routes/catalog.py`, `database.py`.
 
 **Что делать:** заменить `Category.parent_id != None` на
@@ -398,6 +424,8 @@ if not url.startswith("https://magnit.ru/"):
 прогнать `ruff check src/` и починить остальные находки.
 
 ### Шаг 6.3 — response_model для ключевых эндпоинтов (проблема №18)
+
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: схемы `ProductListItem`, `ProductStats`, `DecreasedPriceItem`.
 
 **Файлы:** `schemas.py`, `routes/catalog.py`, `routes/prices.py`.
 
@@ -407,6 +435,8 @@ if not url.startswith("https://magnit.ru/"):
 напрямую — поля менять нельзя, только фиксировать).
 
 ### Шаг 6.4 — Бизнес-логика из routes в services (проблема №10)
+
+> ✅ **Выполнено** в OpenSpec-изменении `refactor-product-query-and-category-api`: `services/product_query.py`.
 
 **Файлы:** новый `src/server/services/product_query.py`, `routes/catalog.py`.
 

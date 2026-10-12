@@ -8,11 +8,14 @@ from datetime import datetime
 
 from src.server.database import get_db
 from src.server.models import ScanJob, Product
+from src.server.schemas import DecreasedPriceItem
+from src.server.services.catalog_scanner import AmbiguousStoreError, resolve_store_type
+from src.server.services.jobs import finalize_job
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
 
 
-@router.get("/decreased", response_model=list[dict])
+@router.get("/decreased", response_model=list[DecreasedPriceItem])
 def get_decreased_prices(
     store_code: Optional[str] = Query(None),
     min_discount_percent: float = Query(10.0, description="Минимальный процент снижения"),
@@ -55,6 +58,9 @@ def get_decreased_prices(
 @router.post("/update")
 def update_prices(
     store_code: str = Query(..., description="Код магазина"),
+    store_type: Optional[str] = Query(
+        None, description="Тип магазина (обязателен, если у кода магазина в БД несколько типов)"
+    ),
     category_ids: Optional[str] = Query(None, description="Список ID категорий через запятую"),
     tracked_only: bool = Query(True),
     background_tasks: BackgroundTasks = None,
@@ -71,6 +77,12 @@ def update_prices(
             cat_ids = [int(x.strip()) for x in category_ids.split(",")]
         except ValueError:
             raise HTTPException(status_code=400, detail="Неверный формат category_ids")
+
+    # Тип магазина определяем до создания задания: неоднозначный код → 400, а не упавшее задание
+    try:
+        resolved_store_type = resolve_store_type(db, store_code, store_type)
+    except AmbiguousStoreError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
     # Создаём задание
     job = ScanJob(
@@ -90,31 +102,31 @@ def update_prices(
         bg_db = SessionLocal()
         try:
             job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
-            if not job_db:
+            # Отменено ещё до запуска — статус `cancelled` окончательный
+            if not job_db or job_db.status == "cancelled":
                 return
             job_db.status = "running"
             job_db.started_at = datetime.utcnow()
             bg_db.commit()
 
             try:
-                scanner = CatalogScanner(bg_db, store_code=store_code, job_id=job_id)
+                scanner = CatalogScanner(
+                    bg_db, store_code=store_code, store_type=resolved_store_type, job_id=job_id
+                )
                 result = scanner.scan_products(
                     category_ids=cat_ids,
                     tracked_only=tracked_only,
                 )
                 scanner.close()
 
-                job_db.status = "completed"
-                job_db.finished_at = datetime.utcnow()
-                job_db.items_scanned = result["scanned"]
-                job_db.items_added = result["added"]
-                job_db.items_updated = result["updated"]
-                bg_db.commit()
+                finalize_job(
+                    bg_db, job_id, "completed",
+                    items_scanned=result["scanned"],
+                    items_added=result["added"],
+                    items_updated=result["updated"],
+                )
             except Exception as e:
-                job_db.status = "failed"
-                job_db.error_message = str(e)
-                job_db.finished_at = datetime.utcnow()
-                bg_db.commit()
+                finalize_job(bg_db, job_id, "failed", error_message=str(e))
         finally:
             bg_db.close()
 

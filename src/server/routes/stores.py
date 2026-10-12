@@ -3,50 +3,21 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import os
 import dotenv
-from datetime import datetime, timedelta
 import logging
 
 from sqlalchemy import or_
+from sqlalchemy.exc import IntegrityError
 from src.server.database import get_db
-from src.server.models import Store, ScanJob
+from src.server.models import Store
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest, StorePreviewItem, AddSelectedStoresRequest
-from src.server.services.magnit_api import STORE_TYPE_MAP as API_STORE_TYPE_MAP
+from src.server.constants import STORE_TYPE_MAP as API_STORE_TYPE_MAP
 from src.server.utils.city_extractor import extract_city_from_address
-from src.server.constants import STORE_TYPE_CODES
+from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_CODES
+from src.server.scheduler import register_jobs
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/stores", tags=["Магазины"])
-
-
-def _cleanup_stale_jobs(db: Session):
-    """Перевести зависшие running-задания в failed (started_at > 2 мин назад)."""
-    stale_cutoff = datetime.utcnow() - timedelta(minutes=2)
-    stale_jobs = db.query(ScanJob).filter(
-        ScanJob.job_type == "stores",
-        ScanJob.status == "running",
-        ScanJob.started_at < stale_cutoff,
-    ).all()
-    for job in stale_jobs:
-        job.status = "failed"
-        job.error_message = "Задание зависло и было автоматически отменено"
-        job.finished_at = datetime.utcnow()
-    if stale_jobs:
-        db.commit()
-
-
-def _mark_all_running_failed_on_startup(db: Session):
-    """При старте сервера пометить ВСЕ running задания как failed (процесс был убит)."""
-    stale_jobs = db.query(ScanJob).filter(
-        ScanJob.status == "running",
-    ).all()
-    for job in stale_jobs:
-        job.status = "failed"
-        job.error_message = "Сервер был перезапущен, задание прервано"
-        job.finished_at = datetime.utcnow()
-    if stale_jobs:
-        db.commit()
-        logger.info(f"Помечено как failed: {len(stale_jobs)} зависших заданий")
 
 
 @router.get("", response_model=list[StoreResponse])
@@ -70,12 +41,26 @@ def list_stores(
 @router.post("", response_model=StoreResponse, status_code=201)
 def create_store(store: StoreCreate, db: Session = Depends(get_db)):
     """Добавить магазин вручную."""
-    existing = db.query(Store).filter(Store.store_code == store.store_code).first()
+    existing = db.query(Store).filter(
+        Store.store_code == store.store_code,
+        Store.store_type == store.store_type,
+    ).first()
     if existing:
-        raise HTTPException(status_code=409, detail="Магазин с таким store_code уже существует")
+        raise HTTPException(
+            status_code=409,
+            detail="Магазин с таким store_code и типом уже существует",
+        )
     db_store = Store(**store.model_dump())
     db.add(db_store)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        # гонка двух одновременных запросов: пару уже добавил другой
+        db.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="Магазин с таким store_code и типом уже существует",
+        )
     db.refresh(db_store)
     return db_store
 
@@ -109,11 +94,24 @@ def get_store(store_id: str, db: Session = Depends(get_db)):
 
 @router.put("/{store_id}", response_model=StoreResponse)
 def update_store(store_id: str, data: StoreUpdate, db: Session = Depends(get_db)):
-    """Обновить магазин."""
+    """Обновить магазин. Тип и полный адрес менять нельзя: из них (и кода) вычисляется id."""
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="Магазин не найден")
     update_data = data.model_dump(exclude_unset=True)
+    # Совпадающие значения допускаются (идемпотентный PUT целым объектом),
+    # отличающиеся — отклоняем до любых изменений
+    changed = [
+        key for key in ("store_type", "full_address")
+        if key in update_data and update_data[key] != getattr(store, key)
+    ]
+    if changed:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Нельзя изменить {', '.join(changed)}: удалите магазин и добавьте заново"
+            ),
+        )
     for key, value in update_data.items():
         setattr(store, key, value)
     db.commit()
@@ -158,6 +156,7 @@ def select_store(
 
     # Обновляем .env если нужно
     env_updated = False
+    scheduler_updated = False
     if req.update_env:
         env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.env')
         dotenv.load_dotenv(env_path)
@@ -187,6 +186,15 @@ def select_store(
 
         env_updated = True
 
+        # Применяем выбор к работающему процессу без перезапуска сервера:
+        # переменные окружения и задания планировщика (запустится, если ещё не был).
+        os.environ.update(env_vars)
+        try:
+            register_jobs(store.store_code)
+            scheduler_updated = True
+        except Exception:
+            logger.exception("Не удалось перерегистрировать задания планировщика")
+
     return {
         "store_code": store.store_code,
         "store_type": store.store_type,
@@ -194,6 +202,7 @@ def select_store(
         "address": store.full_address,
         "city": store.city,
         "env_updated": env_updated,
+        "scheduler_updated": scheduler_updated,
     }
 
 
@@ -203,8 +212,20 @@ def preview_stores(
     db: Session = Depends(get_db),
 ):
     """Предварительный поиск магазинов без сохранения в БД."""
+    unsupported = req.unsupported_store_types()
+    if unsupported:
+        raise HTTPException(
+            status_code=400,
+            detail=(
+                f"Неподдерживаемые типы магазинов: {', '.join(unsupported)}. "
+                f"Доступные: {', '.join(PREVIEW_STORE_TYPES)}"
+            ),
+        )
+
     # Получаем существующие store_code для подсветки
-    existing_codes = {row[0] for row in db.query(Store.store_code).all()}
+    existing_pairs = {
+        (row[0], row[1]) for row in db.query(Store.store_code, Store.store_type).all()
+    }
 
     stores_api = None
     try:
@@ -277,8 +298,10 @@ def preview_stores(
                 "name": sd.get("name"),
             }
             
-            if code not in seen:
-                seen[code] = store_info
+            # магазины с одним кодом, но разных типов — разные магазины
+            pair = (code, store_type_name)
+            if pair not in seen:
+                seen[pair] = store_info
 
         logger.debug(f"DEBUG: Всего уникальных магазинов: {len(seen)}")
 
@@ -295,7 +318,7 @@ def preview_stores(
                 address=sd["address"],
                 full_address=sd["full_address"],
                 name=sd.get("name"),
-                exists_in_db=sd["store_code"] in existing_codes,
+                exists_in_db=(sd["store_code"], sd["store_type"]) in existing_pairs,
             ))
 
         logger.debug(f"DEBUG preview_stores: Сформировано {len(preview)} магазинов для превью")
@@ -322,14 +345,18 @@ def add_selected_stores(
     db: Session = Depends(get_db),
 ):
     """Добавить выбранные магазины из preview в БД."""
-    existing_codes = {row[0] for row in db.query(Store.store_code).all()}
+    existing_pairs = {
+        (row[0], row[1]) for row in db.query(Store.store_code, Store.store_type).all()
+    }
 
     to_add = []
     skipped = 0
     for s in req.stores:
-        if s.store_code in existing_codes:
+        pair = (s.store_code, s.store_type)
+        if pair in existing_pairs:
             skipped += 1
         else:
+            existing_pairs.add(pair)  # и дубль внутри самого запроса
             shop_type_code = STORE_TYPE_CODES.get(s.store_type)
             to_add.append(Store(
                 store_code=s.store_code,

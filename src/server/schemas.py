@@ -1,7 +1,7 @@
 from pydantic import BaseModel
 from typing import Optional
 from datetime import datetime
-from .services.magnit_api import STORE_TYPE_MAP
+from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_MAP
 
 
 # ===== Store =====
@@ -39,9 +39,9 @@ class StoreResponse(StoreBase):
 
 # ===== Scan Request =====
 
-# Обратный маппинг: UI-лейбл → API код
+# Типы для поиска магазинов: UI-лейбл → API код (только PREVIEW_STORE_TYPES)
 STORE_TYPE_TO_CODE = {
-    v: k for k, v in STORE_TYPE_MAP.items() if v not in ("Мигом", "Заряд", "Опт")
+    v: k for k, v in STORE_TYPE_MAP.items() if v in PREVIEW_STORE_TYPES
 }
 
 
@@ -50,6 +50,10 @@ class ScanStoresRequest(BaseModel):
     street: Optional[str] = None
     store_types: list[str] = ["Магнит", "Экстра", "М.Косметик"]
     force_update: bool = False
+
+    def unsupported_store_types(self) -> list[str]:
+        """Переданные типы, которых нет в списке поддерживаемых для поиска."""
+        return [t for t in self.store_types if t not in STORE_TYPE_TO_CODE]
 
     def get_store_type_codes(self) -> list[str]:
         """Преобразовать типы в коды API."""
@@ -128,3 +132,60 @@ class UpdateCategoriesTrackingRequest(BaseModel):
     """Запрос на обновление отслеживания категорий."""
 
     category_ids: list[int]
+
+
+# ===== Products / Prices (схемы ответов; имена и набор полей фиксируют контракт с UI) =====
+
+
+class ProductListItem(BaseModel):
+    """Элемент ответа GET /api/products."""
+
+    product_id: int
+    name: str
+    price: float
+    previous_price: Optional[float] = None
+    price_change_percent: Optional[float] = None
+    last_price_change: Optional[str] = None
+    last_change_price: Optional[float] = None
+    last_change_date: Optional[str] = None
+    currency: Optional[str] = None
+    unit: Optional[str] = None
+    image_url: Optional[str] = None
+    in_stock: Optional[bool] = None
+    category_id: Optional[int] = None
+    store_code: str
+    category_name: Optional[str] = None
+    category_parent_id: Optional[int] = None
+    quantity: Optional[int] = None
+    is_low_stock: Optional[bool] = None
+    pickup_only: Optional[bool] = None
+    rating: Optional[float] = None
+    scores_count: Optional[int] = None
+    comments_count: Optional[int] = None
+    seo_code: Optional[str] = None
+    is_weighted: Optional[bool] = None
+    unit_price: Optional[float] = None
+    first_seen: Optional[str] = None
+    last_seen: Optional[str] = None
+
+
+class ProductStats(BaseModel):
+    """Ответ GET /api/products/stats."""
+
+    total: int
+    in_stock: int
+    with_price_decrease: int
+    with_price_increase: int
+    last_update: Optional[str] = None
+
+
+class DecreasedPriceItem(BaseModel):
+    """Элемент ответа GET /api/prices/decreased."""
+
+    product_id: int
+    name: str
+    price: float
+    previous_price: Optional[float] = None
+    change_percent: float
+    last_price_change: str
+    image_url: Optional[str] = None

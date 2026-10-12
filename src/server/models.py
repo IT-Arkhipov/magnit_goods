@@ -29,6 +29,11 @@ class Store(Base):
     """Магазин Магнит."""
 
     __tablename__ = "stores"
+    __table_args__ = (
+        # Магазин идентифицируется парой (код, тип): один код может быть у магазинов
+        # разных типов, но не дважды у одного типа
+        Index("uq_store_code_type", "store_code", "store_type", unique=True),
+    )
 
     id = Column(
         String(12), primary_key=True
@@ -87,6 +92,9 @@ class Product(Base):
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, nullable=False)
     name = Column(String, nullable=False)
+    # name.casefold(): регистронезависимый поиск по кириллице в SQL
+    # (SQLite LOWER() работает только с ASCII). Заполняется при сохранении товара.
+    name_search = Column(String, nullable=True)
     sku = Column(String, nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
     store_code = Column(String, nullable=False)

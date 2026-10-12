@@ -1,9 +1,10 @@
-from fastapi import FastAPI, Request, Depends, Query, BackgroundTasks
+from fastapi import FastAPI, HTTPException, Request, Depends, Query, BackgroundTasks
 from starlette.responses import HTMLResponse, RedirectResponse
 from starlette.templating import Jinja2Templates
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from sqlalchemy.orm import Session
+from urllib.parse import urlsplit
 import os
 import logging
 
@@ -11,7 +12,14 @@ from src.server.database import init_db, get_db, SessionLocal
 from src.server.models import Store
 from src.server.routes import stores, jobs, catalog, prices
 from src.server.scheduler import init_scheduler, shutdown_scheduler
+from src.server.utils.threads import run_logged
 from sqlalchemy import text
+from dotenv import load_dotenv
+
+# .env читается при старте (STORE_CODE, STORE_TYPE, CORS_ORIGINS).
+# override=False: переменные, уже заданные в окружении процесса, приоритетнее.
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+load_dotenv(os.path.join(PROJECT_ROOT, ".env"), override=False)
 
 
 # === Настройка логирования ===
@@ -19,6 +27,30 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(name)s %(levelname)s %(message)s",
 )
+
+logger = logging.getLogger(__name__)
+
+
+def _is_magnit_url(url: str) -> bool:
+    """
+    Ссылка разрешена, только если схема https и хост ровно magnit.ru.
+
+    Проверяется именно hostname, а не префикс строки: префикс
+    `https://magnit.ru` пропускает `https://magnit.ru.evil.example`
+    и `https://magnit.ru@evil.example`. Обратный слеш и пробельные символы
+    отклоняются, потому что браузеры трактуют `\` как `/`.
+    """
+    if any(ch in url for ch in "\\\r\n\t "):
+        return False
+    try:
+        parts = urlsplit(url)
+        return (
+            parts.scheme == "https"
+            and parts.hostname == "magnit.ru"
+            and parts.port in (None, 443)
+        )
+    except ValueError:
+        return False
 
 
 @asynccontextmanager
@@ -28,10 +60,10 @@ async def lifespan(app: FastAPI):
     init_db()
 
     # Очистка зависших заданий от предыдущего запуска
-    from src.server.routes.stores import _mark_all_running_failed_on_startup
+    from src.server.services.jobs import mark_unfinished_jobs_failed
     db_session = SessionLocal()
     try:
-        _mark_all_running_failed_on_startup(db_session)
+        mark_unfinished_jobs_failed(db_session)
     finally:
         db_session.close()
 
@@ -142,6 +174,8 @@ async def redirect_to_product(
     x_shop_type: str = Query(...),
 ):
     """Промежуточный редирект для установки cookies перед переходом на magnit.ru"""
+    if not _is_magnit_url(url):
+        raise HTTPException(status_code=400, detail="Допустимы только ссылки на magnit.ru")
     response = RedirectResponse(url=url)
     response.set_cookie("shopCode", shop_code, max_age=3600, path="/")
     response.set_cookie("x_shop_type", x_shop_type, max_age=3600, path="/")
@@ -156,13 +190,16 @@ async def open_product_in_browser(
     background_tasks: BackgroundTasks = None,
 ):
     """Открыть товар в браузере с автоматическим выбором магазина через Playwright"""
+    if not _is_magnit_url(product_url):
+        raise HTTPException(status_code=400, detail="Допустимы только ссылки на magnit.ru")
+
     from src.server.services.product_opener import open_product_with_store
 
-    # Запускаем в фоне, чтобы не блокировать ответ
+    # Запускаем в фоне, чтобы не блокировать ответ; ошибки потока попадают в лог
     import threading
     thread = threading.Thread(
-        target=open_product_with_store,
-        args=(product_url, store_code, store_type)
+        target=run_logged,
+        args=(open_product_with_store, product_url, store_code, store_type),
     )
     thread.start()
 

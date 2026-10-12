@@ -7,14 +7,22 @@ from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.cron import CronTrigger
 from datetime import datetime
 import logging
+import os
 
 from src.server.database import SessionLocal
-from src.server.models import ScanJob, Category
+from src.server.models import ScanJob
 from src.server.services.catalog_scanner import CatalogScanner
+from src.server.services.jobs import finalize_job
 
 logger = logging.getLogger(__name__)
 
 scheduler = BackgroundScheduler()
+
+
+def _configured_store_type():
+    """STORE_TYPE из окружения (его выставляет POST /api/stores/select) или None —
+    тогда сканер определит тип по БД и откажется, если у кода несколько типов."""
+    return os.getenv("STORE_TYPE") or None
 
 
 def update_prices_job(store_code: str, category_ids: list[int] = None):
@@ -42,33 +50,31 @@ def update_prices_job(store_code: str, category_ids: list[int] = None):
         job_id = job.id
 
         # Сканируем товары
-        scanner = CatalogScanner(db, store_code=store_code, job_id=job_id)
+        scanner = CatalogScanner(
+            db, store_code=store_code, store_type=_configured_store_type(), job_id=job_id
+        )
         result = scanner.scan_products(
             category_ids=category_ids,
             tracked_only=True,
         )
 
-        # Обновляем задание
-        job.status = "completed"
-        job.finished_at = datetime.utcnow()
-        job.items_scanned = result["scanned"]
-        job.items_added = result["added"]
-        job.items_updated = result["updated"]
-        db.commit()
-
-        logger.info("[Scheduler] Обновление цен завершено")
+        # Обновляем задание (отменённое задание остаётся cancelled)
+        if finalize_job(
+            db, job_id, "completed",
+            items_scanned=result["scanned"],
+            items_added=result["added"],
+            items_updated=result["updated"],
+        ):
+            logger.info("[Scheduler] Обновление цен завершено")
+        else:
+            logger.info("[Scheduler] Обновление цен отменено")
 
         scanner.close()
 
     except Exception as e:
         logger.error(f"[Scheduler] Ошибка обновления цен: {e}")
         if job_id:
-            job = db.query(ScanJob).filter(ScanJob.id == job_id).first()
-            if job:
-                job.status = "failed"
-                job.error_message = str(e)
-                job.finished_at = datetime.utcnow()
-                db.commit()
+            finalize_job(db, job_id, "failed", error_message=str(e))
     finally:
         db.close()
 
@@ -96,24 +102,25 @@ def scan_catalog_job(store_code: str):
         db.commit()
         db.refresh(job_categories)
 
-        scanner = CatalogScanner(db, store_code=store_code, job_id=job_categories.id)
+        scanner = CatalogScanner(
+            db, store_code=store_code, store_type=_configured_store_type(), job_id=job_categories.id
+        )
         try:
             cat_result = scanner.scan_categories()
         except Exception as e:
             logger.error(f"[Scheduler] Ошибка сканирования категорий: {e}")
-            job_categories.status = "failed"
-            job_categories.error_message = str(e)
-            job_categories.finished_at = datetime.utcnow()
-            db.commit()
+            finalize_job(db, job_categories.id, "failed", error_message=str(e))
             return
         finally:
             scanner.close()
 
-        job_categories.status = "completed"
-        job_categories.finished_at = datetime.utcnow()
-        job_categories.items_scanned = cat_result["scanned"]
-        job_categories.items_added = cat_result["added"]
-        db.commit()
+        if not finalize_job(
+            db, job_categories.id, "completed",
+            items_scanned=cat_result["scanned"],
+            items_added=cat_result["added"],
+        ):
+            logger.info("[Scheduler] Сканирование каталога отменено")
+            return
 
         logger.info(f"[Scheduler] Категории: {cat_result}")
 
@@ -128,25 +135,24 @@ def scan_catalog_job(store_code: str):
         db.commit()
         db.refresh(job_products)
 
-        scanner = CatalogScanner(db, store_code=store_code, job_id=job_products.id)
+        scanner = CatalogScanner(
+            db, store_code=store_code, store_type=_configured_store_type(), job_id=job_products.id
+        )
         try:
             prod_result = scanner.scan_products(tracked_only=True)
         except Exception as e:
             logger.error(f"[Scheduler] Ошибка сканирования товаров: {e}")
-            job_products.status = "failed"
-            job_products.error_message = str(e)
-            job_products.finished_at = datetime.utcnow()
-            db.commit()
+            finalize_job(db, job_products.id, "failed", error_message=str(e))
             return
         finally:
             scanner.close()
 
-        job_products.status = "completed"
-        job_products.finished_at = datetime.utcnow()
-        job_products.items_scanned = prod_result["scanned"]
-        job_products.items_added = prod_result["added"]
-        job_products.items_updated = prod_result["updated"]
-        db.commit()
+        finalize_job(
+            db, job_products.id, "completed",
+            items_scanned=prod_result["scanned"],
+            items_added=prod_result["added"],
+            items_updated=prod_result["updated"],
+        )
 
         logger.info(f"[Scheduler] Товары: {prod_result}")
 
@@ -155,41 +161,27 @@ def scan_catalog_job(store_code: str):
 
 
 
-def init_scheduler(store_code: str):
+def register_jobs(store_code: str):
     """
-    Инициализировать планировщик с заданиями.
+    Зарегистрировать (или перерегистрировать) задания планировщика для магазина
+    и запустить планировщик, если он ещё не запущен.
+
+    Повторный вызов безопасен: задания заменяются (`replace_existing=True`) —
+    так смена магазина через POST /api/stores/select применяется без перезапуска.
+
+    Отслеживаемые категории задания читают в момент запуска, а не при
+    регистрации, поэтому новые отметки в UI учитываются сразу.
 
     Args:
         store_code: Код магазина для которого запускаем задания
     """
-    if scheduler.running:
-        logger.info("[Scheduler] Планировщик уже запущен")
-        return
-
-    logger.info(f"[Scheduler] Инициализация планировщика для магазина {store_code}")
-
-    # Получаем отслеживаемые категории
-    db = SessionLocal()
-    try:
-        tracked_categories = (
-            db.query(Category)
-            .filter(
-                Category.is_tracked == True,  # noqa: E712
-            )
-            .all()
-        )
-        # scan_products ожидает magnit_id категорий, а не их PK
-        category_ids = (
-            [cat.magnit_id for cat in tracked_categories] if tracked_categories else None
-        )
-    finally:
-        db.close()
+    logger.info(f"[Scheduler] Регистрация заданий для магазина {store_code}")
 
     # Обновление цен — каждый день в 8:00
     scheduler.add_job(
         update_prices_job,
         CronTrigger(hour=8, minute=0),
-        args=[store_code, category_ids],
+        args=[store_code],
         id="update_prices",
         name="Обновление цен",
         replace_existing=True,
@@ -215,8 +207,14 @@ def init_scheduler(store_code: str):
     #     replace_existing=True,
     # )
 
-    scheduler.start()
-    logger.info("[Scheduler] Планировщик запущен")
+    if not scheduler.running:
+        scheduler.start()
+        logger.info("[Scheduler] Планировщик запущен")
+
+
+def init_scheduler(store_code: str):
+    """Инициализировать планировщик при старте приложения."""
+    register_jobs(store_code)
 
 
 def shutdown_scheduler():
