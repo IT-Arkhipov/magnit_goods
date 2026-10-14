@@ -1849,7 +1849,7 @@ async function loadProductStats() {
     
     try {
         // Загружаем статистику для всех выбранных магазинов
-        const url = `/api/products/stats?store_code=${encodeURIComponent(selectedStores[0])}`;
+        const url = `/api/products/stats?store_codes=${encodeURIComponent(selectedStores.join(','))}`;
         const response = await fetch(url);
         const stats = await response.json();
         
@@ -1875,6 +1875,33 @@ async function loadProductStats() {
 }
 
 // Улучшенная функция loadProducts с поддержкой новых фильтров
+// Выбор записи товара при склейке выбранных магазинов. existing — уже накопленная
+// запись (из магазина, стоящего раньше в порядке выбора), candidate — из следующего.
+// Приоритет (чем больше ступень, тем лучше):
+//   3 — снижение (price_change_percent > 0) и наличие; среди таких — больший процент;
+//   2 — наличие; 1 — остальные.
+// При фильтре «Нет в наличии» (preferOutOfStock) ступени наличия зеркальны:
+// приоритет у записи без наличия, чтобы товар, отсутствующий хотя бы в одном
+// магазине, не пропал из этого фильтра. Кандидат побеждает только при строго
+// лучшей ступени или строго большем проценте — равенство решает порядок магазинов.
+function mergeProductRecords(existing, candidate, preferOutOfStock = false) {
+    const tier = (p) => {
+        const available = !!p.in_stock && p.quantity > 0;
+        const wanted = preferOutOfStock ? !available : available;
+        if (!wanted) return 1;
+        return p.price_change_percent > 0 ? 3 : 2;
+    };
+    const existingTier = tier(existing);
+    const candidateTier = tier(candidate);
+    if (candidateTier !== existingTier) {
+        return candidateTier > existingTier ? candidate : existing;
+    }
+    if (candidateTier === 3 && candidate.price_change_percent > existing.price_change_percent) {
+        return candidate;
+    }
+    return existing;
+}
+
 async function loadProductsEnhanced() {
     const search = document.getElementById('searchFilter')?.value || '';
     const sort = document.getElementById('sortFilter')?.value || 'name';
@@ -1913,7 +1940,7 @@ async function loadProductsEnhanced() {
         // Загружаем товары из всех выбранных магазинов параллельно
         const loadStartTime = performance.now();
         let allProducts = [];
-        const productMap = {}; // Для дедупликации по product_id
+        const productIndex = {}; // product_id -> позиция в allProducts (дедупликация)
         let completedStores = 0;
         const failedStores = [];
 
@@ -1984,9 +2011,15 @@ async function loadProductsEnhanced() {
         storeResults.forEach(({ storeCode, products, success }) => {
             if (success || products.length > 0) {
                 products.forEach(p => {
-                    if (!productMap[p.product_id]) {
-                        productMap[p.product_id] = p;
+                    const index = productIndex[p.product_id];
+                    if (index === undefined) {
+                        productIndex[p.product_id] = allProducts.length;
                         allProducts.push(p);
+                    } else {
+                        // Позиция строки — по первой записи, поля — по магазину-источнику
+                        allProducts[index] = mergeProductRecords(
+                            allProducts[index], p, stockFilter === 'out_of_stock'
+                        );
                     }
                 });
             }

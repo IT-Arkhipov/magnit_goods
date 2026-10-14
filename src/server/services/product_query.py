@@ -145,20 +145,33 @@ def product_to_list_item(p: Product) -> dict:
     }
 
 
-def get_products_stats(db: Session, store_code: Optional[str] = None) -> dict:
-    """Сводная статистика товаров (по магазину или по всем)."""
+def get_products_stats(
+    db: Session,
+    store_codes: Optional[list[str]] = None,
+) -> dict:
+    """Сводная статистика товаров по набору магазинов (пустой набор — по всем).
+
+    Все счётчики — по уникальным product_id: товар, продаваемый в нескольких
+    магазинах набора, считается один раз. Одиночный магазин и вызов без
+    магазина считаются теми же выражениями.
+    """
+    # «В наличии» — по тому же правилу, что и список товаров: in_stock и остаток > 0
+    available = (Product.in_stock.is_(True)) & (Product.quantity > 0)
+
+    def distinct_ids(condition):
+        # product_id только для строк, подходящих под условие (иначе NULL)
+        return func.count(func.distinct(case((condition, Product.product_id), else_=None)))
+
     query = db.query(
-        func.count().label("total"),
-        # «В наличии» — по тому же правилу, что и список товаров: in_stock и остаток > 0
-        func.sum(
-            case(((Product.in_stock.is_(True)) & (Product.quantity > 0), 1), else_=0)
-        ).label("in_stock"),
-        func.sum(case((Product.price_change_percent > 0, 1), else_=0)).label("with_price_decrease"),
-        func.sum(case((Product.price_change_percent < 0, 1), else_=0)).label("with_price_increase"),
+        func.count(func.distinct(Product.product_id)).label("total"),
+        distinct_ids(available).label("in_stock"),
+        # Снижение учитывается, только если товар в этом же магазине в наличии
+        distinct_ids(available & (Product.price_change_percent > 0)).label("with_price_decrease"),
+        distinct_ids(Product.price_change_percent < 0).label("with_price_increase"),
         func.max(Product.last_seen).label("last_update"),
     )
-    if store_code:
-        query = query.filter(Product.store_code == store_code)
+    if store_codes:
+        query = query.filter(Product.store_code.in_(store_codes))
     row = query.one()
 
     return {

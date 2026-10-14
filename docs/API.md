@@ -98,7 +98,7 @@ Swagger UI: http://localhost:8000/docs
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
 | 25 | GET | `/api/products` | `list_products` | Список товаров с фильтрами. Query: `store_code`, `category_id`, `category_ids` (CSV), `search`, `min_price`, `max_price`, `sort_by` (`name`/`price`/`last_seen`), `limit≤1000`, `offset`, `relax_stale` (окно видимости устаревших товаров до `STALE_DAYS_DELETE`), `include_out_of_stock` (включить отсутствующие). → `list[ProductListItem]` (27 полей, схема в `/docs`) |
-| 26 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`. → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
+| 26 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`, `store_codes` (CSV; объединяется с `store_code`; пусто — по всем магазинам). → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
 | 27 | GET | `/api/products/multi-prices` | `get_multi_store_prices` | ⭐ Цены из нескольких магазинов. Query: `product_ids` (CSV), `store_codes` (CSV). → `{product_id: {store_code: {price, previous_price, ...}}}` |
 | 28 | GET | `/api/products/{product_id}` | `get_product` | Детали товара. Path: `product_id: int`. Query: `store_code`. → `dict` / 404 |
 | 29 | GET | `/api/products/{product_id}/history` | `get_product_price_history` | История цен по дням. Query: `store_code`, `days=30` (1..365). → `list[dict]` |
@@ -113,6 +113,14 @@ Swagger UI: http://localhost:8000/docs
 | 33 | POST | `/api/catalog/scan` | `scan_products` | Синхронно сканировать товары. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
 | 34 | POST | `/api/catalog/scan-all-stores` | `scan_all_stores` | ⭐ Фоновое сканирование всех активных магазинов (каждый — со своим `store_type`; один вызов сканера на магазин). Отслеживаемые категории — только подкатегории; **400**, если их нет. Query: `tracked_only=True`. → `{job_id, status, stores_count}` |
 | 35 | POST | `/api/catalog/scan-prices` | `scan_prices_in_store` | Обновить цены в магазине. Query: `store_code`, `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
+
+### `GET /api/products/stats` — особенности
+- Все счётчики считаются по **уникальным `product_id`** выбранных магазинов (один магазин, набор через `store_codes` или все магазины — одни и те же выражения): товар, продающийся в нескольких магазинах набора, учитывается один раз.
+- `total` — все товары выборки; `in_stock` — в наличии (`in_stock=true` и `quantity > 0`) хотя бы в одном магазине набора; `with_price_increase` — с повышением цены (`price_change_percent < 0`) хотя бы в одном магазине.
+- `with_price_decrease` — со снижением цены (`price_change_percent > 0`) в магазине, где товар при этом **в наличии**: снижения на отсутствующих товарах не считаются, как и в списке режима «Новая цена».
+- Статистика не учитывает окно видимости устаревших товаров, категории и поиск, поэтому может отличаться от длины списка.
+- Изменения значений относительно прежней версии: `with_price_decrease` одного магазина может уменьшиться; `total` без магазина — число уникальных товаров, а не строк. Набор полей ответа прежний.
+- Пример: `GET /api/products/stats?store_codes=992104,210117` → `{"total": 6369, "in_stock": 5425, "with_price_decrease": 3, "with_price_increase": 1, "last_update": "2026-10-14T12:07:13.208683"}`.
 
 ### `POST /api/catalog/scan-all-stores` — особенности ⭐
 - Использует `BackgroundTasks` (FastAPI).

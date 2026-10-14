@@ -279,10 +279,14 @@ def list_products(
 @router.get("/products/stats", response_model=ProductStats)
 def get_products_stats(
     store_code: Optional[str] = Query(None),
+    store_codes: Optional[str] = Query(None, description="Коды магазинов через запятую"),
     db: Session = Depends(get_db),
 ):
-    """Статистика товаров."""
-    return product_query.get_products_stats(db, store_code)
+    """Статистика товаров по магазину, набору магазинов или по всем."""
+    codes = [c.strip() for c in (store_codes or "").split(",") if c.strip()]
+    if store_code and store_code.strip():
+        codes.append(store_code.strip())
+    return product_query.get_products_stats(db, list(dict.fromkeys(codes)))
 
 
 @router.get("/products/multi-prices")
