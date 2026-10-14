@@ -1057,7 +1057,8 @@ function renderProductsList() {
           productsToRender = productsToRender.filter(p =>
               p.price_change_percent !== null &&
               p.price_change_percent !== undefined &&
-              p.price_change_percent > 0
+              p.price_change_percent > 0 &&
+              p.quantity > 0
           );
       }
       
@@ -1337,6 +1338,9 @@ async function compareInStores(productId, currentStoreCode, productName) {
                 const response = await fetch(`/api/products/${productId}?store_code=${encodeURIComponent(store.store_code)}`);
                 if (response.ok) {
                     const productData = await response.json();
+                    if (productData.quantity === 0 || productData.quantity === null || productData.quantity === undefined) {
+                        return null; // Skip out-of-stock products in comparison
+                    }
                     let changePercent, previousPrice;
 
                     if (showNewPriceMode) {
@@ -1408,7 +1412,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
             }
         });
         
-        const storeData = await Promise.all(storePromises);
+        const storeData = (await Promise.all(storePromises)).filter(item => item !== null);
         
         let html = '<table style="width: 100%; border-collapse: collapse;">';
         html += '<thead><tr>';
@@ -2101,7 +2105,7 @@ async function loadProductsEnhanced() {
                      const prices = [];
                      for (const storeCode of selectedStores) {
                          const priceInfo = allStorePrices[p.product_id]?.[storeCode];
-                         if (priceInfo && priceInfo.price) {
+                         if (hasStock(priceInfo) && priceInfo.price) {
                              prices.push(priceInfo.price);
                          }
                      }
@@ -2144,6 +2148,15 @@ async function loadProductsEnhanced() {
     } catch (e) {
         listDiv.innerHTML = `<p style="color: #dc3545;">Ошибка загрузки: ${e.message}</p>`;
     }
+}
+
+// Цена магазина участвует в сравнении только при наличии товара: то же правило,
+// что в product_query.py:build_product_query (in_stock и quantity > 0).
+// При фильтре «Нет в наличии» отсутствующие товары показываются намеренно.
+function hasStock(priceInfo) {
+    if (!priceInfo) return false;
+    if ((document.getElementById('stockFilter')?.value || '') === 'out_of_stock') return true;
+    return priceInfo.in_stock !== false && priceInfo.quantity > 0;
 }
 
 // Вспомогательная функция для рендеринга списка товаров в иерархическом виде
@@ -2279,7 +2292,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                          const productPrices = {};
                          selectedStores.forEach(storeCode => {
                              const priceInfo = allStorePrices[p.product_id]?.[storeCode];
-                             if (priceInfo) {
+                             if (hasStock(priceInfo)) {
                                  productPrices[storeCode] = priceInfo;
                              }
                          });
@@ -2329,8 +2342,7 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                           : ''} `
                                       : '';
                                 // Информация для tooltip
-                                const _rawQty = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
-                                const quantity = (_rawQty === 0 || _rawQty === '0') && priceInfo.in_stock !== false ? 'в наличии' : _rawQty;
+                                const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
@@ -2430,7 +2442,11 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
         html += `<h4>${escapeHtml(catData.name)} (${catData.products.length})</h4>`;
         html += `<table><thead><tr><th>Название</th>${otherStoreHeaders}<th>Цена</th><th>Скидка</th><th>Наличие</th></tr></thead><tbody>`;
              catData.products.forEach(p => {
-             const productPrices = otherStorePrices[p.product_id] || {};
+             // Цены магазинов без остатка не участвуют в сравнении
+             const productPrices = {};
+             Object.entries(otherStorePrices[p.product_id] || {}).forEach(([sc, info]) => {
+                 if (hasStock(info)) productPrices[sc] = info;
+             });
              // Добавляем цену активного магазина
              productPrices[activeStoreCode] = { price: p.price };
              
@@ -2459,8 +2475,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                         const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
                         
                           // Информация для tooltip
-                          const _rawQty = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
-                          const quantity = (_rawQty === 0 || _rawQty === '0') && priceInfo.in_stock !== false ? 'в наличии' : _rawQty;
+                          const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                            const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                           const oldPriceText = priceInfo.previous_price
                               ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
