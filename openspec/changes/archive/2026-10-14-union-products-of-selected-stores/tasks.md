@@ -2,7 +2,7 @@
 
 ## 0. Предпосылки
 
-- [ ] 0.1 Закоммитить незакоммиченный код архивированного изменения `hide-zero-stock-prices` (`src/server/templates/products.html` — `hasStock`, проверки остатка; `openspec/specs/product-catalog/spec.md`) — только после согласования с пользователем. Проверка: `git status` не показывает этих файлов изменёнными, номера строк `products.html` из design.md соответствуют `HEAD`.
+- [x] 0.1 Закоммитить незакоммиченный код архивированного изменения `hide-zero-stock-prices` (`src/server/templates/products.html` — `hasStock`, проверки остатка; `openspec/specs/product-catalog/spec.md`) — только после согласования с пользователем. Проверка: `git status` не показывает этих файлов изменёнными, номера строк `products.html` из design.md соответствуют `HEAD`.
 
 ## 1. Статистика по набору магазинов (бэкенд)
 
