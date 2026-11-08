@@ -221,3 +221,14 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Артефакты AI-агентов: сгенерированные openspec-команды, планы и временные скрипты
+# (уже отслеживаемые файлы — .agents/skills, openspec/, opencode_temp/programs.* — не затрагиваются)
+.agents/skills/.openspec-target
+.claude/commands/opsx/
+.claude/settings.local.json
+.koda/
+.kodacli/
+.opencode/commands/
+opencode_temp/
+/*.png
