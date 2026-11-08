@@ -196,6 +196,30 @@
         return result;
     }
 
+    // Цены товаров в магазинах (GET /api/products/multi-prices) пачками: id всех товаров
+    // в одном URL при тысячах товаров превышают предел длины запроса сервера (ответ 400
+    // «Invalid HTTP request» — колонки цен пустые). Пачки идут параллельно, ответы
+    // склеиваются в один объект {product_id: {ref: {...}}}. Ошибка любой пачки — исключение.
+    const MULTI_PRICES_BATCH = 400;
+
+    async function fetchMultiPrices(productIds, storeRefs) {
+        const ids = [...new Set(productIds)];
+        if (ids.length === 0 || storeRefs.length === 0) return {};
+        const stores = encodeURIComponent(storeRefs.join(','));
+        const batches = [];
+        for (let i = 0; i < ids.length; i += MULTI_PRICES_BATCH) {
+            batches.push(ids.slice(i, i + MULTI_PRICES_BATCH));
+        }
+        const parts = await Promise.all(batches.map(async batch => {
+            const response = await fetch(`/api/products/multi-prices?product_ids=${batch.join(',')}&store_codes=${stores}`);
+            if (!response.ok) {
+                throw new Error(`multi-prices: HTTP ${response.status}: ${await response.text()}`);
+            }
+            return response.json();
+        }));
+        return Object.assign({}, ...parts);
+    }
+
     // Позициям списка покупок без store_type_code (сохранены старой версией) дописать тип
     // первого магазина с их кодом. Позиции кодов без магазина остаются без типа.
     function upgradeShoppingListItems(list, stores) {
@@ -238,17 +262,9 @@
 
         let apiData = {};
         try {
-            const response = await fetch(
-                `/api/products/multi-prices?product_ids=${productIds.join(',')}&store_codes=${encodeURIComponent(storeRefs.join(','))}`
-            );
-            if (response.ok) {
-                apiData = await response.json();
-            } else {
-                // Список не помечаем «пропавшим» из-за ошибки запроса
-                console.error('Ошибка валидации списка покупок:', response.status, await response.text());
-                return list;
-            }
+            apiData = await fetchMultiPrices(productIds, storeRefs);
         } catch (e) {
+            // Список не помечаем «пропавшим» из-за ошибки запроса
             console.error('Ошибка валидации списка покупок:', e);
             return list;
         }

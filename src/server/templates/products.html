@@ -2124,13 +2124,11 @@ async function loadProductsEnhanced() {
 
         // Загружаем цены из всех выбранных магазинов для сравнения
         let allStorePrices = {};
-        const productIds = products.map(p => p.product_id).join(',');
-        if (productIds && selectedStores.length > 0) {
+        const productIds = products.map(p => p.product_id);
+        if (productIds.length > 0 && selectedStores.length > 0) {
             try {
-                // Ключи ответа — ref выбранных магазинов «код|тип»
-                const pricesUrl = `/api/products/multi-prices?product_ids=${productIds}&store_codes=${encodeURIComponent(selectedStores.join(','))}`;
-                const pricesResp = await fetch(pricesUrl);
-                allStorePrices = await pricesResp.json();
+                // Ключи ответа — ref выбранных магазинов «код|тип»; запрос пачками (base.html)
+                allStorePrices = await fetchMultiPrices(productIds, selectedStores);
             } catch (e) {
                 console.error('Ошибка загрузки цен из магазинов:', e);
             }
