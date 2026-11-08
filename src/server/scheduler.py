@@ -197,16 +197,6 @@ def register_jobs(store_code: str):
         replace_existing=True,
     )
 
-    # Ежедневный отчёт — каждый день в 20:00
-    # scheduler.add_job(
-    #     generate_daily_report_job,
-    #     CronTrigger(hour=20, minute=0),
-    #     args=[store_code],
-    #     id="daily_report",
-    #     name="Ежедневный отчёт",
-    #     replace_existing=True,
-    # )
-
     if not scheduler.running:
         scheduler.start()
         logger.info("[Scheduler] Планировщик запущен")

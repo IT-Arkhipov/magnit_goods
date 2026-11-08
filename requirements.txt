@@ -13,7 +13,7 @@ APScheduler>=3.10
 # HTTP-клиент для API Магнита
 requests>=2.31
 
-# Браузерная автоматизация (category_verifier, product_opener, store_selector)
+# Браузерная автоматизация (category_verifier, product_opener)
 playwright>=1.40
 
 # Управление .env (используется в routes/stores.py для обновления STORE_CODE/STORE_TYPE)

@@ -112,8 +112,6 @@ python -m src.server.main
 |--------|-----------|---------|-----------|
 | `update_prices` | Ежедневно 08:00 | `update_prices_job()` (`scheduler.py`) | Обновление цен для отслеживаемых категорий. Создаёт `ScanJob(job_type="prices")`. |
 | `scan_catalog` | Воскресенье 06:00 | `scan_catalog_job()` (`scheduler.py`) | Полное сканирование: сначала категории (`ScanJob(job_type="catalog")`), затем товары (`ScanJob(job_type="prices")`). |
-| `daily_report` | Ежедневно 20:00 | — | **Закомментирован** (`scheduler.py`). Формирование отчёта через `NotificationService`. |
-
 Расписание задаётся через `CronTrigger`:
 ```python
 CronTrigger(hour=8, minute=0)                      # update_prices
@@ -144,4 +142,4 @@ CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 - **Rate limiting:** 0.5s в `MagnitAPIClient` + случайная пауза 0.1-0.5s. **Не убирайте** — API Магнита блокирует. См. `docs/SERVICES.md`.
 - **SQLite:** подходит для однопользовательского приложения. При высокой нагрузке рассмотрите PostgreSQL.
 - **Логи:** `logging.basicConfig(level=INFO)` в `main.py`. Уровень можно изменить.
-- **Playwright:** `product_opener.py` запускает **видимое окно браузера** — не работает на серверах без дисплея. Для headless-режима используйте `category_verifier.py` и `store_selector.py` (параметр `headless=True`).
+- **Playwright:** `product_opener.py` запускает **видимое окно браузера** — не работает на серверах без дисплея. Для headless-режима используйте `category_verifier.py` (параметр `headless=True`).

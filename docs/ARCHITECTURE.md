@@ -54,9 +54,7 @@ magnit_goods/
 │       │   ├── catalog_updater.py     # CatalogUpdater — полная замена каталога (upsert по magnit_id: id и is_tracked сохраняются)
 │       │   ├── category_verifier.py   # CategoryVerifier — верификация через Playwright
 │       │   ├── load_catalog_from_json.py  # Загрузка корневых категорий из categories.json
-│       │   ├── notifications.py       # NotificationService — отчёты (не подключён к планировщику)
-│       │   ├── product_opener.py      # open_product_with_store — Playwright (видимый браузер)
-│       │   └── store_selector.py      # MagnitStoreSelector — Playwright-сканер магазинов (не подключён)
+│       │   └── product_opener.py      # open_product_with_store — Playwright (видимый браузер)
 │       ├── utils/
 │       │   ├── __init__.py
 │       │   ├── city_extractor.py      # extract_city_from_address — regex-извлечение города
@@ -105,7 +103,6 @@ magnit_goods/
 │     └─ Если задан STORE_CODE → register_jobs():             │
 │        ├─ update_prices  — ежедневно 8:00                   │
 │        └─ scan_catalog   — воскресенье 6:00                 │
-│           (daily_report закомментирован)                    │
 │                                                             │
 │  yield  ← приложение обрабатывает запросы                   │
 │                                                             │
@@ -251,7 +248,6 @@ init_scheduler(store_code)  (scheduler.py)  →  register_jobs(store_code)
 
         Тип магазина — из STORE_TYPE (его выставляет /api/stores/select);
         если у кода несколько типов и STORE_TYPE не задан — задание завершается failed.
-        (daily_report в 20:00 — закомментирован в register_jobs)
 ```
 
 ---
@@ -311,7 +307,7 @@ SQLite работает в режиме WAL с `busy_timeout` 30 с (`database.p
 - **Роуты** не содержат бизнес-логики сканирования и выборки — только разбор параметров, вызов сервисов (`product_query`, `CatalogScanner`, ...) и форматирование ответа.
 - **Сервисы** не знают про HTTP — работают с `Session` и внешними API.
 - **Модели** не содержат логики — только описание таблиц и `store_hash_id()`.
-- **`.env`** обновляется только через `POST /api/stores/select` (`routes/stores.py`), не вручную и не в `store_selector.py`.
+- **`.env`** обновляется только через `POST /api/stores/select` (`routes/stores.py`), не вручную.
 
 ---
 

@@ -50,9 +50,7 @@ src/server/
 │   ├── jobs.py                  # finalize_job, mark_unfinished_jobs_failed — статусы заданий
 │   ├── category_verifier.py     # CategoryVerifier — верификация через Playwright
 │   ├── load_catalog_from_json.py # Загрузка корневых категорий из categories.json
-│   ├── notifications.py         # NotificationService — отчёты (не подключён к планировщику)
-│   ├── product_opener.py        # open_product_with_store — Playwright (видимый браузер)
-│   └── store_selector.py        # MagnitStoreSelector — Playwright-сканер магазинов (не подключён)
+│   └── product_opener.py        # open_product_with_store — Playwright (видимый браузер)
 ├── utils/
 │   ├── city_extractor.py        # extract_city_from_address — regex-извлечение города
 │   └── threads.py               # run_logged — логирование ошибок фоновых потоков
@@ -183,13 +181,11 @@ src/server/
 |-------|-----------|---------|
 | `update_prices` | Ежедневно 8:00 | `scheduler.py:update_prices_job` |
 | `scan_catalog` | Воскресенье 6:00 | `scheduler.py:scan_catalog_job` |
-| `daily_report` | Ежедневно 20:00 | **Закомментирован** (`register_jobs`) |
-
 ## Критические особенности
 
 1. **API endpoint order**: статические пути ДО параметрических. `/api/products/stats` и `/api/products/multi-prices` ДОЛЖНЫ быть определены ДО `/api/products/{product_id}`. `/api/jobs/active` — ДО `/api/jobs/{job_id}`. См. `docs/API.md`.
 2. **Store IDs**: всегда строки (MD5), не integers. Path-параметры: `store_id: str`.
-3. **.env**: загружается при старте (`main.py`, `load_dotenv(override=False)` — переменные окружения процесса приоритетнее). Обновляется только через `POST /api/stores/select` (`stores.py:select_store`) — НЕ редактировать вручную; выбор применяется сразу: `os.environ` и задания планировщика обновляются без перезапуска. `store_selector.py` НЕ обновляет .env (это Playwright-сканер).
+3. **.env**: загружается при старте (`main.py`, `load_dotenv(override=False)` — переменные окружения процесса приоритетнее). Обновляется только через `POST /api/stores/select` (`stores.py:select_store`) — НЕ редактировать вручную; выбор применяется сразу: `os.environ` и задания планировщика обновляются без перезапуска.
 4. **Фоновые задачи**: создают **свою `SessionLocal()`** внутри (FastAPI-сессия закрыта после HTTP-ответа). Статус `cancelled` окончательный: итоговый статус пишите через `finalize_job` (`services/jobs.py`), а не присваиванием. См. `docs/DEVELOPMENT.md`.
 5. **Bulk operations**: `_save_products()` использует `bulk_insert_mappings()` / `bulk_update_mappings()` — не заменять на построчные.
 6. **Очистка**: `cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)` — **6 дней** (`constants.py`: 1 день товар виден после `last_seen`, затем 5 дней скрыт, затем удаляется), `cleanup_price_history(days=30)`.
@@ -232,7 +228,6 @@ CORS_ORIGINS=   # разрешённые origins (CSV), по умолчанию 
 
 См. `docs/DEVELOPMENT.md` → "Технический долг":
 - Ключ товара `(product_id, store_code)` не включает тип магазина (техдолг №1)
-- `NotificationService` и `store_selector.py` не подключены (см. `docs/DEVELOPMENT.md`)
 - `print` остался только в Playwright-модулях (`store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py`)
 - Остальное — см. `docs/DEVELOPMENT.md` (раздел «Замечания из code review»)
 

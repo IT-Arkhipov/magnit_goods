@@ -1,6 +1,6 @@
 # Сервисный слой (`src/server/services/`)
 
-Модули бизнес-логики, не относящиеся к HTTP-роутам. Здесь — работа с внешним API Магнита, сканирование, bulk-операции с БД, браузерная автоматизация (Playwright) и формирование уведомлений.
+Модули бизнес-логики, не относящиеся к HTTP-роутам. Здесь — работа с внешним API Магнита, сканирование, bulk-операции с БД и браузерная автоматизация (Playwright).
 
 | Файл | Технология | БД | Внешние вызовы | Threading |
 |------|-----------|----|-----------------|-----------|
@@ -11,9 +11,7 @@
 | `jobs.py` | SQLAlchemy | `ScanJob` | нет | нет, sync |
 | `category_verifier.py` | Playwright | нет (JSON-файл) | magnit.ru (браузер) | нет, sync |
 | `load_catalog_from_json.py` | SQLAlchemy | `Category` | нет (чтение JSON) | нет, sync |
-| `notifications.py` | SQLAlchemy | `Product`, `Category` | нет (только формирование данных) | нет, sync; **не подключён** |
 | `product_opener.py` | Playwright | нет | magnit.ru (видимый браузер) | нет, sync (вызывается из потока) |
-| `store_selector.py` | Playwright | нет | magnit.ru (браузер) | нет, sync; **не подключён** |
 
 ---
 
@@ -222,31 +220,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ---
 
-## 6. `notifications.py` — формирование уведомлений
-
-Класс `NotificationService`. **Генерация отчётов и текстов уведомлений. Не отправляет во внешние системы** (нет Telegram/email/webhook) — только формирует данные и текст. Отправку выполняет вызывающий код.
-
-> ⚠️ **Модуль не подключён:** ни роуты, ни планировщик его не вызывают (`daily_report` в `scheduler.py:register_jobs` закомментирован). Не удалён — за ним стоит возможный сценарий ежедневных отчётов; решение за владельцем проекта (`docs/DEVELOPMENT.md`).
-
-**Конструктор:** `__init__(db: Session, store_code: Optional[str] = None)` (`notifications.py`).
-
-**Методы:**
-- **`generate_daily_report()`** (`notifications.py`) — отчёт за вчерашний день:
-  - `decreased` — товары с `price_change_percent > 0` (снижение) и `last_price_change` вчера.
-  - `increased` — `price_change_percent < 0` (повышение).
-  - `new_products_count` — `first_seen` вчера.
-  - `top_deals` — топ-5 с `price_change_percent >= 10.0`, отсортированных по убыванию (`notifications.py`).
-  - Возвращает `{date, summary: {total_changes, price_decreases, price_increases, new_products}, top_deals: [...]}`.
-- **`check_new_products_in_tracked_categories(days=1)`** (`notifications.py`) — товары с `first_seen >= now - days` в отслеживаемых категориях.
-- **`check_out_of_stock_to_available(days=1)`** (`notifications.py`) — упрощённая логика: возвращает товары в наличии с `last_seen >= cutoff`, лимит 20.
-- **`format_alert_message(alert_type, data)`** (`notifications.py`) — текст с эмодзи:
-  - `"deal"` → «🔥 Скидка! {name}\nБыло: ...₽\nСтало: ...₽\nЭкономия: ...%»
-  - `"new_product"` → «🆕 Новый товар: {name} — {price}₽»
-  - `"in_stock"` → «✅ В наличии: {name} — {price}₽»
-
----
-
-## 7. `product_opener.py` — открытие товара в браузере
+## 6. `product_opener.py` — открытие товара в браузере
 
 Функция `open_product_with_store(product_url, store_code, store_type)` (`product_opener.py`). Открывает страницу товара на magnit.ru в **видимом Chromium через Playwright** с попыткой автоматического выбора магазина.
 
@@ -258,39 +232,6 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - **Браузер НЕ закрывается автоматически** — остаётся открытым для пользователя (`product_opener.py`).
 
 > Запускается из `main.py` (`GET /open-product-in-browser`) через `threading.Thread` и `utils/threads.py:run_logged` (ошибки потока пишутся в лог с traceback), чтобы не блокировать HTTP-ответ. Адрес товара предварительно проверяется: только `https://magnit.ru/...`.
-
----
-
-## 8. `store_selector.py` — Playwright-сканер магазинов
-
-Класс `MagnitStoreSelector`. Автоматизация выбора и сканирования магазинов на magnit.ru через Playwright.
-
-> ⚠️ **Модуль не подключён:** поиск магазинов в приложении идёт через `StoresAPI` (`POST /api/stores/preview`); этот Playwright-сканер роутами не используется. Не удалён — альтернативный способ получить список магазинов; решение за владельцем проекта.
-
-> ⚠️ **Важно:** этот модуль **НЕ обновляет `.env`** — это Playwright-браузерная автоматизация. Фактическое обновление `.env` выполняется в `routes/stores.py` (через `python-dotenv`).
-
-**Конструктор:** `__init__(headless=True)` (`store_selector.py`). Хранит `playwright`, `browser`, `page`.
-
-**Управление жизненным циклом:**
-- `start()` (`store_selector.py`) — `sync_playwright().start()`, `chromium.launch(headless)`, контекст с UA Chrome 120, `locale="ru-RU"`.
-- `close()` (`store_selector.py`) — `browser.close()` + `playwright.stop()`.
-
-**Навигация (перебор CSS-селекторов с try/except — устойчивость к изменениям вёрстки):**
-- `open_store_selector()` (`store_selector.py`)
-- `select_mode_in_store()` (`store_selector.py`)
-- `click_select_store_button()` (`store_selector.py`)
-- `enter_address(address)` (`store_selector.py`)
-- `select_store_type(store_type)` (`store_selector.py`) — маппинг русских названий (`Экстра`→`["Экстра", "Extra"]`, `Мини`→`["Мини", "Mini"]` и др.)
-- `get_all_stores_from_list()` (`store_selector.py`) — парсит элементы списка магазинов.
-- `_parse_store_text(text)` (`store_selector.py`) — извлекает `{name, full_address, city, address}`. **Город** — регулярками (`, г Город`, `, г. Город` и обратные формы), эвристика при отсутствии.
-- `extract_store_code_from_api()` (`store_selector.py`) — **заглушка** (`return None`).
-
-### `run_full_scan(city, street=None, store_types=None, progress_callback=None)` (`store_selector.py`)
-1. `open_store_selector()`.
-2. Формирует `address = city[, street]`, `enter_address`.
-3. Для каждого типа из `store_types` (по умолчанию `["Экстра", "Мини", "Семейный"]`): `select_store_type` → `get_all_stores_from_list` → помечает `store["store_type"]` → добавляет в `all_stores` (без дублей) → сбрасывает фильтр `select_store_type("Все")`.
-4. `progress_callback(progress, message)` с процентами 5/15/20-80/90/100.
-5. При ошибке — `progress_callback(-1, ...)` и `raise`.
 
 ---
 
@@ -315,11 +256,10 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 ### Проверка отмены и статусы заданий
 `CatalogScanner._is_cancelled()` — чтение колонки `ScanJob.status` перед каждой категорией и каждым запросом страницы. Задание помечается `cancelled` через `POST /api/jobs/{id}/cancel` (`routes/jobs.py`). Итоговый статус фоновых заданий пишет `services/jobs.py:finalize_job`: он перечитывает задание и **не затирает `cancelled`**. `mark_unfinished_jobs_failed()` при старте сервера переводит оставшиеся `pending`/`running` в `failed`.
 
-### Playwright-модули (3)
+### Playwright-модули (2)
 | Модуль | Назначение | headless |
 |--------|-----------|----------|
 | `category_verifier.py` | Верификация названий категорий через перехват API | configurable |
 | `product_opener.py` | Открытие товара пользователю в видимом браузере | **False** (видимое окно) |
-| `store_selector.py` | Сканирование списка магазинов | configurable |
 
 Перед использованием Playwright: `playwright install chromium`.

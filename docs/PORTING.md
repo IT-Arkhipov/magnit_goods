@@ -68,10 +68,8 @@ CORS_ORIGINS=*
 |---|---|---|
 | `services/catalog_updater.py` | `store_code="210117"`, `store_type="9"` (это «Моя цена»!) | `store_type="DG"` |
 | `services/category_verifier.py` | `MAGNIT_URL`, `API_ENDPOINT` | совпадают — ОК |
-| `services/store_selector.py` | `type_mapping` без «М.Косметик» | добавить `"М.Косметик": ["Косметик","М.Косметик"]` |
 
-`store_selector.py` — legacy (Playwright-выбор магазина); основной путь —
-`StoresAPI` через `/api/stores/preview`, который тип уже поддерживает.
+Поиск магазинов идёт через `StoresAPI` (`/api/stores/preview`), который тип уже поддерживает.
 
 ---
 
@@ -125,7 +123,7 @@ CORS_ORIGINS=*
   тип берётся из БД по `store_code`; обработка `invalid_service_pair` (категория
   недоступна типу) — уже есть, это и есть защита при смешении типов. ✅
 - **`services/catalog_updater.py`** — захардкожен `base_url`, дефолты `store_code`/`store_type`.
-- **`services/category_verifier.py`, `store_selector.py`, `product_opener.py`** —
+- **`services/category_verifier.py`, `product_opener.py`** —
   Playwright + селекторы magnit.ru (legacy-путь, для Косметика не обязателен).
 - **`main.py`** — `/redirect-to-product` ставит cookies `shopCode`, `x_shop_type`;
   `title="Магнит Goods"`; `/open-product-in-browser`.

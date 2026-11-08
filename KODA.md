@@ -52,8 +52,8 @@ src/server/
 ├── scheduler.py         # APScheduler: update_prices (8:00), scan_catalog (вс 6:00)
 ├── routes/              # stores.py, jobs.py, catalog.py, prices.py
 ├── services/            # magnit_api, catalog_scanner, catalog_updater,
-│                        # category_verifier, notifications, product_opener,
-│                        # store_selector, load_catalog_from_json
+│                        # category_verifier, product_opener,
+│                        # load_catalog_from_json
 ├── utils/city_extractor.py
 └── templates/           # Jinja2
 ```
@@ -73,7 +73,7 @@ src/server/
 
 3. **Rate limiting НЕ убирать.** `magnit_api.py` — 0.5s + `random.uniform(0.1, 0.5)`; `StoresAPI` — 0.3s; `catalog_updater.py` — 0.5s. Иначе бан от API Магнита.
 
-4. **`.env` не редактировать вручную.** Обновляется только через `POST /api/stores/select` (`routes/stores.py`). `store_selector.py` его **не** трогает.
+4. **`.env` не редактировать вручную.** Обновляется только через `POST /api/stores/select` (`routes/stores.py`).
 
 5. **Фоновые задачи создают свою `SessionLocal()`.** Сессия из `Depends(get_db)` закрыта после HTTP-ответа. Внутри `BackgroundTasks` / `threading.Thread` — новая сессия с `try/except/finally` (commit / rollback / close).
 
