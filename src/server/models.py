@@ -8,7 +8,6 @@ from sqlalchemy import (
     Date,
     Text,
     ForeignKey,
-    UniqueConstraint,
     Index,
 )
 from sqlalchemy.orm import relationship
@@ -83,10 +82,13 @@ class Product(Base):
 
     __tablename__ = "products"
     __table_args__ = (
-        UniqueConstraint("product_id", "store_code", name="uq_product_store"),
-        Index("ix_product_store_lookup", "product_id", "store_code"),
-        Index("ix_product_price_change", "store_code", "price_change_percent"),
-        Index("ix_product_last_scan", "store_code", "last_scan_found"),
+        # Товар принадлежит магазину (код, тип): магазины одного кода и разных
+        # типов хранят свои записи. Уникальность — именованным индексом, чтобы
+        # схема новой и мигрированной БД совпадала (migrate_add_product_store_type).
+        Index("uq_product_store_type", "product_id", "store_code", "store_type_code", unique=True),
+        Index("ix_product_store_lookup", "product_id", "store_code", "store_type_code"),
+        Index("ix_product_price_change", "store_code", "store_type_code", "price_change_percent"),
+        Index("ix_product_last_scan", "store_code", "store_type_code", "last_scan_found"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
@@ -98,7 +100,9 @@ class Product(Base):
     sku = Column(String, nullable=True)
     category_id = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
     store_code = Column(String, nullable=False)
-    
+    # Числовой код типа магазина строкой (constants.resolve_store_type_code: '1', '6', '9'…)
+    store_type_code = Column(String, nullable=False)
+
     # Relationships
     category = relationship("Category", backref="products")
 
@@ -148,13 +152,18 @@ class PriceHistory(Base):
 
     __tablename__ = "price_history"
     __table_args__ = (
-        UniqueConstraint("product_id", "store_code", "scan_date", name="uq_price_history_day"),
-        Index("ix_price_history_lookup", "product_id", "store_code", "scan_date"),
+        Index(
+            "uq_price_history_store_type_day",
+            "product_id", "store_code", "store_type_code", "scan_date",
+            unique=True,
+        ),
+        Index("ix_price_history_lookup", "product_id", "store_code", "store_type_code", "scan_date"),
     )
 
     id = Column(Integer, primary_key=True, index=True)
     product_id = Column(Integer, nullable=False, index=True)
     store_code = Column(String, nullable=False, index=True)
+    store_type_code = Column(String, nullable=False)  # как Product.store_type_code
     price = Column(Float, nullable=False)
     quantity = Column(Integer, nullable=True)  # Остаток на момент скана
     in_stock = Column(Boolean, nullable=True)  # Наличие на момент скана

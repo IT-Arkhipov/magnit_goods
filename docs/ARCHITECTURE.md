@@ -34,7 +34,7 @@ magnit_goods/
 │   └── server/                        # Основной пакет
 │       ├── __init__.py
 │       ├── main.py                    # Точка входа, загрузка .env, lifespan, страницы, утилитарные роуты
-│       ├── database.py                # engine (WAL), SessionLocal, init_db(), 15 миграций
+│       ├── database.py                # engine (WAL), SessionLocal, init_db(), 17 миграций
 │       ├── models.py                  # Store, Category, Product, PriceHistory, ScanJob, SchemaMigration
 │       ├── schemas.py                 # Pydantic-модели запросов и ответов API
 │       ├── constants.py               # типы магазинов (STORE_TYPE_*, resolve_store_type_code), STALE_DAYS_*
@@ -91,7 +91,7 @@ magnit_goods/
 │                                                             │
 │  1. init_db()                       (database.py)           │
 │     ├─ Base.metadata.create_all()   — создать таблицы       │
-│     └─ 15 миграций — реестр schema_migrations,              │
+│     └─ 17 миграций — реестр schema_migrations,              │
 │        регистрация только при успехе (docs/DATABASE.md)     │
 │                                                             │
 │  2. mark_unfinished_jobs_failed()   (services/jobs.py)      │

@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from typing import Optional
 
-from sqlalchemy import case, func
+from sqlalchemy import and_, case, func, or_
 from sqlalchemy.orm import Query, Session, joinedload
 
 from src.server.constants import STALE_DAYS_DELETE, STALE_DAYS_VISIBLE
@@ -22,6 +22,8 @@ class ProductFilters:
     """Параметры выборки товаров."""
 
     store_code: Optional[str] = None
+    # Код типа магазина (resolve_store_type_filter); None — без фильтра по типу
+    store_type_code: Optional[str] = None
     category_id: Optional[int] = None
     category_ids: list[int] = field(default_factory=list)
     min_price: Optional[float] = None
@@ -53,6 +55,8 @@ def build_product_query(db: Session, filters: ProductFilters) -> Query:
 
     if filters.store_code:
         q = q.filter(Product.store_code == filters.store_code)
+    if filters.store_type_code:
+        q = q.filter(Product.store_type_code == filters.store_type_code)
     if filters.category_id:
         q = q.filter(Product.category_id == filters.category_id)
     if filters.category_ids:
@@ -124,6 +128,7 @@ def product_to_list_item(p: Product) -> dict:
         "in_stock": p.in_stock,
         "category_id": p.category_id,
         "store_code": p.store_code,
+        "store_type_code": p.store_type_code,
         # Категория с информацией о родителе
         "category_name": p.category.name if p.category else None,
         "category_parent_id": p.category.parent_id if p.category else None,
@@ -145,12 +150,26 @@ def product_to_list_item(p: Product) -> dict:
     }
 
 
+def store_condition(stores: list[tuple[str, Optional[str]]]):
+    """Условие «запись принадлежит одному из магазинов набора».
+
+    stores — пары (store_code, store_type_code); тип None — все типы этого кода
+    (магазина с кодом нет в БД, см. resolve_store_type_filter).
+    """
+    return or_(*[
+        and_(Product.store_code == code, Product.store_type_code == type_code)
+        if type_code else Product.store_code == code
+        for code, type_code in stores
+    ])
+
+
 def get_products_stats(
     db: Session,
-    store_codes: Optional[list[str]] = None,
+    stores: Optional[list[tuple[str, Optional[str]]]] = None,
 ) -> dict:
     """Сводная статистика товаров по набору магазинов (пустой набор — по всем).
 
+    stores — пары (store_code, store_type_code или None), см. store_condition.
     Все счётчики — по уникальным product_id: товар, продаваемый в нескольких
     магазинах набора, считается один раз. Одиночный магазин и вызов без
     магазина считаются теми же выражениями.
@@ -170,8 +189,8 @@ def get_products_stats(
         distinct_ids(Product.price_change_percent < 0).label("with_price_increase"),
         func.max(Product.last_seen).label("last_update"),
     )
-    if store_codes:
-        query = query.filter(Product.store_code.in_(store_codes))
+    if stores:
+        query = query.filter(store_condition(stores))
     row = query.one()
 
     return {

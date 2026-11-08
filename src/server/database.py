@@ -1,6 +1,6 @@
 import logging
 import os
-from sqlalchemy import create_engine, event, text, inspect
+from sqlalchemy import create_engine, event, func, text, inspect
 from sqlalchemy.orm import sessionmaker, declarative_base
 from datetime import datetime, timedelta
 
@@ -73,6 +73,8 @@ def init_db():
         _run_migration(db, "ensure_product_last_scan_index", migrate_ensure_product_last_scan_index)
         _run_migration(db, "add_store_code_type_unique", migrate_add_store_code_type_unique, db)
         _run_migration(db, "add_product_name_search", migrate_add_product_name_search, db)
+        _run_migration(db, "add_product_store_type", migrate_add_product_store_type)
+        _run_migration(db, "fix_store_shop_type", migrate_fix_store_shop_type, db)
     finally:
         db.close()
 
@@ -118,6 +120,65 @@ def _column_names(table: str) -> set[str]:
     if table not in inspector.get_table_names():
         return set()
     return {c["name"] for c in inspector.get_columns(table)}
+
+
+# Магазины по коду в порядке «самый ранний первым» — как при удалении дубликатов
+# в migrate_add_store_code_type_unique
+_STORE_TYPE_ROWS_SQL = (
+    "SELECT store_code, store_type FROM stores ORDER BY store_code, created_at, rowid"
+)
+
+
+def _default_store_type_code() -> str:
+    """Код типа для записей, у кода которых нет магазина в БД (тип по умолчанию)."""
+    from src.server.constants import API_STORE_TYPE_CODE, DEFAULT_STORE_TYPE
+
+    return API_STORE_TYPE_CODE[DEFAULT_STORE_TYPE]
+
+
+def _store_type_code_map(rows) -> dict[str, str]:
+    """Карта store_code → код типа магазина для заполнения существующих записей.
+
+    rows — пары (store_code, store_type) из _STORE_TYPE_ROWS_SQL. Тип берётся
+    из названия (store_type), а не из stores.shop_type: в старых БД shop_type
+    бывает испорчен. Если у кода несколько магазинов разных типов, берётся
+    самый ранний, а выбор пишется в лог. Кодов без магазина в карте нет —
+    для них вызывающий использует _default_store_type_code().
+    """
+    from src.server.constants import resolve_store_type_code
+
+    result: dict[str, str] = {}
+    for store_code, store_type in rows:
+        code = resolve_store_type_code(store_type)
+        if store_code not in result:
+            result[store_code] = code
+        elif result[store_code] != code:
+            logger.warning(
+                "У кода магазина %s несколько типов: существующим записям назначен "
+                "тип %s самого раннего магазина (тип %s пропущен)",
+                store_code, result[store_code], code,
+            )
+    return result
+
+
+def _history_store_type_fields(db):
+    """Для старых миграций, пишущих в price_history: что писать в store_type_code.
+
+    Возвращает (колонки Product для выборки, функцию строка-товара → dict доп.
+    полей). Если в price_history колонки store_type_code нет (старая схема,
+    её добавит migrate_add_product_store_type) — доп. полей нет. Иначе тип
+    берётся из записи товара, если колонка уже есть в products, или из карты
+    магазинов (_store_type_code_map) с типом по умолчанию.
+    """
+    from src.server.models import Product
+
+    if "store_type_code" not in _column_names("price_history"):
+        return [], lambda p: {}
+    if "store_type_code" in _column_names("products"):
+        return [Product.store_type_code], lambda p: {"store_type_code": p.store_type_code}
+    type_map = _store_type_code_map(db.execute(text(_STORE_TYPE_ROWS_SQL)).fetchall())
+    default_code = _default_store_type_code()
+    return [], lambda p: {"store_type_code": type_map.get(p.store_code, default_code)}
 
 
 def _drop_indexes_on_column(db, table: str, column: str):
@@ -431,16 +492,18 @@ def migrate_create_price_history(db):
     # 1. Создать таблицу если не существует
     PriceHistory.__table__.create(engine, checkfirst=True)
 
-    # 2. Проверить, есть ли данные
-    count = db.query(PriceHistory).count()
+    # 2. Проверить, есть ли данные (только id: в старой схеме нет поздних колонок)
+    count = db.query(func.count(PriceHistory.id)).scalar()
     if count > 0:
         logger.info("  - В price_history уже есть %s записей, заполнение пропущено", count)
         return
 
     # 3. Заполнить начальными данными из текущих products (за сегодня)
     today = date.today()
+    type_cols, type_fields = _history_store_type_fields(db)
     products = db.query(
-        Product.product_id, Product.store_code, Product.price, Product.quantity, Product.in_stock
+        Product.product_id, Product.store_code, Product.price, Product.quantity, Product.in_stock,
+        *type_cols,
     ).all()
     if not products:
         logger.info("  - Нет товаров в products для заполнения истории")
@@ -454,6 +517,7 @@ def migrate_create_price_history(db):
             "quantity": p.quantity,
             "in_stock": p.in_stock,
             "scan_date": today,
+            **type_fields(p),
         }
         for p in products
     ]
@@ -479,6 +543,7 @@ def migrate_backfill_price_history(db):
 
     logger.info("Миграция: восстановление price_history из last_change_price...")
 
+    type_cols, type_fields = _history_store_type_fields(db)
     products = (
         db.query(
             Product.product_id,
@@ -487,6 +552,7 @@ def migrate_backfill_price_history(db):
             Product.in_stock,
             Product.last_change_price,
             Product.last_change_date,
+            *type_cols,
         )
         .filter(
             Product.last_change_price.isnot(None),
@@ -514,22 +580,22 @@ def migrate_backfill_price_history(db):
             "quantity": p.quantity,
             "in_stock": p.in_stock,
             "scan_date": synthetic_date,
+            **type_fields(p),
         })
 
-    # Получить существующие ключи (product_id, store_code, scan_date) для проверки дубликатов
-    existing_keys = {
-        (r.product_id, r.store_code, r.scan_date)
-        for r in db.query(
-            PriceHistory.product_id,
-            PriceHistory.store_code,
-            PriceHistory.scan_date,
-        ).all()
-    }
+    # Существующие ключи истории для проверки дубликатов: (product_id, store_code,
+    # scan_date) и тип магазина, если колонка уже есть
+    with_type = "store_type_code" in _column_names("price_history")
+    key_cols = [PriceHistory.product_id, PriceHistory.store_code, PriceHistory.scan_date]
+    if with_type:
+        key_cols.append(PriceHistory.store_type_code)
+    existing_keys = {tuple(r) for r in db.query(*key_cols).all()}
 
-    to_insert = [
-        r for r in synthetic_rows
-        if (r["product_id"], r["store_code"], r["scan_date"]) not in existing_keys
-    ]
+    def row_key(r):
+        key = (r["product_id"], r["store_code"], r["scan_date"])
+        return key + (r["store_type_code"],) if with_type else key
+
+    to_insert = [r for r in synthetic_rows if row_key(r) not in existing_keys]
 
     if to_insert:
         db.bulk_insert_mappings(PriceHistory, to_insert)
@@ -618,3 +684,177 @@ def migrate_add_product_name_search(db):
         db.commit()
         total += len(rows)
     logger.info("  + name_search заполнен для %s товаров", total)
+
+
+# Уникальные индексы старого ключа товара без типа магазина: мешают хранить один
+# товар у магазинов одного кода и разных типов. uq_product_store создаёт
+# migrate_add_product_indexes (в том числе на новой БД), uq_product_store_category
+# остался в старых БД от ранних версий.
+_LEGACY_PRODUCT_UNIQUE_INDEXES = ("uq_product_store", "uq_product_store_category")
+
+
+def _table_columns(cur, table: str) -> list[str]:
+    return [row[1] for row in cur.execute(f"PRAGMA table_info({table})").fetchall()]
+
+
+def _sync_table_indexes(cur, table) -> None:
+    """Привести индексы таблицы к объявленным в модели (имя, состав, уникальность).
+
+    Индекс с тем же именем, но другим составом колонок или уникальностью
+    пересоздаётся; отсутствующий — создаётся. Прочие индексы не трогаются.
+    """
+    from sqlalchemy.schema import CreateIndex
+
+    existing = {}
+    for row in cur.execute(f"PRAGMA index_list({table.name})").fetchall():
+        name, unique = row[1], bool(row[2])
+        cols = [r[2] for r in cur.execute(f"PRAGMA index_info({name})").fetchall()]
+        existing[name] = (cols, unique)
+
+    for index in table.indexes:
+        wanted = ([c.name for c in index.columns], bool(index.unique))
+        if existing.get(index.name) == wanted:
+            continue
+        if index.name in existing:
+            cur.execute(f"DROP INDEX {index.name}")
+            logger.info("  - Индекс %s пересоздаётся: %s → %s", index.name, existing[index.name], wanted)
+        cur.execute(str(CreateIndex(index).compile(dialect=engine.dialect)))
+        logger.info("  + Создан индекс %s %s", index.name, wanted[0])
+
+
+def _rebuild_price_history_with_store_type(cur, default_code: str) -> None:
+    """Пересобрать price_history по схеме модели с колонкой store_type_code.
+
+    Уникальность старой таблицы встроена в CREATE TABLE (uq_price_history_day),
+    SQLite не умеет её изменить — таблица переименовывается, создаётся заново,
+    данные копируются с типом из временной карты _store_type_map.
+    """
+    from sqlalchemy.schema import CreateTable
+    from src.server.models import PriceHistory
+
+    table = PriceHistory.__table__
+    before = cur.execute("SELECT COUNT(*) FROM price_history").fetchone()[0]
+    old_cols = set(_table_columns(cur, "price_history"))
+
+    cur.execute("ALTER TABLE price_history RENAME TO price_history_old")
+    # Имена индексов в SQLite глобальны: явные индексы старой таблицы мешают
+    # создать одноимённые у новой
+    for row in cur.execute("PRAGMA index_list(price_history_old)").fetchall():
+        if row[3] == "c":
+            cur.execute(f"DROP INDEX {row[1]}")
+    cur.execute(str(CreateTable(table).compile(dialect=engine.dialect)))
+
+    copy_cols = [c.name for c in table.columns if c.name in old_cols and c.name != "store_type_code"]
+    cols_sql = ", ".join(copy_cols)
+    cur.execute(
+        f"INSERT INTO price_history ({cols_sql}, store_type_code) "
+        f"SELECT {', '.join('o.' + c for c in copy_cols)}, "
+        "COALESCE((SELECT m.code FROM _store_type_map m WHERE m.store_code = o.store_code), ?) "
+        "FROM price_history_old o",
+        (default_code,),
+    )
+    after = cur.execute("SELECT COUNT(*) FROM price_history").fetchone()[0]
+    if after != before:
+        raise RuntimeError(f"price_history: скопировано {after} записей из {before}")
+    cur.execute("DROP TABLE price_history_old")
+    logger.info("  + price_history пересобрана: %s записей с типом магазина", after)
+
+
+def _add_product_store_type_steps(cur) -> None:
+    """Шаги migrate_add_product_store_type внутри открытой транзакции."""
+    from src.server.models import PriceHistory, Product
+
+    default_code = _default_store_type_code()
+    type_map = _store_type_code_map(cur.execute(_STORE_TYPE_ROWS_SQL).fetchall())
+    cur.execute("DROP TABLE IF EXISTS temp._store_type_map")
+    cur.execute("CREATE TEMP TABLE _store_type_map (store_code TEXT PRIMARY KEY, code TEXT NOT NULL)")
+    cur.executemany("INSERT INTO _store_type_map VALUES (?, ?)", list(type_map.items()))
+
+    # products: колонка добавляется без пересборки (уникальность — отдельный индекс)
+    if "store_type_code" not in _table_columns(cur, "products"):
+        cur.execute("ALTER TABLE products ADD COLUMN store_type_code VARCHAR")
+        cur.execute(
+            "UPDATE products SET store_type_code = COALESCE("
+            "(SELECT m.code FROM _store_type_map m WHERE m.store_code = products.store_code), ?)",
+            (default_code,),
+        )
+        logger.info("  + products.store_type_code добавлен и заполнен")
+    missing = cur.execute("SELECT COUNT(*) FROM products WHERE store_type_code IS NULL").fetchone()[0]
+    if missing:
+        raise RuntimeError(f"products: у {missing} записей не заполнен store_type_code")
+
+    for name in _LEGACY_PRODUCT_UNIQUE_INDEXES:
+        if cur.execute("SELECT 1 FROM sqlite_master WHERE type='index' AND name=?", (name,)).fetchone():
+            cur.execute(f"DROP INDEX {name}")
+            logger.info("  - Удалён устаревший уникальный индекс %s", name)
+
+    if "store_type_code" not in _table_columns(cur, "price_history"):
+        _rebuild_price_history_with_store_type(cur, default_code)
+
+    _sync_table_indexes(cur, Product.__table__)
+    _sync_table_indexes(cur, PriceHistory.__table__)
+    cur.execute("DROP TABLE temp._store_type_map")
+
+
+def migrate_add_product_store_type():
+    """Добавить тип магазина (store_type_code) в ключ товаров и истории цен.
+
+    Товары и история ключуются тройкой (product_id, store_code, store_type_code):
+    магазины одного кода и разных типов больше не перезаписывают данные друг друга.
+    Тип существующих записей — по stores.store_type (см. _store_type_code_map),
+    для кодов без магазина — тип по умолчанию.
+
+    Выполняется одной транзакцией на отдельном соединении: в pysqlite DDL
+    (ALTER/CREATE/DROP) входит в транзакцию только при явном BEGIN, поэтому
+    соединение переводится в ручной режим (isolation_level=None). При ошибке —
+    ROLLBACK, схема и данные остаются прежними, исключение уходит в _run_migration.
+    """
+    raw = engine.raw_connection()
+    try:
+        conn = raw.driver_connection
+        prev_isolation = conn.isolation_level
+        conn.isolation_level = None
+        cur = conn.cursor()
+        try:
+            cur.execute("BEGIN IMMEDIATE")
+            try:
+                _add_product_store_type_steps(cur)
+                cur.execute("COMMIT")
+            except Exception:
+                cur.execute("ROLLBACK")
+                raise
+        finally:
+            cur.close()
+            conn.isolation_level = prev_isolation
+    finally:
+        raw.close()
+
+
+def migrate_fix_store_shop_type(db):
+    """Пересчитать stores.shop_type по названию типа (store_type).
+
+    В старых БД shop_type бывал испорчен (у «Моя цена» — 3, код М.Косметик,
+    вместо 9). Магазин с нераспознанным store_type не меняется — пишется
+    предупреждение.
+    """
+    from src.server.constants import STORE_TYPE_CODES
+
+    rows = db.execute(text("SELECT id, store_code, store_type, shop_type FROM stores")).fetchall()
+    fixed = 0
+    for store_id, store_code, store_type, shop_type in rows:
+        code = STORE_TYPE_CODES.get(store_type)
+        if code is None:
+            logger.warning(
+                "Магазин %s (код %s): неизвестный тип %r — shop_type не изменён",
+                store_id, store_code, store_type,
+            )
+            continue
+        if shop_type != code:
+            db.execute(
+                text("UPDATE stores SET shop_type = :code WHERE id = :id"),
+                {"code": code, "id": store_id},
+            )
+            logger.info("  + Магазин %s (%s): shop_type %s → %s", store_code, store_type, shop_type, code)
+            fixed += 1
+    db.commit()
+    logger.info("  + shop_type исправлен у %s магазинов", fixed)

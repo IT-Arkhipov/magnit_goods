@@ -11,6 +11,7 @@ from src.server.models import ScanJob, Product
 from src.server.schemas import DecreasedPriceItem
 from src.server.services.catalog_scanner import AmbiguousStoreError, resolve_store_type
 from src.server.services.jobs import finalize_job
+from src.server.routes.catalog import STORE_TYPE_QUERY_DESCRIPTION, store_type_filter_or_400
 
 router = APIRouter(prefix="/api/prices", tags=["Цены"])
 
@@ -18,6 +19,7 @@ router = APIRouter(prefix="/api/prices", tags=["Цены"])
 @router.get("/decreased", response_model=list[DecreasedPriceItem])
 def get_decreased_prices(
     store_code: Optional[str] = Query(None),
+    store_type: Optional[str] = Query(None, description=STORE_TYPE_QUERY_DESCRIPTION),
     min_discount_percent: float = Query(10.0, description="Минимальный процент снижения"),
     limit: int = Query(50, le=500),
     db: Session = Depends(get_db),
@@ -25,9 +27,13 @@ def get_decreased_prices(
     """Товары со сниженными ценами."""
     if not store_code:
         raise HTTPException(status_code=400, detail="Необходимо указать store_code")
+    store_type_code = store_type_filter_or_400(db, store_code, store_type)
 
+    query = db.query(Product)
+    if store_type_code:
+        query = query.filter(Product.store_type_code == store_type_code)
     products = (
-        db.query(Product)
+        query
         .filter(
             Product.store_code == store_code,
             Product.price_change_percent >= min_discount_percent,

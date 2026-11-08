@@ -38,6 +38,8 @@ Swagger UI: http://localhost:8000/docs
 | 10 | POST | `/api/stores/delete-batch` | `delete_stores_batch` | Удалить несколько по ID. Тело `DeleteStoresRequest`. → 204 / 400 |
 | 11 | GET | `/api/stores/by-code/{store_code}` | `get_store_by_code` | Магазин по `store_code` (для автозаполнения). → `StoreResponse` / 404 |
 
+`StoreResponse` содержит вычисляемое поле `store_type_code` — числовой код типа строкой (`resolve_store_type_code(store_type)`), тот же, что в записях товаров магазина.
+
 ### `POST /api/stores/select` — особенности
 - Тело: `SelectStoreRequest { city, street?, store_type, update_env=True }`.
 - При `update_env=True` читает `.env`, обновляет `STORE_CODE` и `STORE_TYPE`, перезаписывает файл (`stores.py:select_store`), обновляет `os.environ` работающего процесса и вызывает `scheduler.py:register_jobs` — задания планировщика перенацеливаются на выбранный магазин (при необходимости планировщик запускается). Результат — поле `scheduler_updated`.
@@ -97,14 +99,14 @@ Swagger UI: http://localhost:8000/docs
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
-| 25 | GET | `/api/products` | `list_products` | Список товаров с фильтрами. Query: `store_code`, `category_id`, `category_ids` (CSV), `search`, `min_price`, `max_price`, `sort_by` (`name`/`price`/`last_seen`), `limit≤1000`, `offset`, `relax_stale` (окно видимости устаревших товаров до `STALE_DAYS_DELETE`), `include_out_of_stock` (включить отсутствующие). → `list[ProductListItem]` (27 полей, схема в `/docs`) |
-| 26 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`, `store_codes` (CSV; объединяется с `store_code`; пусто — по всем магазинам). → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
-| 27 | GET | `/api/products/multi-prices` | `get_multi_store_prices` | ⭐ Цены из нескольких магазинов. Query: `product_ids` (CSV), `store_codes` (CSV). → `{product_id: {store_code: {price, previous_price, ...}}}` |
-| 28 | GET | `/api/products/{product_id}` | `get_product` | Детали товара. Path: `product_id: int`. Query: `store_code`. → `dict` / 404 |
-| 29 | GET | `/api/products/{product_id}/history` | `get_product_price_history` | История цен по дням. Query: `store_code`, `days=30` (1..365). → `list[dict]` |
+| 25 | GET | `/api/products` | `list_products` | Список товаров с фильтрами. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `category_id`, `category_ids` (CSV), `search`, `min_price`, `max_price`, `sort_by` (`name`/`price`/`last_seen`), `limit≤1000`, `offset`, `relax_stale` (окно видимости устаревших товаров до `STALE_DAYS_DELETE`), `include_out_of_stock` (включить отсутствующие). → `list[ProductListItem]` (27 полей, схема в `/docs`) |
+| 26 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `store_codes` (CSV элементов `код` или `код|тип`; объединяется с `store_code`; пусто — по всем магазинам). → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
+| 27 | GET | `/api/products/multi-prices` | `get_multi_store_prices` | ⭐ Цены из нескольких магазинов. Query: `product_ids` (CSV), `store_codes` (CSV элементов `код` или `код|тип`). → `{product_id: {элемент store_codes как в запросе: {price, previous_price, price_change_percent, in_stock, quantity, last_seen, last_change_date, seo_code, shop_type, store_type_code}}}`; `shop_type` — числовой тип **записи товара** (для ссылки `shopType`), не `stores.shop_type` |
+| 28 | GET | `/api/products/{product_id}` | `get_product` | Детали товара. Path: `product_id: int`. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `dict` (с `store_type_code`) / 404 |
+| 29 | GET | `/api/products/{product_id}/history` | `get_product_price_history` | История цен по дням. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `days=30` (1..365). → `list[{scan_date, store_code, store_type_code, price, quantity, in_stock}]` |
 | 30 | DELETE | `/api/products/clear` | `clear_all_products` | Удалить все товары. → `{status, message, deleted_count}` |
 | 31 | DELETE | `/api/products/clear-by-categories` | `clear_products_by_categories` | Удалить по категориям. Query: `category_ids` (CSV). → `{status, message, deleted_count}` |
-| 32 | DELETE | `/api/products/clear-by-store` | `clear_products_by_store` | Удалить по магазину. Query: `store_code`. → `{status, message, deleted_count}` |
+| 32 | DELETE | `/api/products/clear-by-store` | `clear_products_by_store` | Удалить товары магазина (код и тип; магазин другого типа с тем же кодом не затрагивается). Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `{status, message, deleted_count}` |
 
 ### Сканирование
 
@@ -113,6 +115,22 @@ Swagger UI: http://localhost:8000/docs
 | 33 | POST | `/api/catalog/scan` | `scan_products` | Синхронно сканировать товары. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
 | 34 | POST | `/api/catalog/scan-all-stores` | `scan_all_stores` | ⭐ Фоновое сканирование всех активных магазинов (каждый — со своим `store_type`; один вызов сканера на магазин). Отслеживаемые категории — только подкатегории; **400**, если их нет. Query: `tracked_only=True`. → `{job_id, status, stores_count}` |
 | 35 | POST | `/api/catalog/scan-prices` | `scan_prices_in_store` | Обновить цены в магазине. Query: `store_code`, `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
+
+### Магазин в запросах товаров (`store_type`, `store_codes`)
+
+Товары и история цен принадлежат магазину — паре (код, тип). Эндпоинты чтения и очистки товаров (`GET /api/products`, `/stats`, `/{product_id}`, `/{product_id}/history`, `DELETE /api/products/clear-by-store`, `GET /api/prices/decreased`) определяют тип одинаково (`catalog_scanner.py:resolve_store_type_filter`):
+
+1. передан `store_type` (API-код `MM`, русское название `Экстра` или число `6`) — его код; нераспознанное значение → **400** `store_type: Неизвестный тип магазина: '…'`;
+2. иначе — тип единственного магазина с этим кодом в БД;
+3. у кода в БД несколько типов — **400** «… укажите store_type» (данные двух магазинов не смешиваются);
+4. магазина с кодом в БД нет (товары удалённого магазина) — без фильтра по типу, все записи кода.
+
+Элемент `store_codes` (`/stats`, `/multi-prices`) — `код` или `код|тип`; элемент без типа разрешается по тем же правилам. Пока коды магазинов уникальны, запросы с одним кодом работают как раньше.
+
+- Пример: `GET /api/products?store_code=210117` ≡ `GET /api/products?store_code=210117&store_type=Моя цена` — у элементов `store_type_code: "9"`.
+- Пример: `GET /api/products/multi-prices?product_ids=555&store_codes=100|1,100|6` → `{"555": {"100|1": {...}, "100|6": {...}}}`; `store_codes=992104,210117` → ключи `992104` и `210117`.
+
+У каждого элемента `GET /api/products`, в деталях и истории товара есть `store_type_code` — числовой код типа магазина записи строкой (`"1"` Магнит, `"6"` Экстра, `"9"` Моя цена…); у магазинов в ответах `/api/stores` — то же поле.
 
 ### `GET /api/products/stats` — особенности
 - Все счётчики считаются по **уникальным `product_id`** выбранных магазинов (один магазин, набор через `store_codes` или все магазины — одни и те же выражения): товар, продающийся в нескольких магазинах набора, учитывается один раз.
@@ -133,7 +151,7 @@ Swagger UI: http://localhost:8000/docs
 ### `GET /api/products` — особенности
 - `response_model=list[ProductListItem]` (`schemas.py`): набор и имена полей зафиксированы схемой и не меняются без согласования с UI. Выборка — `services/product_query.py` (`build_product_query` → фильтры, окно видимости, наличие, поиск → сортировка/пагинация); роут только разбирает параметры. Поиск по `search` — один SQL-запрос `LIKE` по `Product.name_search` (`name.casefold()`; заполняется сканером и миграцией `add_product_name_search`), т.к. SQLite `LOWER()` не работает с кириллицей; `%`, `_` и `\` в запросе — обычные символы.
 - Видимость: показываются товары с `last_seen` не старше `STALE_DAYS_VISIBLE` дней (при `relax_stale=true` — `STALE_DAYS_DELETE`); отсутствующие (`in_stock=false` или `quantity=0`) скрыты, `include_out_of_stock=true` их возвращает. Правила одни и те же для обычного списка и поиска.
-- Поля ответа включают: `product_id, name, price, previous_price, price_change_percent, last_price_change, last_change_price, last_change_date, currency, unit, image_url, in_stock, category_id, store_code, category_name, category_parent_id, quantity, is_low_stock, pickup_only, rating, scores_count, comments_count, seo_code, is_weighted, unit_price, first_seen, last_seen`.
+- Поля ответа включают: `product_id, name, price, previous_price, price_change_percent, last_price_change, last_change_price, last_change_date, currency, unit, image_url, in_stock, category_id, store_code, store_type_code, category_name, category_parent_id, quantity, is_low_stock, pickup_only, rating, scores_count, comments_count, seo_code, is_weighted, unit_price, first_seen, last_seen`.
 
 ---
 
@@ -143,7 +161,7 @@ Swagger UI: http://localhost:8000/docs
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
-| 36 | GET | `/api/prices/decreased` | `get_decreased_prices` | Товары со сниженными ценами. Query: `store_code` (обязательный), `min_discount_percent=10.0`, `limit≤500`. → `list[DecreasedPriceItem]` |
+| 36 | GET | `/api/prices/decreased` | `get_decreased_prices` | Товары со сниженными ценами. Query: `store_code` (обязательный), `store_type` (необязательный, см. «Магазин в запросах товаров»), `min_discount_percent=10.0`, `limit≤500`. → `list[DecreasedPriceItem]` |
 | 37 | POST | `/api/prices/update` | `update_prices` | ⭐ Фоновое обновление цен. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{job_id, status}` |
 
 ### `POST /api/prices/update` — особенности ⭐

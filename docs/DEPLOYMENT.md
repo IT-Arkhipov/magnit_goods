@@ -98,7 +98,7 @@ python -m src.server.main
 ## Что происходит при старте
 
 0. При импорте `main.py` загружается `.env` (`load_dotenv(override=False)`).
-1. `init_db()` — создание таблиц + 15 миграций. Каждая выполняется один раз и регистрируется в `schema_migrations` только при успехе; упавшая миграция даёт `WARNING` в логе и повторяется при следующем старте. См. `docs/DATABASE.md`.
+1. `init_db()` — создание таблиц + 17 миграций. Каждая выполняется один раз и регистрируется в `schema_migrations` только при успехе; упавшая миграция даёт `WARNING` в логе и повторяется при следующем старте. См. `docs/DATABASE.md`.
 2. `mark_unfinished_jobs_failed()` (`services/jobs.py`) — все зависшие `ScanJob` со статусами `pending` и `running` помечаются `failed` (процесс был остановлен).
 3. `init_scheduler(store_code)` — если задан `STORE_CODE`, запускаются автоматические задания.
 
@@ -128,7 +128,8 @@ CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 
 - **Путь:** `src/data/magnit.db` (SQLite, в `.gitignore`)
 - **Создание:** автоматически при старте через `init_db()`
-- **Миграции:** 15 штук; каждая выполняется один раз и регистрируется в `schema_migrations` при успехе. См. `docs/DATABASE.md`.
+- **Миграции:** 17 штук; каждая выполняется один раз и регистрируется в `schema_migrations` при успехе. См. `docs/DATABASE.md`.
+- **Первый старт после `add_product_store_type`** меняет схему `products` и пересобирает `price_history` (секунды на текущих объёмах). Откат — только из копии БД: перед обновлением остановите сервер и скопируйте `src/data/magnit.db` (с `-wal`/`-shm`).
 - **Режим журнала — WAL.** При каждом подключении включаются `PRAGMA journal_mode=WAL` и `busy_timeout=30000` (`database.py:_set_sqlite_pragma`): HTTP-запросы на чтение не блокируются фоновой записью сканера, а конкурирующая запись ждёт до 30 с вместо ошибки `database is locked`. Рядом с БД появляются служебные файлы `magnit.db-wal` и `magnit.db-shm` (в `.gitignore`).
 - **WAL требует локального диска.** Не размещайте `src/data/` на сетевой папке (SMB/NFS) — WAL там работает некорректно.
 - **Backup:** остановите сервер и копируйте `magnit.db` **вместе с** `magnit.db-wal` (если он есть) либо сделайте копию на живой БД командой `sqlite3 src/data/magnit.db ".backup 'backup.db'"`. Копирование одного `magnit.db` при работающем сервере может потерять последние записи.

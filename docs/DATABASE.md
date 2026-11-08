@@ -22,7 +22,7 @@ Engine и сессия:
 | `id` | `String(12)` PK | MD5-хэш (12 символов) из `store_code + store_type + full_address` |
 | `store_code` | `String` index | Код магазина в API Магнита (напр. `992104`) |
 | `store_type` | `String` index | Русское название типа (`Магнит`, `Мини`, `Экстра` и др.) |
-| `shop_type` | `Integer` nullable index | Числовой код типа (1–9), см. `STORE_TYPE_CODES` в `constants.py` |
+| `shop_type` | `Integer` nullable index | Числовой код типа (1–9), см. `STORE_TYPE_CODES` в `constants.py`; у старых магазинов пересчитан миграцией `fix_store_shop_type` |
 | `city` | `String` index | Город |
 | `address` | `String` | Улица и дом |
 | `full_address` | `String` | Полный адрес с регионом |
@@ -60,7 +60,7 @@ Engine и сессия:
 
 ### 3. `Product` — товар, текущее состояние (`models.py`)
 
-Центральная модель. Товары идентифицируются парой `(product_id, store_code)` — один и тот же товар в разных магазинах это **разные строки**.
+Центральная модель. Товары идентифицируются тройкой `(product_id, store_code, store_type_code)` — магазином (код + тип), как и `Store`. Один и тот же товар в разных магазинах, в том числе у магазинов **одного кода и разных типов**, — это **разные строки**.
 
 **Идентификация и связи:**
 | Поле | Тип | Описание |
@@ -71,6 +71,7 @@ Engine и сессия:
 | `sku` | `String` nullable | Артикул |
 | `category_id` | `Integer` FK→`categories.id` nullable index | Категория |
 | `store_code` | `String` | Код магазина (без index — покрыт составным) |
+| `store_type_code` | `String` NOT NULL | Числовой код типа магазина строкой (`'1'` Магнит, `'6'` Экстра, `'9'` Моя цена…) — результат `constants.py:resolve_store_type_code`. Пишет сканер (`CatalogScanner.store_type_code`). На БД, мигрированной `add_product_store_type`, NOT NULL обеспечивает ORM (SQLite не добавляет NOT NULL-колонку без значения по умолчанию) |
 | `category` | relationship | Обратная связь к `Category` (backref `products`) |
 
 **Цена и наличие:**
@@ -137,22 +138,23 @@ Engine и сессия:
 **Индексы и ограничения** (`__table_args__`, `models.py`):
 | Имя | Тип | Колонки |
 |-----|-----|---------|
-| `uq_product_store` | UNIQUE | `(product_id, store_code)` |
-| `ix_product_store_lookup` | INDEX | `(product_id, store_code)` |
-| `ix_product_price_change` | INDEX | `(store_code, price_change_percent)` |
-| `ix_product_last_scan` | INDEX | `(store_code, last_scan_found)` |
+| `uq_product_store_type` | UNIQUE INDEX | `(product_id, store_code, store_type_code)` |
+| `ix_product_store_lookup` | INDEX | `(product_id, store_code, store_type_code)` |
+| `ix_product_price_change` | INDEX | `(store_code, store_type_code, price_change_percent)` |
+| `ix_product_last_scan` | INDEX | `(store_code, store_type_code, last_scan_found)` |
 
-Составной индекс `(product_id, store_code)` ускоряет `bulk_update_mappings` и выборки «свежих» товаров по магазину.
+Уникальность — именованный уникальный индекс, а не `UniqueConstraint`: так схема новой (`create_all`) и мигрированной БД совпадает. Устаревшие уникальные индексы без типа (`uq_product_store`, `uq_product_store_category`) удаляет `add_product_store_type` — в том числе на новой БД, где `uq_product_store` создаёт миграция 3. Составной индекс по магазину ускоряет `bulk_update_mappings` и выборки «свежих» товаров по магазину.
 
 ### 4. `PriceHistory` — история цен по дням (`models.py`)
 
-Одна запись на день для каждого `(product_id, store_code)`. Используется для расчёта `previous_price`/`price_change_percent` и отображения истории на странице товара.
+Одна запись на день для каждого `(product_id, store_code, store_type_code)`. Используется для расчёта `previous_price`/`price_change_percent` (по истории того же магазина — код и тип) и отображения истории на странице товара.
 
 | Поле | Тип | Описание |
 |------|-----|----------|
 | `id` | `Integer` PK index | Внутренний ID |
 | `product_id` | `Integer` index | ID товара |
 | `store_code` | `String` index | Код магазина |
+| `store_type_code` | `String` NOT NULL | Код типа магазина, как `Product.store_type_code` |
 | `price` | `Float` | Цена на день скана (рубли) |
 | `quantity` | `Integer` nullable | Остаток на момент скана |
 | `in_stock` | `Boolean` nullable | Наличие на момент скана |
@@ -162,8 +164,10 @@ Engine и сессия:
 **Индексы и ограничения** (`models.py`):
 | Имя | Тип | Колонки |
 |-----|-----|---------|
-| `uq_price_history_day` | UNIQUE | `(product_id, store_code, scan_date)` |
-| `ix_price_history_lookup` | INDEX | `(product_id, store_code, scan_date)` |
+| `uq_price_history_store_type_day` | UNIQUE INDEX | `(product_id, store_code, store_type_code, scan_date)` |
+| `ix_price_history_lookup` | INDEX | `(product_id, store_code, store_type_code, scan_date)` |
+
+> До миграции `add_product_store_type` уникальность была встроенным ограничением `uq_price_history_day (product_id, store_code, scan_date)` в `CREATE TABLE`; SQLite не умеет его изменить, поэтому миграция пересобирает таблицу.
 
 Хранение: retention **30 дней** (`PRICE_HISTORY_RETENTION_DAYS` в `catalog_scanner.py`). Очистка — `CatalogScanner.cleanup_price_history()` (`catalog_scanner.py`).
 
@@ -291,7 +295,7 @@ price=120, previous_price=120, price_change_percent=-20 (не обновлено
 |---|---------------|---------|-----------|
 | 1 | `simplify_price_tracking` | `migrate_simplify_price_tracking` | Добавить `previous_price`/`price_change_percent`, удалить поля акций (вместе с их индексами), удалить `daily_price_snapshot` |
 | 2 | `add_last_change_fields` | `migrate_add_last_change_fields` | Добавить `last_change_price`/`last_change_date`, заполнить из `previous_price`/`last_price_change` |
-| 3 | `add_product_indexes` | `migrate_add_product_indexes` | Индексы `uq_product_store`, `ix_product_price_change` (и `ix_product_last_scan`, если колонка `last_scan_found` уже есть) |
+| 3 | `add_product_indexes` | `migrate_add_product_indexes` | Индексы `uq_product_store` (старый ключ без типа — удаляется миграцией 16), `ix_product_price_change` (и `ix_product_last_scan`, если колонка `last_scan_found` уже есть) |
 | 4 | `store_ids` | `migrate_store_ids` | Конвертация integer ID магазинов → MD5-хэши (по типу колонки) |
 | 5 | `categories` | `migrate_categories` | Пересоздать `categories`, если в ней остались устаревшие колонки `category_id`/`store_code` |
 | 6 | `add_shop_type` | `migrate_add_shop_type` | Добавить поле `shop_type` в `stores` |
@@ -304,8 +308,14 @@ price=120, previous_price=120, price_change_percent=-20 (не обновлено
 | 13 | `ensure_product_last_scan_index` | `migrate_ensure_product_last_scan_index` | Создать `ix_product_last_scan`, если его нет (на старых БД он не создавался: миграция 3 выполнялась раньше, чем появилась колонка, а её ошибка подавлялась) |
 | 14 | `add_store_code_type_unique` | `migrate_add_store_code_type_unique` | Удалить дубликаты магазинов по паре (`store_code`, `store_type`) и создать уникальный индекс `uq_store_code_type` |
 | 15 | `add_product_name_search` | `migrate_add_product_name_search` | Добавить `products.name_search` и заполнить `name.casefold()` для существующих товаров (батчами по 1000) |
+| 16 | `add_product_store_type` | `migrate_add_product_store_type` | Тип магазина в ключе товаров и истории: `products.store_type_code` (`ADD COLUMN` + заполнение), пересборка `price_history`, удаление `uq_product_store`/`uq_product_store_category`, приведение индексов обеих таблиц к модели (`_sync_table_indexes`). Одна транзакция (см. ниже) |
+| 17 | `fix_store_shop_type` | `migrate_fix_store_shop_type` | Пересчитать `stores.shop_type` по `store_type` (в старых БД бывал испорчен: у «Моя цена» — 3 вместо 9) |
 
-> **Порядок** вызова в `init_db()` — по номерам. Миграции 1 и 11 связаны: миграция 1 больше не удаляет `price_history`, миграция 11 создаёт её и заполняет, если пуста.
+> **Порядок** вызова в `init_db()` — по номерам. Миграции 1 и 11 связаны: миграция 1 больше не удаляет `price_history`, миграция 11 создаёт её и заполняет, если пуста. Миграции 11 и 12 заполняют `store_type_code`, если `price_history` уже создана по новой модели (`_history_store_type_fields`).
+
+**Тип существующих записей** (миграции 11, 12, 16): по названию типа (`stores.store_type` → `resolve_store_type_code`), не по `shop_type`. Код без магазина в `stores` получает тип по умолчанию (`DEFAULT_STORE_TYPE`, `'1'`); код с несколькими магазинами — тип самого раннего (`created_at`, затем `rowid`), выбор пишется в лог (`_store_type_code_map`).
+
+**Атомарность миграции 16.** В pysqlite DDL входит в транзакцию только при явном `BEGIN`, поэтому миграция работает на отдельном DBAPI-соединении с `isolation_level=None`: `BEGIN IMMEDIATE` → шаги → `COMMIT`, при ошибке `ROLLBACK` — схема и данные `products`/`price_history` остаются прежними, миграция повторится при следующем старте. Изменение необратимо иначе как из резервной копии БД: перед первым стартом новой версии сделайте копию `magnit.db`.
 
 ---
 
@@ -330,7 +340,7 @@ price=120, previous_price=120, price_change_percent=-20 (не обновлено
 
 | Метод | Где | Что удаляет | Порог |
 |-------|-----|-------------|-------|
-| `CatalogScanner.cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)` | `catalog_scanner.py` | Товары с `last_seen < now - порог` для текущего `store_code` | **6 дней** (`STALE_DAYS_DELETE`) |
+| `CatalogScanner.cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)` | `catalog_scanner.py` | Товары с `last_seen < now - порог` для текущего магазина (`store_code` + `store_type_code`) | **6 дней** (`STALE_DAYS_DELETE`) |
 | `CatalogScanner.cleanup_price_history(days=30)` | `catalog_scanner.py` | Записи `PriceHistory` старше 30 дней | 30 дней (`PRICE_HISTORY_RETENTION_DAYS`) |
 
 Жизненный цикл товара, которого нет в сканах (`constants.py`): `STALE_DAYS_VISIBLE` = 1 день после `last_seen` товар ещё показывается в API/UI → `STALE_DAYS_HIDDEN` = 5 дней скрыт, но хранится в БД → после суммы (`STALE_DAYS_DELETE` = 6 дней) удаляется.

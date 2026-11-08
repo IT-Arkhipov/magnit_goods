@@ -77,8 +77,8 @@ CORS_ORIGINS=*
 
 Возможен, потому что `store_type` хранится в таблице `stores`, а
 `CatalogScanner` читает тип из БД по `store_code`
-(`catalog_scanner.py`). Товары уже разделены по `store_code`
-(uniqueness `uq_product_store`). **Но категории — узкое место:**
+(`catalog_scanner.py`). Товары уже разделены по магазину — коду и типу
+(uniqueness `uq_product_store_type`). **Но категории — узкое место:**
 
 ### Проблема: категории универсальные
 `Category` не привязан к магазину/типу. `replace_all_categories()` делает

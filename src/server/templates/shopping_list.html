@@ -219,25 +219,24 @@ function loadShoppingList() {
     const grouped = {};
     const storeInfo = {};
 
+    // Группы — магазины (ref «код|тип»): позиции магазинов одного кода и разных типов не сливаются
     list.forEach(item => {
-        if (!grouped[item.store_code]) {
-            grouped[item.store_code] = {};
-            storeInfo[item.store_code] = { items: [] };
+        const ref = storeRefOf(item);
+        if (!grouped[ref]) {
+            grouped[ref] = {};
+            storeInfo[ref] = { items: [] };
         }
-        if (!grouped[item.store_code][item.category_name]) {
-            grouped[item.store_code][item.category_name] = [];
+        if (!grouped[ref][item.category_name]) {
+            grouped[ref][item.category_name] = [];
         }
-        grouped[item.store_code][item.category_name].push(item);
-        storeInfo[item.store_code].items.push(item);
+        grouped[ref][item.category_name].push(item);
+        storeInfo[ref].items.push(item);
     });
 
     fetch('/api/stores')
         .then(res => res.json())
         .then(stores => {
-            const storeMap = {};
-            stores.forEach(s => {
-                storeMap[s.store_code] = s;
-            });
+            const storeMap = shoppingStoreMap(stores, Object.keys(grouped));
 
             const sortedStores = Object.keys(grouped).sort((a, b) => {
                 const storeA = storeMap[a];
@@ -255,12 +254,13 @@ function loadShoppingList() {
             let availableItems = 0;
             const uniqueCategories = new Set();
 
-            sortedStores.forEach(storeCode => {
-                const store = storeMap[storeCode];
+            sortedStores.forEach(storeRefKey => {
+                const store = storeMap[storeRefKey];
+                const storeCode = parseStoreRef(storeRefKey).code;
                 const storeName = store
                     ? `${store.store_type} - ${store.address}`
                     : storeCode;
-                const categories = grouped[storeCode];
+                const categories = grouped[storeRefKey];
 
                 const sortedCategories = Object.keys(categories).sort((a, b) =>
                     a.localeCompare(b, 'ru')
@@ -313,7 +313,7 @@ function loadShoppingList() {
                                             <span class="product-price">${item.price != null ? item.price + ' ₽' : '—'}</span>
                                         </div>
                                     </div>
-                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${item.store_code}')">
+                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${storeRefOf(item)}')">
                                         ×
                                     </button>
                                 </div>
@@ -343,7 +343,7 @@ function loadShoppingList() {
                                             ${discount > 0 ? `<span class="product-discount">-${discount}% (экономия ${savings} ₽)</span>` : ''}
                                         </div>
                                     </div>
-                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${item.store_code}')">
+                                    <button class="remove-btn" onclick="removeItem(${item.product_id}, '${storeRefOf(item)}')">
                                         ×
                                     </button>
                                 </div>
@@ -424,9 +424,21 @@ function removeUnavailableItems() {
     loadShoppingList();
 }
 
-function removeItem(productId, storeCode) {
+// Карта ref группы → магазин; группа без типа (старая позиция) — первый магазин с её кодом
+function shoppingStoreMap(stores, refs) {
+    const map = {};
+    refs.forEach(ref => {
+        const { code, typeCode } = parseStoreRef(ref);
+        map[ref] = typeCode
+            ? stores.find(s => storeRefOf(s) === ref)
+            : stores.find(s => s.store_code === code);
+    });
+    return map;
+}
+
+function removeItem(productId, storeRef) {
     let list = getShoppingList();
-    list = list.filter(x => !(x.product_id === productId && x.store_code === storeCode));
+    list = list.filter(x => !isShoppingItemOf(x, productId, storeRef));
     saveShoppingList(list);
     loadShoppingList();
 }
@@ -453,20 +465,18 @@ function exportToText() {
 
     const grouped = {};
     available.forEach(item => {
-        if (!grouped[item.store_code]) grouped[item.store_code] = {};
-        if (!grouped[item.store_code][item.category_name]) {
-            grouped[item.store_code][item.category_name] = [];
+        const ref = storeRefOf(item);
+        if (!grouped[ref]) grouped[ref] = {};
+        if (!grouped[ref][item.category_name]) {
+            grouped[ref][item.category_name] = [];
         }
-        grouped[item.store_code][item.category_name].push(item);
+        grouped[ref][item.category_name].push(item);
     });
-    
+
     fetch('/api/stores')
         .then(res => res.json())
         .then(stores => {
-            const storeMap = {};
-            stores.forEach(s => {
-                storeMap[s.store_code] = s;
-            });
+            const storeMap = shoppingStoreMap(stores, Object.keys(grouped));
             
             const sortedStores = Object.keys(grouped).sort((a, b) => {
                 const storeA = storeMap[a];
@@ -481,13 +491,14 @@ function exportToText() {
             let totalSum = 0;
             let totalSavings = 0;
             
-            sortedStores.forEach(storeCode => {
-                const store = storeMap[storeCode];
-                const storeName = store 
-                    ? `${store.store_type} - ${store.address}` 
+            sortedStores.forEach(storeRefKey => {
+                const store = storeMap[storeRefKey];
+                const storeCode = parseStoreRef(storeRefKey).code;
+                const storeName = store
+                    ? `${store.store_type} - ${store.address}`
                     : storeCode;
-                const categories = grouped[storeCode];
-                
+                const categories = grouped[storeRefKey];
+
                 text += `Магазин: ${storeName} (${storeCode})\n`;
                 
                 const sortedCategories = Object.keys(categories).sort((a, b) => 

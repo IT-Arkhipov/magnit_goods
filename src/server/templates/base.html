@@ -137,22 +137,116 @@
         return div.innerHTML;
     }
 
+    // ============================================
+    // Магазин на клиенте — ref «код|тип» (store_type_code: '1' Магнит, '9' Моя цена…).
+    // Магазины одного кода и разных типов — разные магазины. Значения без типа
+    // (сохранённые до появления типа) — просто код: API разрешит его сам, пока
+    // код однозначен (docs/API.md, «Магазин в запросах товаров»).
+    // ============================================
+
+    function storeRef(code, typeCode) {
+        return typeCode ? `${code}|${typeCode}` : String(code);
+    }
+
+    function parseStoreRef(ref) {
+        const [code, typeCode] = String(ref).split('|');
+        return { code, typeCode: typeCode || null };
+    }
+
+    // ref магазина, товара или позиции списка покупок (у всех есть store_code и store_type_code)
+    function storeRefOf(obj) {
+        return storeRef(obj.store_code, obj.store_type_code);
+    }
+
+    // Безопасный для id/селекторов вид ref: «код-тип»
+    function storeRefDomId(ref) {
+        return String(ref).replace('|', '-');
+    }
+
+    // Параметры запроса магазина для API товаров: store_code и (если есть) store_type
+    function storeRefQuery(ref) {
+        const { code, typeCode } = parseStoreRef(ref);
+        return `store_code=${encodeURIComponent(code)}` + (typeCode ? `&store_type=${encodeURIComponent(typeCode)}` : '');
+    }
+
+    // Позиция списка покупок — этот товар в этом магазине (ref). Позиция без типа
+    // (старая версия) относится к магазину по коду.
+    function isShoppingItemOf(item, productId, ref) {
+        if (item.product_id !== productId) return false;
+        if (item.store_type_code) return storeRefOf(item) === String(ref);
+        return item.store_code === parseStoreRef(ref).code;
+    }
+
+    // Сохранённые ref (в т.ч. старые — только код) → актуальные ref магазинов из stores.
+    // Код без типа переводится в ref первого магазина с этим кодом; неизвестные отбрасываются.
+    function normalizeStoreRefs(saved, stores) {
+        const refs = new Set(stores.map(storeRefOf));
+        const result = [];
+        for (const value of saved || []) {
+            const { code, typeCode } = parseStoreRef(value);
+            let ref = null;
+            if (typeCode) {
+                ref = refs.has(value) ? String(value) : null;
+            } else {
+                const store = stores.find(s => s.store_code === code);
+                ref = store ? storeRefOf(store) : null;
+            }
+            if (ref && !result.includes(ref)) result.push(ref);
+        }
+        return result;
+    }
+
+    // Позициям списка покупок без store_type_code (сохранены старой версией) дописать тип
+    // первого магазина с их кодом. Позиции кодов без магазина остаются без типа.
+    function upgradeShoppingListItems(list, stores) {
+        let changed = false;
+        const upgraded = list.map(item => {
+            if (item.store_type_code) return item;
+            const store = stores.find(s => s.store_code === item.store_code);
+            if (!store) return item;
+            changed = true;
+            return { ...item, store_type_code: store.store_type_code };
+        });
+        return { list: upgraded, changed };
+    }
+
     async function validateShoppingList() {
-        const list = getShoppingList();
+        let list = getShoppingList();
         if (list.length === 0) {
             return [];
         }
 
+        // Старые позиции без типа: если код станет неоднозначным, multi-prices ответит 400
+        // на весь запрос — поэтому сначала переводим их на ref «код|тип»
+        if (list.some(x => !x.store_type_code)) {
+            try {
+                const res = await fetch('/api/stores');
+                if (res.ok) {
+                    const upgrade = upgradeShoppingListItems(list, await res.json());
+                    if (upgrade.changed) {
+                        list = upgrade.list;
+                        saveShoppingList(list);
+                    }
+                }
+            } catch (e) {
+                console.error('Не удалось загрузить магазины для списка покупок:', e);
+            }
+        }
+
         const productIds = [...new Set(list.map(x => x.product_id))];
-        const storeCodes = [...new Set(list.map(x => x.store_code))];
+        const storeRefs = [...new Set(list.map(storeRefOf))];
 
         let apiData = {};
         try {
             const response = await fetch(
-                `/api/products/multi-prices?product_ids=${productIds.join(',')}&store_codes=${storeCodes.join(',')}`
+                `/api/products/multi-prices?product_ids=${productIds.join(',')}&store_codes=${encodeURIComponent(storeRefs.join(','))}`
             );
             if (response.ok) {
                 apiData = await response.json();
+            } else {
+                // Список не помечаем «пропавшим» из-за ошибки запроса
+                console.error('Ошибка валидации списка покупок:', response.status, await response.text());
+                return list;
             }
         } catch (e) {
             console.error('Ошибка валидации списка покупок:', e);
@@ -161,7 +255,7 @@
 
         let changed = false;
         const updated = list.map(item => {
-            const found = apiData[item.product_id] && apiData[item.product_id][item.store_code];
+            const found = apiData[item.product_id] && apiData[item.product_id][storeRefOf(item)];
             const newMissing = !found;
             const newOutOfStock = !!found && (found.in_stock === false || found.quantity === 0);
             const newPrice = found ? found.price : item.price;

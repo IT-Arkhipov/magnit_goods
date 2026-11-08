@@ -1277,8 +1277,8 @@ function renderProductRow(p, compareStoresInfo, selectedStores) {
              </td>
              <td style="text-align: center;">${p.in_stock ? '<span class="badge badge-success">В наличии</span>' : '<span class="badge badge-danger">Нет</span>'}</td>
              <td style="text-align: center; white-space: nowrap;">
-                  <button class="btn btn-sm btn-secondary" onclick="openPriceHistory(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">📈 История</button>
-                  ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code || ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
+                  <button class="btn btn-sm btn-secondary" onclick="openPriceHistory(${p.product_id}, '${p.store_code ? storeRefOf(p) : ''}', escapeHtml('${p.name}'))">📈 История</button>
+                  ${selectedStores.length >= 2 ? `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code ? storeRefOf(p) : ''}', escapeHtml('${p.name}'))">Сравнить</button>` : `<button class="btn btn-sm btn-info" onclick="compareInStores(${p.product_id}, '${p.store_code ? storeRefOf(p) : ''}', escapeHtml('${p.name}'))">Сравнить по магазинам</button>`}
              </td>
          </tr>
      `;
@@ -1309,7 +1309,11 @@ function highlightSearch(text) {
 // Данные теперь приходят из БД в /api/products
 // ============================================
 
-async function compareInStores(productId, currentStoreCode, productName) {
+async function compareInStores(productId, currentStoreRef, productName) {
+    // Текущий магазин — ref «код|тип» (или только код у старых вызовов)
+    const isCurrentStore = (store) => currentStoreRef && parseStoreRef(currentStoreRef).typeCode
+        ? storeRefOf(store) === currentStoreRef
+        : store.store_code === currentStoreRef;
     const modal = document.getElementById('compareModal');
     const modalContent = document.getElementById('compareModalContent');
     const modalTitle = document.getElementById('compareModalTitle');
@@ -1335,7 +1339,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
         
         const storePromises = stores.map(async store => {
             try {
-                const response = await fetch(`/api/products/${productId}?store_code=${encodeURIComponent(store.store_code)}`);
+                const response = await fetch(`/api/products/${productId}?${storeRefQuery(storeRefOf(store))}`);
                 if (response.ok) {
                     const productData = await response.json();
                     if (productData.quantity === 0 || productData.quantity === null || productData.quantity === undefined) {
@@ -1386,7 +1390,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
                         previous_price: previousPrice !== null ? previousPrice : 'N/A',
                         in_stock: productData.in_stock ? 'В наличии' : 'Нет в наличии',
                         change_text: changeText,
-                        isCurrent: store.store_code === currentStoreCode
+                        isCurrent: isCurrentStore(store)
                     };
                 } else {
                     return {
@@ -1396,7 +1400,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
                         previous_price: 'N/A',
                         in_stock: 'N/A',
                         change_text: 'N/A',
-                        isCurrent: store.store_code === currentStoreCode
+                        isCurrent: isCurrentStore(store)
                     };
                 }
             } catch (error) {
@@ -1407,7 +1411,7 @@ async function compareInStores(productId, currentStoreCode, productName) {
                     previous_price: 'N/A',
                     in_stock: 'N/A',
                     change_text: 'N/A',
-                    isCurrent: store.store_code === currentStoreCode
+                    isCurrent: isCurrentStore(store)
                 };
             }
         });
@@ -1448,7 +1452,7 @@ function closeCompareModal() {
     document.getElementById('compareModal').style.display = 'none';
 }
 
-async function openPriceHistory(productId, storeCode, productName) {
+async function openPriceHistory(productId, storeRef, productName) {
     const modal = document.getElementById('priceHistoryModal');
     const modalContent = document.getElementById('priceHistoryModalContent');
     const modalTitle = document.getElementById('priceHistoryModalTitle');
@@ -1459,7 +1463,7 @@ async function openPriceHistory(productId, storeCode, productName) {
 
     try {
         let url = `/api/products/${productId}/history?days=30`;
-        if (storeCode) url += `&store_code=${encodeURIComponent(storeCode)}`;
+        if (storeRef) url += `&${storeRefQuery(storeRef)}`;
         const resp = await fetch(url);
         if (!resp.ok) {
             modalContent.innerHTML = `<p style="color:#dc3545;">Ошибка загрузки: ${resp.status}</p>`;
@@ -1472,7 +1476,8 @@ async function openPriceHistory(productId, storeCode, productName) {
         }
         const grouped = {};
         rows.forEach(r => {
-            const key = r.store_code;
+            // Магазины одного кода и разных типов — разные группы
+            const key = storeRefOf(r);
             if (!grouped[key]) grouped[key] = [];
             grouped[key].push(r);
         });
@@ -1481,7 +1486,8 @@ async function openPriceHistory(productId, storeCode, productName) {
             list.sort((a, b) => (a.scan_date < b.scan_date ? 1 : -1));
             const minPrice = Math.min(...list.map(x => x.price));
             const maxPrice = Math.max(...list.map(x => x.price));
-            html += `<h3 style="margin-top: 16px;">Магазин: ${escapeHtml(sc)}</h3>`;
+            const { code: histCode, typeCode: histType } = parseStoreRef(sc);
+            html += `<h3 style="margin-top: 16px;">Магазин: ${escapeHtml(histCode)}${histType ? ` <span style="color:#666;font-weight:normal;font-size:14px;">(тип ${escapeHtml(histType)})</span>` : ''}</h3>`;
             html += `<div style="color:#666;font-size:12px;margin-bottom:6px;">Мин: ${minPrice} ₽ · Макс: ${maxPrice} ₽ · Записей: ${list.length}</div>`;
             html += `<table style="width:100%;border-collapse:collapse;font-size:14px;">
                 <thead>
@@ -1579,13 +1585,13 @@ async function loadStoresForComparison() {
             return;
         }
         
-        // Получаем сохранённый выбор из localStorage
-        const savedStores = JSON.parse(localStorage.getItem('compareStores') || '[]');
-        
+        // Получаем сохранённый выбор из localStorage (ref «код|тип»; старые — только код)
+        const savedStores = normalizeStoreRefs(getSelectedStores(), allStores);
+
         // Генерируем строки таблицы
         let html = '';
         allStores.forEach(store => {
-            const isChecked = savedStores.includes(store.store_code);
+            const isChecked = savedStores.includes(storeRefOf(store));
             const storeType = store.store_type || store.type || '-';
             const city = store.city || '-';
             const address = store.full_address || '-';
@@ -1593,8 +1599,8 @@ async function loadStoresForComparison() {
             html += `
                 <tr>
                     <td style="padding: 8px; border: 1px solid #ddd; text-align: center; vertical-align: middle;">
-                        <input type="checkbox" 
-                               value="${store.store_code}" 
+                        <input type="checkbox"
+                               value="${storeRefOf(store)}"
                                data-store-type="${escapeHtml(storeType)}"
                                ${isChecked ? 'checked' : ''}
                                onchange="updateStoreRowStyle(this)">
@@ -1734,7 +1740,7 @@ function clearStoreSelection() {
     updateSelectedStoresCount();
 }
 
-// Получение выбранных магазинов
+// Получение выбранных магазинов: ref «код|тип» (см. base.html, storeRef)
 function getSelectedStores() {
     return JSON.parse(localStorage.getItem('compareStores') || '[]');
 }
@@ -1751,19 +1757,20 @@ document.addEventListener('DOMContentLoaded', async () => {
         try {
             const r = await fetch('/api/stores');
             const allStores = await r.json();
-            const validStoreCodes = new Set(allStores.map(s => s.store_code));
-            const validSavedStores = savedStores.filter(code => validStoreCodes.has(code));
-            
+            // Сохранённые ref существующих магазинов; старые значения (только код)
+            // переводятся в «код|тип»
+            const validSavedStores = normalizeStoreRefs(savedStores, allStores);
+
             if (validSavedStores.length === 0) {
                 // Если нет валидных магазинов, очищаем localStorage
                 localStorage.removeItem('compareStores');
                 // Автоматически выбираем первый активный магазин
                 const activeStores = allStores.filter(s => s.is_active);
                 if (activeStores.length > 0) {
-                    localStorage.setItem('compareStores', JSON.stringify([activeStores[0].store_code]));
+                    localStorage.setItem('compareStores', JSON.stringify([storeRefOf(activeStores[0])]));
                 }
-            } else if (validSavedStores.length < savedStores.length) {
-                // Если некоторые магазины невалидны, обновляем localStorage
+            } else if (JSON.stringify(validSavedStores) !== JSON.stringify(savedStores)) {
+                // Невалидные магазины убраны, старые значения переведены на ref
                 localStorage.setItem('compareStores', JSON.stringify(validSavedStores));
             }
         } catch (err) {
@@ -1776,7 +1783,7 @@ document.addEventListener('DOMContentLoaded', async () => {
             const r = await fetch('/api/stores?is_active=true&limit=1');
             const stores = await r.json();
             if (stores.length > 0) {
-                localStorage.setItem('compareStores', JSON.stringify([stores[0].store_code]));
+                localStorage.setItem('compareStores', JSON.stringify([storeRefOf(stores[0])]));
             }
         } catch (err) {
             console.error('Ошибка выбора первого магазина:', err);
@@ -1802,8 +1809,7 @@ document.addEventListener('DOMContentLoaded', async () => {
         const list = getShoppingList();
         document.querySelectorAll('.shopping-list-checkbox').forEach(cb => {
             const pid = parseInt(cb.dataset.productId);
-            const sc = cb.dataset.storeCode;
-            const inList = list.some(x => x.product_id === pid && x.store_code === sc);
+            const inList = list.some(x => isShoppingItemOf(x, pid, cb.dataset.storeRef));
             cb.checked = inList;
             const row = cb.closest('tr');
             if (row) {
@@ -1967,7 +1973,8 @@ async function loadProductsEnhanced() {
             
             try {
                 while (hasMore) {
-                    let url = `/api/products?store_code=${encodeURIComponent(storeCode)}&sort_by=${sort}&limit=1000&offset=${offset}`;
+                    // storeCode — ref магазина «код|тип»
+                    let url = `/api/products?${storeRefQuery(storeCode)}&sort_by=${sort}&limit=1000&offset=${offset}`;
                     if (selectedCategoryIds.length > 0) {
                         url += `&category_ids=${selectedCategoryIds.join(',')}`;
                     }
@@ -1984,8 +1991,12 @@ async function loadProductsEnhanced() {
                     }
 
                     const response = await fetch(url);
+                    if (!response.ok) {
+                        // Например, 400 для кода с несколькими типами без типа
+                        throw new Error(`HTTP ${response.status}: ${await response.text()}`);
+                    }
                     const products = await response.json();
-                    
+
                     if (products.length === 0) {
                         hasMore = false;
                     } else {
@@ -2105,7 +2116,7 @@ async function loadProductsEnhanced() {
                 }
                 // Убираем начальные запятые, дефисы и пробелы
                 address = address.replace(/^[\s,\-—]+/, '').trim();
-                storeInfoMap[store.store_code] = `${store.store_type} - ${address}`;
+                storeInfoMap[storeRefOf(store)] = `${store.store_type} - ${address}`;
             });
         } catch (e) {
             console.error('Ошибка загрузки магазинов:', e);
@@ -2116,7 +2127,8 @@ async function loadProductsEnhanced() {
         const productIds = products.map(p => p.product_id).join(',');
         if (productIds && selectedStores.length > 0) {
             try {
-                const pricesUrl = `/api/products/multi-prices?product_ids=${productIds}&store_codes=${selectedStores.join(',')}`;
+                // Ключи ответа — ref выбранных магазинов «код|тип»
+                const pricesUrl = `/api/products/multi-prices?product_ids=${productIds}&store_codes=${encodeURIComponent(selectedStores.join(','))}`;
                 const pricesResp = await fetch(pricesUrl);
                 allStorePrices = await pricesResp.json();
             } catch (e) {
@@ -2379,24 +2391,28 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
                                 const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                                 
-                                // Создаем ссылку на товар в Магните
+                                // Создаем ссылку на товар в Магните: код магазина из ref,
+                                // тип — shop_type записи товара (multi-prices)
+                                const storeCodeOnly = parseStoreRef(storeCode).code;
                                 const seoCode = priceInfo.seo_code;
                                 const shopType = priceInfo.shop_type;
-                                const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
-                                const priceLink = productUrl 
-                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${storeSavingsText}</span></a>`
+                                const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCodeOnly}&shopType=${shopType}` : null;
+                                const priceLink = productUrl
+                                    ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCodeOnly}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${storeSavingsText}</span></a>`
                                     : `<span style="${savingsStyle}">${priceInfo.price} ₽${discountText}${storeSavingsText}</span>`;
-                                
-                                // Чекбокс для добавления в список покупок
-                                const checkboxId = `cb-${p.product_id}-${storeCode}`;
+
+                                // Чекбокс для добавления в список покупок (магазин — ref «код|тип»)
+                                const checkboxId = `cb-${p.product_id}-${storeRefDomId(storeCode)}`;
                                 const checkbox = `<label style="display: flex; align-items: flex-start; justify-content: flex-start; gap: 6px; cursor: pointer;">
-                                    <input 
-                                        type="checkbox" 
+                                    <input
+                                        type="checkbox"
                                         class="shopping-list-checkbox"
                                         id="${checkboxId}"
                                         data-product-id="${p.product_id}"
                                         data-product-name="${escapeHtml(p.name)}"
-                                        data-store-code="${storeCode}"
+                                        data-store-ref="${storeRef(storeCodeOnly, priceInfo.store_type_code)}"
+                                        data-store-code="${storeCodeOnly}"
+                                        data-store-type-code="${priceInfo.store_type_code || ''}"
                                         data-price="${priceInfo.price}"
                                         data-previous-price="${priceInfo.previous_price || ''}"
                                         data-category-name="${escapeHtml(catData.name)}"
@@ -2517,12 +2533,13 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                               : '';
                           const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
                           
-                          // Создаем ссылку на товар в Магните
+                          // Создаем ссылку на товар в Магните (код магазина — из ref)
+                          const storeCodeOnly = parseStoreRef(storeCode).code;
                           const seoCode = priceInfo.seo_code;
                           const shopType = priceInfo.shop_type;
-                          const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCode}&shopType=${shopType}` : null;
-                          const priceLink = productUrl 
-                              ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCode}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
+                          const productUrl = seoCode && shopType ? `https://magnit.ru/product/${p.product_id}-${seoCode}?shopCode=${storeCodeOnly}&shopType=${shopType}` : null;
+                          const priceLink = productUrl
+                              ? `<a href="javascript:void(0)" onclick="openProductLink('${productUrl}', '${storeCodeOnly}', ${shopType})" style="text-decoration: none; color: ${color}; cursor: pointer;"><span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span></a>`
                               : `<span style="${savingsStyle}">${priceInfo.price} ₽${savingsText}</span>`;
                           
                           return `<td style="text-align:left;font-weight:bold;color:${color};" class="price-cell">${priceLink}<div class="price-tooltip">${escapeHtml(tooltipText)}</div></td>`;
@@ -2534,9 +2551,10 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
               const activePriceInfo = productPrices[activeStoreCode];
               const activeShopType = activePriceInfo?.shop_type;
               const activeSeoCode = activePriceInfo?.seo_code;
-              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeStoreCode}&shopType=${activeShopType}` : null;
-              const activePriceLink = activeProductUrl 
-                  ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeStoreCode}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
+              const activeCodeOnly = activeStoreCode ? parseStoreRef(activeStoreCode).code : null;
+              const activeProductUrl = activeSeoCode && activeShopType && activeStoreCode ? `https://magnit.ru/product/${p.product_id}-${activeSeoCode}?shopCode=${activeCodeOnly}&shopType=${activeShopType}` : null;
+              const activePriceLink = activeProductUrl
+                  ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeCodeOnly}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
                   : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
                html += `<tr><td class="product-name-cell"><strong>${highlightSearch(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.price_change_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
@@ -2879,10 +2897,12 @@ document.addEventListener('DOMContentLoaded', () => {
 // ============================================
 
 function toggleShoppingListItem(checkbox) {
+    const ref = checkbox.dataset.storeRef;
     const item = {
         product_id: parseInt(checkbox.dataset.productId),
         product_name: checkbox.dataset.productName,
         store_code: checkbox.dataset.storeCode,
+        store_type_code: checkbox.dataset.storeTypeCode || null,
         price: parseFloat(checkbox.dataset.price),
         previous_price: checkbox.dataset.previousPrice ? parseFloat(checkbox.dataset.previousPrice) : null,
         category_name: checkbox.dataset.categoryName,
@@ -2893,16 +2913,12 @@ function toggleShoppingListItem(checkbox) {
     let list = getShoppingList();
 
     if (checkbox.checked) {
-        const exists = list.some(x =>
-            x.product_id === item.product_id && x.store_code === item.store_code
-        );
+        const exists = list.some(x => isShoppingItemOf(x, item.product_id, ref));
         if (!exists) {
             list.push(item);
         }
     } else {
-        list = list.filter(x =>
-            !(x.product_id === item.product_id && x.store_code === item.store_code)
-        );
+        list = list.filter(x => !isShoppingItemOf(x, item.product_id, ref));
     }
 
     saveShoppingList(list);
@@ -2917,7 +2933,7 @@ function toggleShoppingListItem(checkbox) {
 
 function updateShoppingListCounter() {
     const list = JSON.parse(localStorage.getItem('shoppingList') || '[]');
-    const uniqueStores = new Set(list.map(x => x.store_code)).size;
+    const uniqueStores = new Set(list.map(storeRefOf)).size;
     const counter = document.getElementById('shoppingListCounter');
     if (counter) {
         counter.textContent = `Выбрано: ${list.length} товаров из ${uniqueStores} магазинов`;
@@ -2929,21 +2945,18 @@ function syncCheckboxesFromLocalStorage() {
     const allCheckboxes = document.querySelectorAll('input.shopping-list-checkbox');
     console.log(`[SYNC] Список покупок: ${list.length} товаров, найдено чекбоксов в DOM: ${allCheckboxes.length}`);
     let matched = 0;
-    list.forEach(item => {
-        const selector = `input.shopping-list-checkbox[data-product-id="${item.product_id}"][data-store-code="${item.store_code}"]`;
-        const checkbox = document.querySelector(selector);
-        if (checkbox) {
-            checkbox.checked = true;
-            const row = checkbox.closest('tr');
-            if (row) {
-                row.classList.add('selected-row');
-            }
-            matched++;
-        } else {
-            console.log(`[SYNC] Не найден чекбокс: product_id=${item.product_id} (${typeof item.product_id}), store_code=${item.store_code} (${typeof item.store_code})`);
+    // Сопоставление по товару и магазину (ref «код|тип»; позиции без типа — по коду)
+    allCheckboxes.forEach(checkbox => {
+        const pid = parseInt(checkbox.dataset.productId);
+        if (!list.some(item => isShoppingItemOf(item, pid, checkbox.dataset.storeRef))) return;
+        checkbox.checked = true;
+        const row = checkbox.closest('tr');
+        if (row) {
+            row.classList.add('selected-row');
         }
+        matched++;
     });
-    console.log(`[SYNC] Совпало: ${matched}/${list.length}`);
+    console.log(`[SYNC] Совпало чекбоксов: ${matched} (позиций в списке: ${list.length})`);
     updateShoppingListCounter();
 }
 

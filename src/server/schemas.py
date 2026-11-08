@@ -1,7 +1,7 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, computed_field
 from typing import Optional
 from datetime import datetime
-from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_MAP
+from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_MAP, resolve_store_type_code
 
 
 # ===== Store =====
@@ -35,6 +35,12 @@ class StoreResponse(StoreBase):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+    @computed_field
+    @property
+    def store_type_code(self) -> str:
+        """Числовой код типа строкой — тот же, что в записях товаров магазина."""
+        return resolve_store_type_code(self.store_type)
 
 
 # ===== Scan Request =====
@@ -154,6 +160,8 @@ class ProductListItem(BaseModel):
     in_stock: Optional[bool] = None
     category_id: Optional[int] = None
     store_code: str
+    # Код типа магазина записи ('1' Магнит, '9' Моя цена…): вместе со store_code задаёт магазин
+    store_type_code: str
     category_name: Optional[str] = None
     category_parent_id: Optional[int] = None
     quantity: Optional[int] = None

@@ -75,10 +75,12 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 **Функции модуля:**
 - `get_tracked_category_magnit_ids(db)` — единое определение отслеживаемых категорий (подкатегории с `is_tracked`, порядок по `id`); используется всеми операциями сканирования.
 - `resolve_store_type(db, store_code, store_type=None)` — тип магазина: явный → тип единственного магазина с таким кодом в БД → из конфигурации; если у кода несколько типов и тип не указан — `AmbiguousStoreError` (роуты отвечают 400).
+- `resolve_store_type_filter(db, store_code, store_type=None)` — то же правило для **чтения** товаров и истории (роуты `routes/catalog.py`, `routes/prices.py`): явный тип → его код (`constants.py:parse_store_type_code`, нераспознанный — `ValueError` → 400); иначе код типа единственного магазина с этим кодом; несколько типов — `AmbiguousStoreError`; магазина с кодом в БД нет — `None` (без фильтра по типу). В отличие от `resolve_store_type`, не подставляет тип из конфигурации: чтение отдаёт то, что есть в БД.
+- `parse_store_ref(ref)` / `parse_store_refs(csv)` — элемент набора магазинов `код` или `код|тип` → `(код, тип или None)`; CSV → список элементов без пустых и повторов.
 
 **Конструктор:** `__init__(db: Session, store_code=None, address=None, job_id=None, store_type=None)`
 - Принимает SQLAlchemy `Session`, код магазина, адрес (для отображения в прогрессе), `job_id` и необязательный `store_type`.
-- Тип магазина — через `resolve_store_type` (см. выше).
+- Тип магазина — через `resolve_store_type` (см. выше); `self.store_type_code = resolve_store_type_code(self.store_type)` — код типа в ключе записей. **Все** чтения и записи `Product`/`PriceHistory` сканера (`_save_products`, `_upsert_price_history`, `_mark_missing_products`, `cleanup_stale_products`) идут по паре (`store_code`, `store_type_code`): магазины одного кода и разных типов не трогают данные друг друга. `cleanup_price_history` — глобальная.
 - Создаёт `MagnitAPIClient(store_code, store_type)` только если задан `store_code`.
 
 **Прогресс задания (с троттлингом):**
@@ -109,7 +111,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 **Оптимизация:** один SELECT для всех `product_ids` (вместо N+1), bulk INSERT для новых, bulk UPDATE для существующих, один COMMIT.
 
 **Логика цены:**
-- `price_history` хранит **одну запись на день** для каждого `(product_id, store_code)`.
+- `price_history` хранит **одну запись на день** для каждого `(product_id, store_code, store_type_code)`; цена предыдущего дня берётся из истории того же магазина (код и тип).
 - `previous_price` / `price_change_percent` берутся из **последней записи предыдущего дня** (`scan_date < today`); если истории нет — fallback на сохранённую цену `existing.price`.
 - `last_change_price` / `last_change_date` / `last_price_change` обновляются только при **реальном изменении** цены (`abs(existing.price - current) > 0.01`): `last_change_price` — цена непосредственно до изменения, `last_change_date` — момент скана с изменением. Повторные сканы с той же ценой эти поля не трогают.
 - `price_change_percent = round((prev - current) / prev * 100, 1)`. Положительное = снижение, отрицательное = повышение.
@@ -117,7 +119,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 **Шаги:**
 1. Находит категорию в БД по `magnit_id`.
-2. **Одним запросом** получает все существующие товары по `(product_id IN (...), store_code)`.
+2. **Одним запросом** получает все существующие товары по `(product_id IN (...), store_code, store_type_code)`.
 3. **Одним запросом** получает историю цен предыдущих дней.
 4. Разделяет на `to_insert` и `to_update`, формируя словари для `bulk_insert_mappings` / `bulk_update_mappings`.
 5. `self.db.bulk_insert_mappings(Product, to_insert)`.
@@ -126,10 +128,10 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 8. Один `commit()`.
 
 ### `_upsert_price_history(products_data, scan_date)`
-Для каждого товара проверяет существование записи за `scan_date` по `(product_id, store_code)`. Если есть — bulk UPDATE (`price`, `quantity`, `in_stock`); если нет — bulk INSERT. Upsert-семантика «одна запись на день».
+Для каждого товара проверяет существование записи за `scan_date` по `(product_id, store_code, store_type_code)`. Если есть — bulk UPDATE (`price`, `quantity`, `in_stock`); если нет — bulk INSERT. Upsert-семантика «одна запись на день».
 
 ### `cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)`
-Удаляет товары с `last_seen < now - days_threshold` для текущего `store_code`. **Порог по умолчанию — `STALE_DAYS_DELETE` = 6 дней** (`constants.py`: 1 день товар виден после `last_seen`, затем 5 дней скрыт, затем удаляется).
+Удаляет товары с `last_seen < now - days_threshold` для текущего магазина (`store_code` + `store_type_code`). **Порог по умолчанию — `STALE_DAYS_DELETE` = 6 дней** (`constants.py`: 1 день товар виден после `last_seen`, затем 5 дней скрыт, затем удаляется).
 
 ### `cleanup_price_history(days=30)`
 Удаляет записи `PriceHistory` старше 30 дней (`PRICE_HISTORY_RETENTION_DAYS`).
@@ -186,10 +188,10 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 Единый слой выборки товаров; роуты `GET /api/products` и `GET /api/products/stats` только разбирают параметры и вызывают его.
 
-- `ProductFilters` — параметры: `store_code`, `category_id`, `category_ids`, `min_price`, `max_price`, `search`, `relax_stale`, `include_out_of_stock`. `parse_category_ids("1,2,x")` → `[1, 2]`.
+- `ProductFilters` — параметры: `store_code`, `store_type_code` (код типа из `resolve_store_type_filter`; `None` — все типы кода), `category_id`, `category_ids`, `min_price`, `max_price`, `search`, `relax_stale`, `include_out_of_stock`. `parse_category_ids("1,2,x")` → `[1, 2]`.
 - `build_product_query(db, filters)` — все фильтры в одном месте: магазин, категории, цена; окно видимости устаревших (`STALE_DAYS_VISIBLE`, при `relax_stale` — `STALE_DAYS_DELETE`); наличие (`in_stock` и `quantity > 0`, если не `include_out_of_stock`); поиск `Product.name_search LIKE '%…%' ESCAPE '\'` по `casefold()`-терму. Поиск и обычный список проходят один путь.
 - `list_products(db, filters, sort_by, limit, offset)` — сортировка (`name` / `price` / `last_seen`) и пагинация.
-- `product_to_list_item(p)` — элемент ответа (контракт — схема `ProductListItem`); `get_products_stats(db, store_code)` — агрегаты (`ProductStats`).
+- `product_to_list_item(p)` — элемент ответа (контракт — схема `ProductListItem`); `get_products_stats(db, stores)` — агрегаты (`ProductStats`) по набору магазинов: `stores` — пары `(store_code, store_type_code или None)`, условие строит `store_condition(stores)`.
 
 ---
 
@@ -220,7 +222,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - `bulk_insert_mappings(Product, to_insert)` — массовая вставка новых товаров.
 - `bulk_update_mappings(Product, to_update)` — массовое обновление существующих.
 - `bulk_insert_mappings` / `bulk_update_mappings` для `PriceHistory` в `_upsert_price_history`.
-- Один SELECT для всех существующих товаров по `(product_id IN (...), store_code)`.
+- Один SELECT для всех существующих товаров по `(product_id IN (...), store_code, store_type_code)`.
 - Один `commit()` в конце.
 
 ### Retry

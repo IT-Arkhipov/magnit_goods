@@ -68,25 +68,37 @@ def get_configured_store_type() -> str:
     return os.getenv("STORE_TYPE") or DEFAULT_STORE_TYPE
 
 
-def resolve_store_type_code(value: str | int | None = None) -> str:
-    """Привести тип магазина к числовому коду для запросов к API Магнита.
+def parse_store_type_code(value: str | int) -> str:
+    """Строго привести тип магазина к числовому коду (строкой, например ``"9"``).
 
     Принимает API-код (``MM``, ``MM_MINI``), русское название (``Магнит``,
-    ``Мини``) или числовой код (``1``). Пустое значение заменяется типом из
-    конфигурации (:func:`get_configured_store_type`). Нераспознанное значение
-    даёт предупреждение и код типа по умолчанию.
+    ``Мини``) или числовой код (``1``). Пустое или нераспознанное значение —
+    ``ValueError``: для параметров запросов, где подстановка типа по умолчанию
+    молча вернула бы данные чужого магазина.
     """
     raw = str(value).strip() if value is not None else ""
-    if not raw:
-        raw = get_configured_store_type().strip()
-
     name = STORE_TYPE_MAP.get(raw) or STORE_TYPE_MAP.get(raw.upper()) or raw
     if name in API_STORE_TYPE_CODE:
         return API_STORE_TYPE_CODE[name]
     if name in _NUMERIC_STORE_TYPE_CODES:
         return name
+    raise ValueError(f"Неизвестный тип магазина: {raw!r}")
 
-    logger.warning(
-        "Неизвестный тип магазина %r — используется %r", raw, DEFAULT_STORE_TYPE
-    )
-    return API_STORE_TYPE_CODE[DEFAULT_STORE_TYPE]
+
+def resolve_store_type_code(value: str | int | None = None) -> str:
+    """Привести тип магазина к числовому коду для запросов к API Магнита.
+
+    То же, что :func:`parse_store_type_code`, но пустое значение заменяется
+    типом из конфигурации (:func:`get_configured_store_type`), а
+    нераспознанное даёт предупреждение и код типа по умолчанию.
+    """
+    raw = str(value).strip() if value is not None else ""
+    if not raw:
+        raw = get_configured_store_type().strip()
+    try:
+        return parse_store_type_code(raw)
+    except ValueError:
+        logger.warning(
+            "Неизвестный тип магазина %r — используется %r", raw, DEFAULT_STORE_TYPE
+        )
+        return API_STORE_TYPE_CODE[DEFAULT_STORE_TYPE]

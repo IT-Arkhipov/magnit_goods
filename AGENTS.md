@@ -32,7 +32,7 @@ python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 src/server/
 ├── main.py              # Точка входа, lifespan, загрузка .env, страницы, утилитарные роуты
-├── database.py          # engine (WAL), SessionLocal, init_db(), 15 миграций
+├── database.py          # engine (WAL), SessionLocal, init_db(), 17 миграций
 ├── models.py            # Store, Category, Product, PriceHistory, ScanJob, SchemaMigration
 ├── schemas.py           # Pydantic-модели запросов и ответов API
 ├── constants.py         # типы магазинов (STORE_TYPE_*, resolve_store_type_code), STALE_DAYS_*
@@ -71,7 +71,7 @@ src/server/
   from src.server.models import store_hash_id
   store_id = store_hash_id(store_code, store_type, full_address)  # 12 символов
   ```
-- **Магазин идентифицируется парой (`store_code`, `store_type`)** — она уникальна (`uq_store_code_type`). Один код может быть у магазинов разных типов, но `Product` ключуется только `(product_id, store_code)` — см. `docs/DEVELOPMENT.md` (техдолг №1).
+- **Магазин идентифицируется парой (`store_code`, `store_type`)** — она уникальна (`uq_store_code_type`). Один код может быть у магазинов разных типов, и товары с историей цен тоже принадлежат магазину целиком: ключ `Product` — `(product_id, store_code, store_type_code)`, `PriceHistory` — то же + `scan_date`. `store_type_code` — числовой код типа строкой (`resolve_store_type_code`: `'1'` Магнит, `'9'` Моя цена…).
 
 ## Модели
 
@@ -79,8 +79,8 @@ src/server/
 |--------|-----------|
 | `Store` | Магазин (id=MD5 hash, shop_type — числовой код) |
 | `Category` | Категория каталога (универсальная, без привязки к магазину; parent_id иерархия) |
-| `Product` | Товар (идентифицируется парой product_id+store_code; текущая цена, остатки, отслеживание цен, `name_search` для поиска) |
-| `PriceHistory` | История цен по дням (одна запись на день для product_id+store_code) |
+| `Product` | Товар (ключ product_id+store_code+store_type_code; текущая цена, остатки, отслеживание цен, `name_search` для поиска) |
+| `PriceHistory` | История цен по дням (одна запись на день для product_id+store_code+store_type_code) |
 | `ScanJob` | Фоновое задание (status: pending/running/completed/failed/cancelled) |
 | `SchemaMigration` | Реестр выполненных миграций (`schema_migrations`) |
 
@@ -88,13 +88,15 @@ src/server/
 
 > `DailyPriceSnapshot` и поля акций (`old_price`, `discount_percent`, `is_promotion`, `promo_end_date`, `historical_*`) удалены миграцией `migrate_simplify_price_tracking`.
 
-## Миграции (реестр `schema_migrations`, 15 шт.)
+## Миграции (реестр `schema_migrations`, 17 шт.)
 
 Подробности: `docs/DATABASE.md`. Вызываются из `init_db()` через `_run_migration(db, "<имя>", func, ...)`.
 
 **Контракт:** миграция выполняется **один раз** и регистрируется в `schema_migrations` **только при успехе**. Функция либо возвращается, либо бросает исключение (внутри ошибки не глушить); при сбое — `WARNING` в логе, миграция не регистрируется и повторяется при следующем старте. Новую миграцию добавляйте функцией в `database.py` и вызовом `_run_migration(...)` с уникальным именем в **конец** списка. Не запрашивайте в миграциях всю сущность (`db.query(Product)`) — колонки, добавленные позже, ещё могут отсутствовать; выбирайте нужные колонки.
 
-Имена по порядку: `simplify_price_tracking`, `add_last_change_fields`, `add_product_indexes`, `store_ids`, `categories`, `add_shop_type`, `fill_shop_type`, `add_last_scan_found`, `add_scan_job_progress_fields`, `fix_previous_price`, `create_price_history`, `backfill_price_history`, `ensure_product_last_scan_index`, `add_store_code_type_unique`, `add_product_name_search`.
+Имена по порядку: `simplify_price_tracking`, `add_last_change_fields`, `add_product_indexes`, `store_ids`, `categories`, `add_shop_type`, `fill_shop_type`, `add_last_scan_found`, `add_scan_job_progress_fields`, `fix_previous_price`, `create_price_history`, `backfill_price_history`, `ensure_product_last_scan_index`, `add_store_code_type_unique`, `add_product_name_search`, `add_product_store_type`, `fix_store_shop_type`.
+
+`add_product_store_type` пересобирает `price_history` в одной транзакции на отдельном соединении (`BEGIN IMMEDIATE`, при ошибке `ROLLBACK`) — образец для миграций, меняющих ограничения таблиц SQLite.
 
 ## API endpoints (актуальные пути)
 
@@ -140,6 +142,8 @@ src/server/
 - `POST /api/catalog/scan-prices` — обновить цены в магазине
 
 Эндпоинты сканирования принимают необязательный `store_type`; он **обязателен**, если у кода магазина в БД несколько типов (иначе 400).
+
+Эндпоинты товаров и цен (`GET /api/products`, `/stats`, `/{product_id}`, `/{product_id}/history`, `DELETE /api/products/clear-by-store`, `GET /api/prices/decreased`) тоже принимают `store_type` с тем же правилом (`resolve_store_type_filter`: нет магазина с кодом — без фильтра по типу; неизвестный тип — 400). `store_codes` в `/stats` и `/multi-prices` — элементы `код` или `код|тип`; ключи ответа `multi-prices` — элементы запроса. Ответы с товарами и магазинами содержат `store_type_code`.
 
 ### Цены (`/api/prices`, 2 эндпоинта)
 - `GET /api/prices/decreased` — товары со сниженными ценами
@@ -226,7 +230,7 @@ CORS_ORIGINS=   # разрешённые origins (CSV), по умолчанию 
 ## Известные расхождения / техдолг
 
 См. `docs/DEVELOPMENT.md` → "Технический долг":
-- Ключ товара `(product_id, store_code)` не включает тип магазина (техдолг №1)
+- Активных расхождений нет (ключ товара с типом магазина — закрыт)
 - Остальное — см. `docs/DEVELOPMENT.md` (раздел «Замечания из code review»)
 
 ---

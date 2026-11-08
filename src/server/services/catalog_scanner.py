@@ -16,7 +16,12 @@ from src.server.models import (
     ScanJob,
     Store,
 )
-from src.server.constants import STALE_DAYS_DELETE, get_configured_store_type
+from src.server.constants import (
+    STALE_DAYS_DELETE,
+    get_configured_store_type,
+    parse_store_type_code,
+    resolve_store_type_code,
+)
 from src.server.services.magnit_api import MagnitAPIClient
 
 logger = logging.getLogger(__name__)
@@ -53,6 +58,46 @@ def resolve_store_type(db: Session, store_code: Optional[str], store_type: Optio
             f"Несколько магазинов с кодом {store_code} ({', '.join(types)}) — укажите store_type"
         )
     return get_configured_store_type()
+
+
+def resolve_store_type_filter(
+    db: Session, store_code: Optional[str], store_type: Optional[str] = None
+) -> Optional[str]:
+    """
+    Код типа магазина для фильтра чтения товаров и истории цен.
+
+    Явно переданный тип → его код (нераспознанный — ValueError). Иначе — код
+    типа единственного магазина с этим кодом; если типов несколько —
+    AmbiguousStoreError. Если магазина с кодом в БД нет — None (без фильтра
+    по типу): чтение отдаёт то, что есть в БД, и не зависит от STORE_TYPE
+    в окружении — в отличие от resolve_store_type для сканирования.
+    """
+    if store_type is not None and str(store_type).strip():
+        return parse_store_type_code(store_type)
+    if not store_code:
+        return None
+    codes = sorted({
+        resolve_store_type_code(row[0])
+        for row in db.query(Store.store_type).filter(Store.store_code == store_code).all()
+        if row[0]
+    })
+    if len(codes) > 1:
+        raise AmbiguousStoreError(
+            f"Несколько магазинов с кодом {store_code} (типы {', '.join(codes)}) — укажите store_type"
+        )
+    return codes[0] if codes else None
+
+
+def parse_store_ref(ref: str) -> tuple[str, Optional[str]]:
+    """Элемент набора магазинов `код` или `код|тип` → (код, тип или None)."""
+    code, _, store_type = ref.partition("|")
+    return code.strip(), (store_type.strip() or None)
+
+
+def parse_store_refs(value: Optional[str]) -> list[str]:
+    """CSV элементов набора магазинов → список непустых элементов без повторов (порядок сохраняется)."""
+    refs = [x.strip() for x in (value or "").split(",")]
+    return list(dict.fromkeys(r for r in refs if r and parse_store_ref(r)[0]))
 
 
 def get_tracked_category_magnit_ids(db: Session) -> list[int]:
@@ -101,7 +146,10 @@ class CatalogScanner:
         # Тип магазина: явный → единственный в БД для этого кода → из конфигурации;
         # при нескольких типах у одного кода — AmbiguousStoreError
         self.store_type = resolve_store_type(self.db, store_code, store_type)
-        
+        # Код типа в ключе записей товаров и истории: магазины одного кода и
+        # разных типов не трогают данные друг друга
+        self.store_type_code = resolve_store_type_code(self.store_type)
+
         self.api = (
             MagnitAPIClient(store_code=store_code, store_type=self.store_type)
             if store_code
@@ -608,6 +656,7 @@ class CatalogScanner:
             self.db.query(Product)
             .filter(
                 Product.store_code == self.store_code,
+                Product.store_type_code == self.store_type_code,
                 Product.category_id.in_(db_category_ids),
                 Product.last_scan_found < scan_start_ts,
             )
@@ -644,7 +693,8 @@ class CatalogScanner:
         Сохранить товары в БД с использованием bulk операций для оптимизации.
 
         Логика цены:
-        - price_history хранит одну запись на день для каждого (product_id, store_code)
+        - товары и price_history ключуются магазином (store_code, store_type_code);
+          price_history хранит одну запись на день для каждого товара магазина
         - previous_price / price_change_percent берутся из последнего дня сканирования
           (предыдущая запись в price_history)
         - last_change_price / last_change_date обновляются только при реальном изменении
@@ -690,6 +740,7 @@ class CatalogScanner:
             .filter(
                 Product.product_id.in_(product_ids),
                 Product.store_code == self.store_code,
+                Product.store_type_code == self.store_type_code,
             )
             .all()
         }
@@ -708,6 +759,7 @@ class CatalogScanner:
                 .filter(
                     PriceHistory.product_id.in_(product_ids),
                     PriceHistory.store_code == self.store_code,
+                    PriceHistory.store_type_code == self.store_type_code,
                     PriceHistory.scan_date < today,
                 )
                 .all()
@@ -817,6 +869,7 @@ class CatalogScanner:
                     "sku": product_data.get("sku"),
                     "category_id": db_category_id,
                     "store_code": self.store_code,
+                    "store_type_code": self.store_type_code,
                     "price": current_price,
                     "currency": "₽",
                     "unit": product_data.get("unit", "шт"),
@@ -885,12 +938,14 @@ class CatalogScanner:
             return
 
         product_ids = [p["product_id"] for p in products_data]
+        # Записи этого магазина (код и тип) за день — по product_id
         existing_rows = {
-            (r.product_id, r.store_code): r
+            r.product_id: r
             for r in self.db.query(PriceHistory)
             .filter(
                 PriceHistory.product_id.in_(product_ids),
                 PriceHistory.store_code == self.store_code,
+                PriceHistory.store_type_code == self.store_type_code,
                 PriceHistory.scan_date == scan_date,
             )
             .all()
@@ -900,10 +955,9 @@ class CatalogScanner:
         to_update = []
         for p in products_data:
             pid = p["product_id"]
-            key = (pid, self.store_code)
-            if key in existing_rows:
+            if pid in existing_rows:
                 to_update.append({
-                    "id": existing_rows[key].id,
+                    "id": existing_rows[pid].id,
                     "price": p["price"],
                     "quantity": p.get("quantity"),
                     "in_stock": p.get("in_stock"),
@@ -912,6 +966,7 @@ class CatalogScanner:
                 to_insert.append({
                     "product_id": pid,
                     "store_code": self.store_code,
+                    "store_type_code": self.store_type_code,
                     "price": p["price"],
                     "quantity": p.get("quantity"),
                     "in_stock": p.get("in_stock"),
@@ -940,6 +995,7 @@ class CatalogScanner:
         deleted = self.db.query(Product).filter(
             Product.last_seen < cutoff_date,
             Product.store_code == self.store_code,
+            Product.store_type_code == self.store_type_code,
         ).delete(synchronize_session=False)
 
         if deleted > 0:
