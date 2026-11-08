@@ -9,7 +9,6 @@
 | `catalog_updater.py` | SQLAlchemy | `Category` (upsert по `magnit_id`, `is_tracked` сохраняется) | через `MagnitAPIClient` | нет, sync |
 | `product_query.py` | SQLAlchemy | `Product` (чтение) | нет | нет, sync |
 | `jobs.py` | SQLAlchemy | `ScanJob` | нет | нет, sync |
-| `category_verifier.py` | Playwright | нет (JSON-файл) | magnit.ru (браузер) | нет, sync |
 | `load_catalog_from_json.py` | SQLAlchemy | `Category` | нет (чтение JSON) | нет, sync |
 | `product_opener.py` | Playwright | нет | magnit.ru (видимый браузер) | нет, sync (вызывается из потока) |
 
@@ -168,31 +167,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ---
 
-## 4. `category_verifier.py` — верификация категорий через Playwright
-
-Класс `CategoryVerifier` (`category_verifier.py`). Проверка и актуализация названий корневых категорий в `categories.json` через **Playwright**. Браузер открывает magnit.ru, кликает по каталогу, перехватывает API-ответы и сравнивает названия.
-
-**Константы:**
-- `CATEGORIES_FILE` = `src/data/categories.json` (`category_verifier.py`).
-- `MAGNIT_URL` = `https://magnit.ru/` (`category_verifier.py`).
-- `API_ENDPOINT` = glob `**/webgate/v2/goods/search` (`category_verifier.py`).
-
-**Конструктор:** `__init__(headless=True)` (`category_verifier.py`).
-
-**Методы:**
-- `load_categories()` / `save_categories(data)` (`category_verifier.py` / ).
-- **`handle_response(response)`** (`category_verifier.py`) — callback на `page.on("response")`. Если URL содержит `API_ENDPOINT`, метод POST и в `post_data_json` есть `categories`, берёт `category_id = post_data["categories"][0]`, парсит тело и сохраняет `{api_id, api_title, subcategories: [{id, title}]}`. Ошибки глушатся `except: pass`.
-- **`verify_and_update()`** (`category_verifier.py`) — основной метод:
-  - `sync_playwright()`, Chromium, контекст с viewport 1920×1080, locale `ru-RU`.
-  - `page.goto(MAGNIT_URL, domcontentloaded, timeout=60000)`, `sleep(3)`.
-  - Кликает «Каталог», для каждой корневой категории: ищет `text={cat_title}`, кликает → «Все товары этой категории» → сравнивает `api_title` с `cat_title`. При расхождении обновляет JSON. Кликает «Назад».
-  - Возвращает `{total, checked, updated}`.
-
-> Дублируется standalone-скриптом `src/scripts/verify_categories.py` (аналогичная логика, но с интерактивным `input()` для подтверждения записи).
-
----
-
-## 5. `load_catalog_from_json.py` — загрузка корневых категорий из JSON
+## 4. `load_catalog_from_json.py` — загрузка корневых категорий из JSON
 
 Функция `load_catalog_from_json(db: Session = None) -> dict`. Загружает **корневые категории** из `src/data/categories.json` — плоского массива `[{"id": <magnit_id>, "title": <название>}]` — в таблицу `Category`. Подкатегорий в файле нет: их добавляет синхронизация с API (`CatalogScanner.scan_categories`). Используется `POST /api/categories/load-from-json`.
 
@@ -207,7 +182,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ---
 
-## 5a. `product_query.py` — выборка товаров для API
+## 4a. `product_query.py` — выборка товаров для API
 
 Единый слой выборки товаров; роуты `GET /api/products` и `GET /api/products/stats` только разбирают параметры и вызывают его.
 
@@ -218,7 +193,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ---
 
-## 6. `product_opener.py` — открытие товара в браузере
+## 5. `product_opener.py` — открытие товара в браузере
 
 Функция `open_product_with_store(product_url, store_code, store_type)` (`product_opener.py`). Открывает страницу товара на magnit.ru в **видимом Chromium через Playwright** с попыткой автоматического выбора магазина.
 
@@ -254,10 +229,10 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 ### Проверка отмены и статусы заданий
 `CatalogScanner._is_cancelled()` — чтение колонки `ScanJob.status` перед каждой категорией и каждым запросом страницы. Задание помечается `cancelled` через `POST /api/jobs/{id}/cancel` (`routes/jobs.py`). Итоговый статус фоновых заданий пишет `services/jobs.py:finalize_job`: он перечитывает задание и **не затирает `cancelled`**. `mark_unfinished_jobs_failed()` при старте сервера переводит оставшиеся `pending`/`running` в `failed`.
 
-### Playwright-модули (2)
+### Playwright
 | Модуль | Назначение | headless |
 |--------|-----------|----------|
-| `category_verifier.py` | Верификация названий категорий через перехват API | configurable |
-| `product_opener.py` | Открытие товара пользователю в видимом браузере | **False** (видимое окно) |
+| `services/product_opener.py` | Открытие товара пользователю в видимом браузере | **False** (видимое окно) |
+| `scripts/verify_categories.py` | Standalone-скрипт: сверка названий корневых категорий в `categories.json` через перехват API, запись после подтверждения (`input()`) | **False** |
 
 Перед использованием Playwright: `playwright install chromium`.

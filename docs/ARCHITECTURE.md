@@ -52,7 +52,6 @@ magnit_goods/
 │       │   ├── product_query.py       # Выборка товаров для API: фильтры, поиск, сортировка, статистика
 │       │   ├── jobs.py                # finalize_job, mark_unfinished_jobs_failed — статусы заданий
 │       │   ├── catalog_updater.py     # CatalogUpdater — полная замена каталога (upsert по magnit_id: id и is_tracked сохраняются)
-│       │   ├── category_verifier.py   # CategoryVerifier — верификация через Playwright
 │       │   ├── load_catalog_from_json.py  # Загрузка корневых категорий из categories.json
 │       │   └── product_opener.py      # open_product_with_store — Playwright (видимый браузер)
 │       ├── utils/

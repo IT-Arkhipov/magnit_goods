@@ -48,7 +48,6 @@ src/server/
 │   ├── catalog_updater.py       # CatalogUpdater — полная замена каталога (upsert по magnit_id)
 │   ├── product_query.py         # выборка товаров для API: фильтры, поиск, сортировка, статистика
 │   ├── jobs.py                  # finalize_job, mark_unfinished_jobs_failed — статусы заданий
-│   ├── category_verifier.py     # CategoryVerifier — верификация через Playwright
 │   ├── load_catalog_from_json.py # Загрузка корневых категорий из categories.json
 │   └── product_opener.py        # open_product_with_store — Playwright (видимый браузер)
 ├── utils/

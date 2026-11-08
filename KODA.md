@@ -52,8 +52,7 @@ src/server/
 ├── scheduler.py         # APScheduler: update_prices (8:00), scan_catalog (вс 6:00)
 ├── routes/              # stores.py, jobs.py, catalog.py, prices.py
 ├── services/            # magnit_api, catalog_scanner, catalog_updater,
-│                        # category_verifier, product_opener,
-│                        # load_catalog_from_json
+│                        # product_opener, load_catalog_from_json
 ├── utils/city_extractor.py
 └── templates/           # Jinja2
 ```
