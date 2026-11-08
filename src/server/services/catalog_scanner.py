@@ -154,10 +154,12 @@ class CatalogScanner:
         Логика:
         1. Получает все корневые категории из БД (независимо от is_tracked —
            в UI отмечаются только подкатегории, корни никогда не «отслеживаются»)
-        2. Для каждой корневой категории вызывает API с её magnit_id
-        3. Получает category.title + fastCategoriesExtended (подкатегории)
-        4. Обновляет название корневой категории
-        5. Добавляет/обновляет/удаляет подкатегории (полная синхронизация)
+        2. Для каждой корневой категории запрашивает в API category.title и
+           fastCategoriesExtended (подкатегории); корни, по которым API не
+           ответил, пропускаются — их подкатегории не трогаются
+        3. Применяет изменения одной транзакцией: обновляет названия корней,
+           добавляет/обновляет/удаляет подкатегории (полная синхронизация).
+           При ошибке — rollback, частичных изменений в БД не остаётся
 
         Returns:
             {"scanned": N, "added": N, "updated": N, "deleted": N}
@@ -186,24 +188,42 @@ class CatalogScanner:
                 f"Найдено {len(root_categories)} корневых категорий, обновление..."
             )
 
+        # Фаза 1: запросы к API. БД не меняется, поэтому коммиты прогресса
+        # (_flush_progress) не захватывают незавершённую синхронизацию.
+        fetched: list[tuple[Category, dict]] = []
+        total_roots = len(root_categories)
+        for i, root_cat in enumerate(root_categories, start=1):
+            try:
+                api_data = self._fetch_category_data(root_cat.magnit_id)
+            except Exception as e:
+                logger.error(f"Ошибка получения категории {root_cat.name} из API: {e}")
+                continue
+
+            if not api_data or "category" not in api_data:
+                logger.warning(f"Нет данных для категории {root_cat.name}")
+                continue
+
+            fetched.append((root_cat, api_data))
+            if self.job_id:
+                self._update_job_progress(
+                    f"Получено из API: {root_cat.name} ({i}/{total_roots})"
+                )
+
+        # Фаза 2: применение изменений одной транзакцией
         added = 0
         updated = 0
         deleted = 0
-        total_processed = 0
 
-        for i, root_cat in enumerate(root_categories):
-            if not root_cat.magnit_id:
-                logger.debug(f"DEBUG: Пропуск корневой категории без magnit_id: {root_cat.name}")
-                continue
+        root_ids = [root_cat.id for root_cat, _ in fetched]
+        children_by_root: dict[int, dict] = {root_id: {} for root_id in root_ids}
+        if root_ids:
+            for child in (
+                self.db.query(Category).filter(Category.parent_id.in_(root_ids)).all()
+            ):
+                children_by_root[child.parent_id][child.magnit_id] = child
 
-            try:
-                # Получаем подкатегории из API
-                api_data = self._fetch_category_data(root_cat.magnit_id)
-
-                if not api_data or "category" not in api_data:
-                    logger.warning(f"WARN: Нет данных для категории {root_cat.name}")
-                    continue
-
+        try:
+            for root_cat, api_data in fetched:
                 cat_info = api_data["category"]
                 subcats_from_api = api_data.get("fastCategoriesExtended", [])
 
@@ -212,19 +232,13 @@ class CatalogScanner:
                     root_cat.name = cat_info["title"]
                     updated += 1
 
-                # Получаем текущие подкатегории из БД
-                current_children = (
-                    self.db.query(Category)
-                    .filter(Category.parent_id == root_cat.id)
-                    .all()
-                )
-                current_ids = {child.magnit_id: child for child in current_children}
+                current_ids = children_by_root[root_cat.id]
                 api_ids = {sub["id"] for sub in subcats_from_api}
 
                 # Удаляем подкатегории, которых нет в API
                 for magnit_id, child in current_ids.items():
                     if magnit_id not in api_ids:
-                        logger.debug(f"DEBUG: Удалена подкатегория: {child.name} (magnit_id={magnit_id})")
+                        logger.debug(f"Удалена подкатегория: {child.name} (magnit_id={magnit_id})")
                         self.db.delete(child)
                         deleted += 1
 
@@ -234,33 +248,29 @@ class CatalogScanner:
                     sub_name = sub["title"]
 
                     if sub_id in current_ids:
-                        # Обновляем существующую подкатегорию
                         child = current_ids[sub_id]
                         if child.name != sub_name:
                             child.name = sub_name
                             updated += 1
                     else:
-                        # Добавляем новую подкатегорию
-                        new_child = Category(
-                            name=sub_name,
-                            url="",
-                            magnit_id=sub_id,
-                            parent_id=root_cat.id,
+                        self.db.add(
+                            Category(
+                                name=sub_name,
+                                url="",
+                                magnit_id=sub_id,
+                                parent_id=root_cat.id,
+                            )
                         )
-                        self.db.add(new_child)
                         added += 1
-                        logger.debug(f"DEBUG: Добавлена подкатегория: {sub_name} (magnit_id={sub_id})")
+                        logger.debug(f"Добавлена подкатегория: {sub_name} (magnit_id={sub_id})")
 
-                self.db.commit()
-                total_processed += 1
+            self.db.commit()
+        except Exception:
+            self.db.rollback()
+            logger.exception("Ошибка синхронизации подкатегорий — изменения отменены")
+            raise
 
-                if self.job_id:
-                    self._update_job_progress(
-                        f"Обновлено {root_cat.name}: +{added} ~{updated} -{deleted}",
-                    )
-
-            except Exception as e:
-                logger.error(f"ERROR: Ошибка обновления категории {root_cat.name}: {e}")
+        total_processed = len(fetched)
 
         result = {
             "scanned": total_processed,

@@ -16,7 +16,7 @@
 - Линтер: **ruff** (в проекте есть `.ruff_cache/`). Запускайте `ruff check` перед коммитом.
 - НЕ добавляйте комментарии, если явно не просят.
 - Импорты: сторонние библиотеки → локальные модули (`from src.server...`).
-- Логирование: используется `logging` (`logging.getLogger(__name__)`). `print()` остался только в Playwright-модулях (`store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py`).
+- Логирование: используется `logging` (`logging.getLogger(__name__)`), `print()` в `src/` не используется. Standalone-скрипты настраивают вывод сами (`logging.basicConfig` в `if __name__ == "__main__"`, см. `scripts/verify_categories.py`).
 - **Поведение и документация меняются в одном изменении.** Изменили эндпоинт, миграцию, правило сканирования — поправьте `AGENTS.md` и затронутые файлы `docs/` сразу. Ссылайтесь на код как `файл:функция`, не по номерам строк (они устаревают).
 
 ### Структура
@@ -131,14 +131,7 @@ Engine создаётся с `connect_args={"check_same_thread": False, "timeout
 
 ### Замечания из code review
 
-Нерешённое:
-
-| # | Проблема | Файл | Приоритет |
-|---|---------|------|-----------|
-| 1 | `commit()` внутри циклов обновления подкатегорий | `catalog_scanner.py` (`scan_categories`) | 🟡 |
-| 2 | `print()` вместо `logging` в Playwright-модулях | `store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py` | 🟡 |
-
-Остальные пункты ревью (N+1 в дереве категорий, 4 COUNT в статистике товаров и др.) закрыты: дерево собирается одним SELECT, статистика — одним запросом с `CASE`.
+Нерешённых пунктов нет. Закрыты: N+1 в дереве категорий (один SELECT), 4 COUNT в статистике товаров (один запрос с `CASE`), `commit()` в цикле `scan_categories` (запросы к API отделены от записи, одна транзакция с `rollback()` при ошибке), `print()` в Playwright-модулях (заменён на `logging`).
 
 ---
 

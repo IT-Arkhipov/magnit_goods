@@ -228,7 +228,6 @@ CORS_ORIGINS=   # разрешённые origins (CSV), по умолчанию 
 
 См. `docs/DEVELOPMENT.md` → "Технический долг":
 - Ключ товара `(product_id, store_code)` не включает тип магазина (техдолг №1)
-- `print` остался только в Playwright-модулях (`store_selector.py`, `category_verifier.py`, `scripts/verify_categories.py`)
 - Остальное — см. `docs/DEVELOPMENT.md` (раздел «Замечания из code review»)
 
 ---

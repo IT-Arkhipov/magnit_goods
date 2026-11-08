@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 from playwright.sync_api import sync_playwright, Page, Response
 from pathlib import Path
@@ -7,6 +8,8 @@ from typing import Optional
 CATEGORIES_FILE = Path(__file__).parent.parent.parent / "data" / "categories.json"
 MAGNIT_URL = "https://magnit.ru/"
 API_ENDPOINT = "**/webgate/v2/goods/search"
+
+logger = logging.getLogger(__name__)
 
 
 class CategoryVerifier:
@@ -47,7 +50,7 @@ class CategoryVerifier:
         categories_data = self.load_categories()
         root_categories = categories_data.get("root_categories", [])
 
-        print(f"Загружено {len(root_categories)} корневых категорий")
+        logger.info(f"Загружено {len(root_categories)} корневых категорий")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False)
@@ -58,11 +61,11 @@ class CategoryVerifier:
             self.page = context.new_page()
             self.page.on("response", self.handle_response)
 
-            print("Открываем magnit.ru...")
+            logger.info("Открываем magnit.ru...")
             self.page.goto(MAGNIT_URL, wait_until="networkidle")
             time.sleep(2)
 
-            print("Кликаем по кнопке Каталог...")
+            logger.info("Кликаем по кнопке Каталог...")
             catalog_button = self.page.locator('button:has-text("Каталог")').first
             if catalog_button.count() == 0:
                 catalog_button = self.page.locator('[class*="catalog"]').first
@@ -75,7 +78,7 @@ class CategoryVerifier:
             for idx, category in enumerate(root_categories):
                 cat_id = category["id"]
                 cat_title = category["title"]
-                print(
+                logger.info(
                     f"\n[{idx + 1}/{len(root_categories)}] Проверяем категорию: {cat_title} (ID: {cat_id})"
                 )
 
@@ -98,31 +101,31 @@ class CategoryVerifier:
                                 api_title = captured["api_title"]
 
                                 if api_id != cat_id:
-                                    print(
+                                    logger.warning(
                                         f"  ⚠️ ID не совпадает: файл={cat_id}, API={api_id}"
                                     )
                                 else:
-                                    print(f"  ✓ ID совпадает: {api_id}")
+                                    logger.info(f"  ✓ ID совпадает: {api_id}")
 
                                 if api_title != cat_title:
-                                    print(
+                                    logger.warning(
                                         f"  ⚠️ Название не совпадает: файл={cat_title}, API={api_title}"
                                     )
                                     category["title"] = api_title
                                 else:
-                                    print(f"  ✓ Название совпадает: {api_title}")
+                                    logger.info(f"  ✓ Название совпадает: {api_title}")
 
-                                print(
+                                logger.info(
                                     f"  Подкатегории ({len(captured['subcategories'])}):"
                                 )
                                 for sub in captured["subcategories"]:
-                                    print(f"    - {sub['title']} (ID: {sub['id']})")
+                                    logger.info(f"    - {sub['title']} (ID: {sub['id']})")
                             else:
-                                print("  ⚠️ API запрос не перехвачен")
+                                logger.warning("  ⚠️ API запрос не перехвачен")
                         else:
-                            print("  ⚠️ Не найдена ссылка 'Все товары этой категории'")
+                            logger.warning("  ⚠️ Не найдена ссылка 'Все товары этой категории'")
                     else:
-                        print(f"  ⚠️ Категория '{cat_title}' не найдена в сайдбаре")
+                        logger.warning(f"  ⚠️ Категория '{cat_title}' не найдена в сайдбаре")
 
                     back_button = self.page.locator('button:has-text("Назад")').first
                     if back_button.count() == 0:
@@ -132,7 +135,7 @@ class CategoryVerifier:
                         time.sleep(1)
 
                 except Exception as e:
-                    print(f"  ❌ Ошибка: {e}")
+                    logger.error(f"  ❌ Ошибка: {e}")
 
             browser.close()
 
@@ -144,7 +147,7 @@ class CategoryVerifier:
         ]
 
         if mismatches:
-            print(f"\n📝 Найдено {len(mismatches)} несоответствий в названиях")
+            logger.info(f"\n📝 Найдено {len(mismatches)} несоответствий в названиях")
             update = input("Обновить categories.json? (y/n): ").lower().strip()
             if update == "y":
                 for cat in root_categories:
@@ -153,11 +156,12 @@ class CategoryVerifier:
 
                 categories_data["timestamp"] = time.strftime("%Y-%m-%d")
                 self.save_categories(categories_data)
-                print("✅ Файл обновлен")
+                logger.info("✅ Файл обновлен")
         else:
-            print("\n✅ Все категории актуальны")
+            logger.info("\n✅ Все категории актуальны")
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     verifier = CategoryVerifier()
     verifier.run()

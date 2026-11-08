@@ -3,10 +3,13 @@
 """
 
 import json
+import logging
 import time
 from pathlib import Path
 from typing import Optional, Dict
 from playwright.sync_api import sync_playwright, Page, Response
+
+logger = logging.getLogger(__name__)
 
 CATEGORIES_FILE = Path(__file__).parent.parent.parent / "data" / "categories.json"
 MAGNIT_URL = "https://magnit.ru/"
@@ -51,7 +54,7 @@ class CategoryVerifier:
     def verify_and_update(self) -> dict:
         categories_data = self.load_categories()
         root_categories = categories_data.get("root_categories", [])
-        print(f"Загружено {len(root_categories)} корневых категорий")
+        logger.info(f"Загружено {len(root_categories)} корневых категорий")
 
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=self.headless)
@@ -62,11 +65,11 @@ class CategoryVerifier:
             self.page = context.new_page()
             self.page.on("response", self.handle_response)
 
-            print("Opening magnit.ru...")
+            logger.info("Открываем magnit.ru...")
             self.page.goto(MAGNIT_URL, wait_until="domcontentloaded", timeout=60000)
             time.sleep(3)
 
-            print("Кликаем Каталог...")
+            logger.info("Кликаем Каталог...")
             catalog_button = self.page.locator('button:has-text("Каталог")').first
             catalog_button.click()
             time.sleep(2)
@@ -74,9 +77,7 @@ class CategoryVerifier:
             for idx, category in enumerate(root_categories):
                 cat_id = category["id"]
                 cat_title = category["title"]
-                print(
-                    f"\n[{idx + 1}/{len(root_categories)}] {cat_title} (ID: {cat_id})"
-                )
+                logger.info(f"[{idx + 1}/{len(root_categories)}] {cat_title} (ID: {cat_id})")
 
                 try:
                     el = self.page.locator(f"text={cat_title}").first
@@ -94,22 +95,24 @@ class CategoryVerifier:
                             if cat_id in self.captured_data:
                                 cap = self.captured_data[cat_id]
                                 if cap["api_title"] != cat_title:
-                                    print(f"  ⚠️ '{cat_title}' → '{cap['api_title']}'")
+                                    logger.warning(
+                                        f"Название изменилось: '{cat_title}' → '{cap['api_title']}'"
+                                    )
                                     category["title"] = cap["api_title"]
                                 else:
-                                    print("  ✓ OK")
-                                print(f"  Подкатегории: {len(cap['subcategories'])}")
+                                    logger.info("  Название совпадает")
+                                logger.info(f"  Подкатегории: {len(cap['subcategories'])}")
                             else:
-                                print("  ⚠️ API не перехвачен")
+                                logger.warning(f"API-запрос не перехвачен: {cat_title}")
 
                         back = self.page.locator('button:has-text("Назад")').first
                         if back.count() > 0:
                             back.click()
                             time.sleep(1)
                     else:
-                        print("  ⚠️ Не найдена")
+                        logger.warning(f"Категория не найдена на странице: {cat_title}")
                 except Exception as e:
-                    print(f"  ❌ {e}")
+                    logger.error(f"Ошибка проверки категории {cat_title}: {e}")
 
             browser.close()
 
@@ -122,9 +125,9 @@ class CategoryVerifier:
         if mismatches:
             categories_data["timestamp"] = time.strftime("%Y-%m-%d")
             self.save_categories(categories_data)
-            print(f"\n✅ Обновлено {len(mismatches)} категорий")
+            logger.info(f"Обновлено {len(mismatches)} категорий")
         else:
-            print("\n✅ Все актуальны")
+            logger.info("Все категории актуальны")
 
         return {
             "total": len(root_categories),

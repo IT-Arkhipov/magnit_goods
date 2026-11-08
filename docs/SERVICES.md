@@ -90,10 +90,8 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 ### `scan_categories()`
 → `{scanned, added, updated, deleted}`
 - Получает **все корневые категории с `magnit_id`** (`parent_id IS NULL AND magnit_id IS NOT NULL`), независимо от `is_tracked`: в UI отмечаются только подкатегории, корни никогда не «отслеживаются». `is_tracked` существующих подкатегорий не меняется.
-- Для каждой вызывает `_fetch_category_data(magnit_id)` → `MagnitAPIClient.fetch_category_raw` (с rate limiting).
-- Обновляет название корневой категории из `category.title`.
-- **Полная синхронизация подкатегорий:** удаляет из БД те, которых нет в API; обновляет существующие (по `magnit_id`); добавляет новые с `parent_id=root_cat.id`.
-- Коммитит после каждой корневой категории.
+- **Фаза 1 — запросы к API:** для каждого корня `_fetch_category_data(magnit_id)` → `MagnitAPIClient.fetch_category_raw` (с rate limiting). БД в этой фазе не меняется. Корень, по которому API вернул ошибку или пустой ответ, пропускается: его подкатегории остаются как есть.
+- **Фаза 2 — одна транзакция:** подкатегории всех полученных корней читаются одним SELECT; обновляется название корня из `category.title`; **полная синхронизация подкатегорий** — удаляются те, которых нет в API, обновляются существующие (по `magnit_id`), добавляются новые с `parent_id=root_cat.id`. Один `commit()` в конце; при ошибке — `rollback()` и исключение (задание планировщика → `failed`, `POST /api/categories/update-catalog` → 500), частичных изменений не остаётся.
 
 ### `scan_products(category_ids=None, tracked_only=False, on_category_start=None)`
 → `{scanned, added, updated, price_changes, deleted, history_deleted, marked_missing}`; при отмене — нулевая статистика с `"cancelled": True`.
