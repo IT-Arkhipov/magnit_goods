@@ -322,7 +322,9 @@
                 return;
             }
             try {
-                const res = await fetch('/api/jobs/active?job_type=prices');
+                // Любые активные задания: из UI цены обновляет scan_all_stores,
+                // задания prices создаёт только планировщик
+                const res = await fetch('/api/jobs/active');
                 let jobs = [];
                 if (res.ok) {
                     jobs = await res.json();
