@@ -309,8 +309,7 @@ price=120, previous_price=120, price_change_percent=-20 (не обновлено
 | 14 | `add_store_code_type_unique` | `migrate_add_store_code_type_unique` | Удалить дубликаты магазинов по паре (`store_code`, `store_type`) и создать уникальный индекс `uq_store_code_type` |
 | 15 | `add_product_name_search` | `migrate_add_product_name_search` | Добавить `products.name_search` и заполнить `name.casefold()` для существующих товаров (батчами по 1000) |
 | 16 | `add_product_store_type` | `migrate_add_product_store_type` | Тип магазина в ключе товаров и истории: `products.store_type_code` (`ADD COLUMN` + заполнение), пересборка `price_history`, удаление `uq_product_store`/`uq_product_store_category`, приведение индексов обеих таблиц к модели (`_sync_table_indexes`). Одна транзакция (см. ниже) |
-| 17 | `fix_store_shop_type` | `migrate_fix_store_shop_type` | Пересчитать `stores.shop_type` по `store_type` (в старых БД бывал испорчен: у «Моя цена» — 3 вместо 9) |
-
+\1| 18 | `cleanup_orphan_store_products` | `migrate_cleanup_orphan_store_products` | Удалить товары и историю цен магазинов, которых нет в `stores` (раньше удаление магазина их не трогало; теперь их удаляет `catalog_scanner.py:delete_store_products`). Если магазинов нет совсем — ничего не удаляется |\n
 > **Порядок** вызова в `init_db()` — по номерам. Миграции 1 и 11 связаны: миграция 1 больше не удаляет `price_history`, миграция 11 создаёт её и заполняет, если пуста. Миграции 11 и 12 заполняют `store_type_code`, если `price_history` уже создана по новой модели (`_history_store_type_fields`).
 
 **Тип существующих записей** (миграции 11, 12, 16): по названию типа (`stores.store_type` → `resolve_store_type_code`), не по `shop_type`. Код без магазина в `stores` получает тип по умолчанию (`DEFAULT_STORE_TYPE`, `'1'`); код с несколькими магазинами — тип самого раннего (`created_at`, затем `rowid`), выбор пишется в лог (`_store_type_code_map`).
@@ -354,7 +353,7 @@ price=120, previous_price=120, price_change_percent=-20 (не обновлено
 | Файл | Назначение |
 |------|-----------|
 | `src/data/magnit.db` | База данных SQLite (в `.gitignore`) |
-| `src/data/categories.json` | Корневые категории: `[{id, title}]` — источник для `load_catalog_from_json.py` и `catalog_updater.py` |
+| `src/data/categories.json` | Корневые категории: `[{id, title}]` — источник корней для полной замены каталога (`catalog_updater.py`) |
 | `src/data/stores.json` | Список магазинов-эталонов: `[{store_code, store_type, city, address, full_address, name}]` |
 
-> `categories.json` — **плоский массив** `[{id, title}]`; `load_catalog_from_json.py` читает именно этот формат (через `catalog_updater.py:load_root_categories`).
+> `categories.json` — **плоский массив** `[{id, title}]`; его читает `catalog_updater.py:load_root_categories`.

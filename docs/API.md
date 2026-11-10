@@ -2,7 +2,7 @@
 
 Полный каталог HTTP-эндпоинтов проекта `magnit_goods`. 
 
-- **37 API-эндпоинтов** в `src/server/routes/` (stores 11, jobs 4, catalog 20, prices 2)
+- **34 API-эндпоинта** в `src/server/routes/` (stores 11, jobs 4, catalog 17, prices 2)
 - **7 роутов** в `main.py` (5 веб-страниц + 2 утилитарных)
 
 Swagger UI: http://localhost:8000/docs
@@ -11,9 +11,9 @@ Swagger UI: http://localhost:8000/docs
 
 - [Магазины (`/api/stores`)](#магазины--apistores) — 11 эндпоинтов
 - [Задания (`/api/jobs`)](#задания--apijobs) — 4 эндпоинта
-- [Каталог (`/api`)](#каталог--api) — 20 эндпоинтов (категории 9, товары 8, сканирование 3)
+- [Каталог (`/api`)](#каталог--api) — 17 эндпоинтов (категории 6, товары 8, сканирование 3)
 - [Цены (`/api/prices`)](#цены--apiprices) — 2 эндпоинта
-- [Роуты `main.py` (7)](#роуты-mainpy-7) — 5 страниц + 2 утилитарных
+- [Роуты `main.py` (5)](#роуты-mainpy-5) — 5 страниц
 - [Порядок регистрации эндпоинтов](#порядок-регистрации-эндпоинтов)
 
 ---
@@ -31,18 +31,18 @@ Swagger UI: http://localhost:8000/docs
 | 3 | GET | `/api/stores/search` | `search_stores` | Поиск по `q` в `city`/`full_address`/`name`. Только `is_active=True`, лимит 20. → `list[StoreResponse]` |
 | 4 | GET | `/api/stores/{store_id}` | `get_store` | Магазин по ID (MD5-хэш). → `StoreResponse` / 404 |
 | 5 | PUT | `/api/stores/{store_id}` | `update_store` | Обновить (`StoreUpdate`, `exclude_unset`). **400**, если меняются `store_type` или `full_address` (из них вычисляется `id`) — удалите магазин и добавьте заново; совпадающие значения допускаются. → `StoreResponse` / 400 / 404 |
-| 6 | DELETE | `/api/stores/{store_id}` | `delete_store` | Удалить. → 204 / 404 |
-| 7 | POST | `/api/stores/select` | `select_store` | Выбрать магазин по адресу/типу → обновить `.env`, окружение процесса и задания планировщика (перезапуск не нужен). Тело `SelectStoreRequest`. → `{store_code, store_type, name, address, city, env_updated, scheduler_updated}` |
+| 6 | DELETE | `/api/stores/{store_id}` | `delete_store` | Удалить вместе с товарами и историей цен магазина (код + тип; `catalog_scanner.py:delete_store_products`). → 204 / 404 |
+| 7 | POST | `/api/stores/select` | `select_store` | Выбрать магазин по адресу/типу → обновить `.env` и окружение процесса (перезапуск не нужен); выбранный магазин — источник каталога категорий. Тело `SelectStoreRequest`. → `{store_code, store_type, name, address, city, env_updated}` |
 | 8 | POST | `/api/stores/preview` | `preview_stores` | Поиск через API Магнита без сохранения. Тело `ScanStoresRequest`; **400**, если в `store_types` есть неподдерживаемый тип (доступны: Магнит, Мини, Семейный, Экстра, Моя цена, М.Косметик). → `{total_found, stores: list[StorePreviewItem]}` |
 | 9 | POST | `/api/stores/add-selected` | `add_selected_stores` | Добавить выбранные из preview; пропускаются только пары (`store_code`, `store_type`), уже существующие в БД (и дубли внутри запроса). Тело `AddSelectedStoresRequest`. → `{added, skipped}` |
-| 10 | POST | `/api/stores/delete-batch` | `delete_stores_batch` | Удалить несколько по ID. Тело `DeleteStoresRequest`. → 204 / 400 |
+| 10 | POST | `/api/stores/delete-batch` | `delete_stores_batch` | Удалить несколько по ID — тоже с товарами и историей цен. Тело `DeleteStoresRequest`. → 204 / 400 |
 | 11 | GET | `/api/stores/by-code/{store_code}` | `get_store_by_code` | Магазин по `store_code` (для автозаполнения). → `StoreResponse` / 404 |
 
 `StoreResponse` содержит вычисляемое поле `store_type_code` — числовой код типа строкой (`resolve_store_type_code(store_type)`), тот же, что в записях товаров магазина.
 
 ### `POST /api/stores/select` — особенности
 - Тело: `SelectStoreRequest { city, street?, store_type, update_env=True }`.
-- При `update_env=True` читает `.env`, обновляет `STORE_CODE` и `STORE_TYPE`, перезаписывает файл (`stores.py:select_store`), обновляет `os.environ` работающего процесса и вызывает `scheduler.py:register_jobs` — задания планировщика перенацеливаются на выбранный магазин (при необходимости планировщик запускается). Результат — поле `scheduler_updated`.
+- При `update_env=True` читает `.env`, обновляет `STORE_CODE` и `STORE_TYPE`, перезаписывает файл (`stores.py:select_store`) и обновляет `os.environ` работающего процесса. Планировщик от выбора не зависит (сканирует все активные магазины); `STORE_CODE` задаёт магазин-источник для полной замены каталога (`catalog_updater.py:_catalog_source_store`).
 - 🔴 **Не редактируйте `.env` вручную** — используйте этот эндпоинт.
 
 ### `POST /api/stores/preview` — особенности
@@ -74,47 +74,41 @@ Swagger UI: http://localhost:8000/docs
 
 Префикс: `/api`, тег «Каталог». Файл: `src/server/routes/catalog.py`.
 
-**Глобальное состояние:**
-- `_catalog_update_status` (`catalog.py`) — `dict` статуса обновления каталога: `{in_progress, total, processed, updated, not_found, errors}`.
-- `_catalog_update_lock` (`catalog.py`) — `threading.Lock` для безопасного доступа к `_catalog_update_status`.
+**Статус полной замены каталога** — в памяти процесса, в `services/catalog_updater.py`: `try_begin_catalog_update()` (проверка и взятие флага под одной блокировкой — две замены одновременно не идут), `run_catalog_update()` (замена через `replace_catalog_from_api()`, флаг снимается в конце), `get_catalog_update_status()`. Тот же флаг использует еженедельное задание планировщика.
 
-**Фоновая функция:** `_fetch_and_update_categories_background()` (`catalog.py`) — полная замена каталога через `replace_catalog_from_api()`. Под блокировкой обновляет `_catalog_update_status`.
+Категории обновляются **только** полной заменой (`fetch-magnit-ids`): эндпоинты `update-catalog`, `scan` и `load-from-json` удалены (BREAKING, UI их не вызывал); корни берутся из `src/data/categories.json`.
 
 ### Категории
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
 | 16 | GET | `/api/categories` | `list_categories` | Список категорий. Query: `tracked`, `parent_id`. Приоритет: `tracked` > `parent_id` > корневые. → `list[dict]` |
-| 17 | POST | `/api/categories/scan` | `scan_categories` | ⚠️ **Устарел (`deprecated`)** — используйте `/api/categories/update-catalog`; результат тот же. Синхронно сканировать подкатегории из API. Query: `store_code` (обязательный), `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated, deleted}` |
-| 18 | POST | `/api/categories/update-catalog` | `update_catalog_from_api` | **Основной** эндпоинт синхронизации подкатегорий всех корневых категорий (общая реализация `_sync_subcategories` с устаревшим `/scan`). Query: `store_code`, `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated, deleted}` |
-| 19 | GET | `/api/categories/tree` | `get_categories_tree` | Дерево категорий с `children`. → `list[dict]` |
-| 20 | POST | `/api/categories/load-from-json` | `load_categories_from_json` | Загрузить из `categories.json`. → `{status, scanned, added, updated}` / 404 |
-| — | — | `build-from-playwright`, `seed-from-playwright` | — | **Удалены (BREAKING)** — были алиасами `load-from-json`, UI их не вызывал. Используйте `POST /api/categories/load-from-json` |
-| 21 | PUT | `/api/categories/{category_id}/track` | `toggle_category_tracking` | Включить/выключить отслеживание. Query: `track=True`. → `{id, name, is_tracked}` / 404 |
-| 22 | POST | `/api/categories/update-tracking` | `update_categories_tracking` | Обновить отслеживание списка. Тело `{category_ids: [int]}`. Сначала сбрасывает ВСЕ, затем включает дочерние. → `{status, tracked_count, updated_ids}` |
-| 23 | POST | `/api/categories/fetch-magnit-ids` | `fetch_magnit_category_ids_endpoint` | ⭐ Запустить полную замену каталога в отдельном потоке. → `{status: "started"}` или `{status: "in_progress", progress}` |
-| 24 | GET | `/api/categories/fetch-magnit-ids/status` | `get_fetch_status` | Статус обновления каталога. → `{in_progress, total, processed, updated, not_found, error_count, errors}` |
+| 17 | GET | `/api/categories/tree` | `get_categories_tree` | Дерево категорий с `children`. → `list[dict]` |
+| 18 | PUT | `/api/categories/{category_id}/track` | `toggle_category_tracking` | Включить/выключить отслеживание. Query: `track=True`. → `{id, name, is_tracked}` / 404 |
+| 19 | POST | `/api/categories/update-tracking` | `update_categories_tracking` | Обновить отслеживание списка. Тело `{category_ids: [int]}`. Сначала сбрасывает ВСЕ, затем включает дочерние. → `{status, tracked_count, updated_ids}` |
+| 20 | POST | `/api/categories/fetch-magnit-ids` | `fetch_magnit_category_ids_endpoint` | ⭐ Запустить полную замену каталога в отдельном потоке. → `{status: "started"}` или `{status: "in_progress", progress}` |
+| 21 | GET | `/api/categories/fetch-magnit-ids/status` | `get_fetch_status` | Статус обновления каталога. → `{in_progress, total, processed, updated, not_found, error_count, errors}` |
 
 ### Товары
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
-| 25 | GET | `/api/products` | `list_products` | Список товаров с фильтрами. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `category_id`, `category_ids` (CSV), `search`, `min_price`, `max_price`, `sort_by` (`name`/`price`/`last_seen`), `limit≤1000`, `offset`, `relax_stale` (окно видимости устаревших товаров до `STALE_DAYS_DELETE`), `include_out_of_stock` (включить отсутствующие). → `list[ProductListItem]` (27 полей, схема в `/docs`) |
-| 26 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `store_codes` (CSV элементов `код` или `код|тип`; объединяется с `store_code`; пусто — по всем магазинам). → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
-| 27 | GET | `/api/products/multi-prices` | `get_multi_store_prices` | ⭐ Цены из нескольких магазинов. Query: `product_ids` (CSV), `store_codes` (CSV элементов `код` или `код|тип`). → `{product_id: {элемент store_codes как в запросе: {price, previous_price, price_change_percent, in_stock, quantity, last_seen, last_change_date, seo_code, shop_type, store_type_code}}}`; `shop_type` — числовой тип **записи товара** (для ссылки `shopType`), не `stores.shop_type`. Длина URL ограничена сервером (~64 КБ, иначе 400 «Invalid HTTP request» без ответа приложения): UI запрашивает пачками по 400 `product_ids` (`base.html:fetchMultiPrices`) |
-| 28 | GET | `/api/products/{product_id}` | `get_product` | Детали товара. Path: `product_id: int`. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `dict` (с `store_type_code`) / 404 |
-| 29 | GET | `/api/products/{product_id}/history` | `get_product_price_history` | История цен по дням. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `days=30` (1..365). → `list[{scan_date, store_code, store_type_code, price, quantity, in_stock}]` |
-| 30 | DELETE | `/api/products/clear` | `clear_all_products` | Удалить все товары. → `{status, message, deleted_count}` |
-| 31 | DELETE | `/api/products/clear-by-categories` | `clear_products_by_categories` | Удалить по категориям. Query: `category_ids` (CSV). → `{status, message, deleted_count}` |
-| 32 | DELETE | `/api/products/clear-by-store` | `clear_products_by_store` | Удалить товары магазина (код и тип; магазин другого типа с тем же кодом не затрагивается). Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `{status, message, deleted_count}` |
+| 22 | GET | `/api/products` | `list_products` | Список товаров с фильтрами. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `category_id`, `category_ids` (CSV), `search`, `min_price`, `max_price`, `sort_by` (`name`/`price`/`last_seen`), `limit≤1000`, `offset`, `relax_stale` (окно видимости устаревших товаров до `STALE_DAYS_DELETE`), `include_out_of_stock` (включить отсутствующие). → `list[ProductListItem]` (27 полей, схема в `/docs`) |
+| 23 | GET | `/api/products/stats` | `get_products_stats` | ⭐ Статистика. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `store_codes` (CSV элементов `код` или `код|тип`; объединяется с `store_code`; пусто — по всем магазинам). → `ProductStats` `{total, in_stock, with_price_decrease, with_price_increase, last_update}` |
+| 24 | GET | `/api/products/multi-prices` | `get_multi_store_prices` | ⭐ Цены из нескольких магазинов. Query: `product_ids` (CSV), `store_codes` (CSV элементов `код` или `код|тип`). → `{product_id: {элемент store_codes как в запросе: {price, previous_price, price_change_percent, last_change_price, in_stock, quantity, last_seen, last_change_date, seo_code, shop_type, store_type_code}}}`; `shop_type` — числовой тип **записи товара** (для ссылки `shopType`), не `stores.shop_type`. Длина URL ограничена сервером (~64 КБ, иначе 400 «Invalid HTTP request» без ответа приложения): UI запрашивает пачками по 400 `product_ids` (`base.html:fetchMultiPrices`) |
+| 25 | GET | `/api/products/{product_id}` | `get_product` | Детали товара. Path: `product_id: int`. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `dict` (с `store_type_code`) / 404 |
+| 26 | GET | `/api/products/{product_id}/history` | `get_product_price_history` | История цен по дням. Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»), `days=30` (1..365). → `list[{scan_date, store_code, store_type_code, price, quantity, in_stock}]` |
+| 27 | DELETE | `/api/products/clear` | `clear_all_products` | Удалить все товары. → `{status, message, deleted_count}` |
+| 28 | DELETE | `/api/products/clear-by-categories` | `clear_products_by_categories` | Удалить по категориям. Query: `category_ids` (CSV). → `{status, message, deleted_count}` |
+| 29 | DELETE | `/api/products/clear-by-store` | `clear_products_by_store` | Удалить товары магазина (код и тип; магазин другого типа с тем же кодом не затрагивается). Query: `store_code`, `store_type` (необязательный, см. «Магазин в запросах товаров»). → `{status, message, deleted_count}` |
 
 ### Сканирование
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
-| 33 | POST | `/api/catalog/scan` | `scan_products` | Синхронно сканировать товары. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
-| 34 | POST | `/api/catalog/scan-all-stores` | `scan_all_stores` | ⭐ Фоновое сканирование всех активных магазинов (каждый — со своим `store_type`; один вызов сканера на магазин). Отслеживаемые категории — только подкатегории; **400**, если их нет. Query: `tracked_only=True`. → `{job_id, status, stores_count}` |
-| 35 | POST | `/api/catalog/scan-prices` | `scan_prices_in_store` | Обновить цены в магазине. Query: `store_code`, `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
+| 30 | POST | `/api/catalog/scan` | `scan_products` | Синхронно сканировать товары. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
+| 31 | POST | `/api/catalog/scan-all-stores` | `scan_all_stores` | ⭐ Фоновое сканирование всех активных магазинов (каждый — со своим `store_type`; один вызов сканера на магазин). Отслеживаемые категории — только подкатегории; **400**, если их нет. Query: `tracked_only=True`. → `{job_id, status, stores_count}` |
+| 32 | POST | `/api/catalog/scan-prices` | `scan_prices_in_store` | Обновить цены в магазине. Query: `store_code`, `store_type` (необязательный). `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{status, scanned, added, updated}` |
 
 ### Магазин в запросах товаров (`store_type`, `store_codes`)
 
@@ -123,7 +117,7 @@ Swagger UI: http://localhost:8000/docs
 1. передан `store_type` (API-код `MM`, русское название `Экстра` или число `6`) — его код; нераспознанное значение → **400** `store_type: Неизвестный тип магазина: '…'`;
 2. иначе — тип единственного магазина с этим кодом в БД;
 3. у кода в БД несколько типов — **400** «… укажите store_type» (данные двух магазинов не смешиваются);
-4. магазина с кодом в БД нет (товары удалённого магазина) — без фильтра по типу, все записи кода.
+4. магазина с кодом в БД нет — без фильтра по типу, все записи кода (товары удалённого магазина удаляются вместе с ним, так что обычно это пустой результат).
 
 Элемент `store_codes` (`/stats`, `/multi-prices`) — `код` или `код|тип`; элемент без типа разрешается по тем же правилам. Пока коды магазинов уникальны, запросы с одним кодом работают как раньше.
 
@@ -143,10 +137,9 @@ Swagger UI: http://localhost:8000/docs
 ### `POST /api/catalog/scan-all-stores` — особенности ⭐
 - Использует `BackgroundTasks` (FastAPI).
 - 400 если нет активных магазинов или отслеживаемых подкатегорий (набор — `catalog_scanner.py:get_tracked_category_magnit_ids`).
-- Создаёт `ScanJob` (job_type=`scan_all_stores`, store_code=`"{N} stores"`).
-- Вложенная `run_scan_all` создаёт отдельную `SessionLocal`. Для каждого магазина — **один** вызов `CatalogScanner.scan_products` со всеми категориями (со своим `store_type` магазина), поэтому очистка устаревших товаров, истории цен и пометка отсутствующих выполняются один раз на магазин. Детальный прогресс (`current_store_*`, `current_category_*`) пишет колбэк `on_category_start`; `progress` = позиция в (магазины × категории): `(индекс_магазина × категорий + номер_категории − 1) / (магазинов × категорий) × 100`.
+- Создаёт `ScanJob` (job_type=`scan_all_stores`, store_code=`"{N} stores"`) — `services/store_scan.py:create_scan_all_stores_job`; та же реализация у ежедневного задания планировщика.
+- `store_scan.py:run_scan_all_stores` создаёт отдельную `SessionLocal`, магазины и категории читает в момент запуска. Для каждого магазина — **один** вызов `CatalogScanner.scan_products` со всеми категориями (со своим `store_type` магазина), поэтому очистка устаревших товаров, истории цен и пометка отсутствующих выполняются один раз на магазин. Детальный прогресс (`current_store_*`, `current_category_*`) пишет колбэк `on_category_start`; `progress` = позиция в (магазины × категории): `(индекс_магазина × категорий + номер_категории − 1) / (магазинов × категорий) × 100`.
 - Отмена: проверка статуса между магазинами и в сканере перед каждым запросом страницы; итог пишет `finalize_job` (отмена не затирается).
-- Если `background_tasks` не передан — выполняет синхронно.
 
 ### `GET /api/products` — особенности
 - `response_model=list[ProductListItem]` (`schemas.py`): набор и имена полей зафиксированы схемой и не меняются без согласования с UI. Выборка — `services/product_query.py` (`build_product_query` → фильтры, окно видимости, наличие, поиск → сортировка/пагинация); роут только разбирает параметры. Поиск по `search` — один SQL-запрос `LIKE` по `Product.name_search` (`name.casefold()`; заполняется сканером и миграцией `add_product_name_search`), т.к. SQLite `LOWER()` не работает с кириллицей; `%`, `_` и `\` в запросе — обычные символы.
@@ -161,8 +154,8 @@ Swagger UI: http://localhost:8000/docs
 
 | # | Метод | Путь | Обработчик | Назначение |
 |---|-------|------|-----------|-----------|
-| 36 | GET | `/api/prices/decreased` | `get_decreased_prices` | Товары со сниженными ценами. Query: `store_code` (обязательный), `store_type` (необязательный, см. «Магазин в запросах товаров»), `min_discount_percent=10.0`, `limit≤500`. → `list[DecreasedPriceItem]` |
-| 37 | POST | `/api/prices/update` | `update_prices` | ⭐ Фоновое обновление цен. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{job_id, status}` |
+| 33 | GET | `/api/prices/decreased` | `get_decreased_prices` | Товары со сниженными ценами. Query: `store_code` (обязательный), `store_type` (необязательный, см. «Магазин в запросах товаров»), `min_discount_percent=10.0`, `limit≤500`. → `list[DecreasedPriceItem]` |
+| 34 | POST | `/api/prices/update` | `update_prices` | ⭐ Фоновое обновление цен. Query: `store_code` (обязательный), `store_type` (необязательный), `category_ids` (CSV), `tracked_only=True`. `store_type` нужен, если у кода магазина в БД несколько типов (иначе **400**). → `{job_id, status}` |
 
 ### `POST /api/prices/update` — особенности ⭐
 - Использует `BackgroundTasks` (FastAPI).
@@ -173,7 +166,7 @@ Swagger UI: http://localhost:8000/docs
 
 ---
 
-## Роуты `main.py` (7)
+## Роуты `main.py` (5)
 
 Файл: `src/server/main.py`. Определены напрямую на `app` (не через `include_router`).
 
@@ -187,12 +180,7 @@ Swagger UI: http://localhost:8000/docs
 | GET | `/jobs` | `page_jobs` | Страница фоновых заданий |
 | GET | `/shopping-list` | `page_shopping_list` | Страница списка покупок |
 
-### Утилитарные (2)
-
-| Метод | Путь | Обработчик | Назначение |
-|-------|------|-----------|-----------|
-| GET | `/redirect-to-product` | `redirect_to_product` | Редирект на magnit.ru с установкой cookies `shopCode`, `x_shop_type` (max_age=3600). Query: `url`, `shop_code`, `x_shop_type`. **Только `https://magnit.ru/...`** (схема `https`, хост ровно `magnit.ru`, без userinfo и обратных слешей), иначе **400** `Допустимы только ссылки на magnit.ru` и cookies не ставятся |
-| GET | `/open-product-in-browser` | `open_product_in_browser` | ⭐ Открыть товар в браузере через Playwright (фоновый `threading.Thread`). Query: `product_url`, `store_code`, `store_type`. `product_url` проверяется так же, как `url` в `/redirect-to-product` (иначе **400**, браузер не запускается). → `{status: "opening", message}`. Ошибки фонового потока пишутся в лог с traceback (`utils/threads.py:run_logged`) |
+Ссылки на товар — прямые `https://magnit.ru/product/<id>-<seo>?shopCode=&shopType=` из шаблона `products.html`; серверные `/redirect-to-product` и `/open-product-in-browser` (Playwright) удалены.
 
 ---
 
@@ -226,6 +214,5 @@ FastAPI матчит маршруты **в порядке регистрации
 | `POST /api/catalog/scan-all-stores` | `BackgroundTasks` (FastAPI) | Сканирование всех магазинов |
 | `POST /api/prices/update` | `BackgroundTasks` (FastAPI) | Обновление цен |
 | `POST /api/categories/fetch-magnit-ids` | `threading.Thread` (daemon) через `run_logged` | Полная замена каталога |
-| `GET /open-product-in-browser` | `threading.Thread` через `run_logged` | Запуск Playwright |
 
 > 🔴 **Важно:** фоновые задачи создают **свою `SessionLocal()`** внутри — не используют сессию из FastAPI-dependency (она закрывается после HTTP-ответа). См. `docs/DEVELOPMENT.md`.

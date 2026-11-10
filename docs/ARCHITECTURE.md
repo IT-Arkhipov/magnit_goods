@@ -1,6 +1,6 @@
 # Архитектура
 
-FastAPI-сервер для мониторинга цен в магазинах «Магнит». Сканирует каталог товаров через публичное API magnit.ru, отслеживает изменения цен, уведомляет об акциях.
+FastAPI-сервер для мониторинга цен в магазинах «Магнит». Сканирует каталог товаров через публичное API magnit.ru, отслеживает изменения цен, показывает снижения цен.
 
 ## Технологический стек
 
@@ -14,7 +14,6 @@ FastAPI-сервер для мониторинга цен в магазинах 
 | Шаблоны | Jinja2 |
 | Scheduler | APScheduler (BackgroundScheduler) |
 | HTTP-клиент | requests |
-| Браузерная автоматизация | Playwright (sync API) |
 | .env | python-dotenv |
 
 ---
@@ -29,16 +28,14 @@ magnit_goods/
 │   │   ├── categories.json            # Корневые категории: [{id, title}]
 │   │   ├── stores.json                # Эталонные магазины
 │   │   └── magnit.db                  # SQLite БД (в .gitignore; рядом файлы WAL *.db-wal, *.db-shm)
-│   ├── scripts/
-│   │   └── verify_categories.py       # Standalone-скрипт верификации категорий (Playwright)
 │   └── server/                        # Основной пакет
 │       ├── __init__.py
-│       ├── main.py                    # Точка входа, загрузка .env, lifespan, страницы, утилитарные роуты
-│       ├── database.py                # engine (WAL), SessionLocal, init_db(), 17 миграций
+│       ├── main.py                    # Точка входа, загрузка .env, lifespan, веб-страницы
+│       ├── database.py                # engine (WAL), SessionLocal, init_db(), 18 миграций
 │       ├── models.py                  # Store, Category, Product, PriceHistory, ScanJob, SchemaMigration
 │       ├── schemas.py                 # Pydantic-модели запросов и ответов API
 │       ├── constants.py               # типы магазинов (STORE_TYPE_*, resolve_store_type_code), STALE_DAYS_*
-│       ├── scheduler.py               # APScheduler: update_prices, scan_catalog; register_jobs()
+│       ├── scheduler.py               # APScheduler: scan_all_stores (ежедневно), update_catalog (еженедельно)
 │       ├── routes/
 │       │   ├── __init__.py
 │       │   ├── stores.py              # /api/stores — CRUD, preview, add-selected, select
@@ -47,13 +44,12 @@ magnit_goods/
 │       │   └── prices.py              # /api/prices — decreased, update
 │       ├── services/
 │       │   ├── __init__.py
-│       │   ├── magnit_api.py          # MagnitAPIClient (товары/категории), StoresAPI (магазины)
-│       │   ├── catalog_scanner.py     # CatalogScanner — bulk-операции, история цен; get_tracked_category_magnit_ids
+│       │   ├── magnit_api.py          # MagnitAPIClient (товары, сырые данные категорий), MagnitAPIError, StoresAPI
+│       │   ├── catalog_scanner.py     # CatalogScanner — bulk-операции, история цен; get_tracked_category_magnit_ids, delete_store_products
+│       │   ├── store_scan.py          # Сканирование всех активных магазинов (кнопка UI и планировщик)
 │       │   ├── product_query.py       # Выборка товаров для API: фильтры, поиск, сортировка, статистика
 │       │   ├── jobs.py                # finalize_job, mark_unfinished_jobs_failed — статусы заданий
-│       │   ├── catalog_updater.py     # CatalogUpdater — полная замена каталога (upsert по magnit_id: id и is_tracked сохраняются)
-│       │   ├── load_catalog_from_json.py  # Загрузка корневых категорий из categories.json
-│       │   └── product_opener.py      # open_product_with_store — Playwright (видимый браузер)
+│       │   ├── catalog_updater.py     # CatalogUpdater — полная замена каталога (upsert по magnit_id: id и is_tracked сохраняются) и её статус
 │       ├── utils/
 │       │   ├── __init__.py
 │       │   ├── city_extractor.py      # extract_city_from_address — regex-извлечение города
@@ -91,17 +87,17 @@ magnit_goods/
 │                                                             │
 │  1. init_db()                       (database.py)           │
 │     ├─ Base.metadata.create_all()   — создать таблицы       │
-│     └─ 17 миграций — реестр schema_migrations,              │
+│     └─ 18 миграций — реестр schema_migrations,              │
 │        регистрация только при успехе (docs/DATABASE.md)     │
 │                                                             │
 │  2. mark_unfinished_jobs_failed()   (services/jobs.py)      │
 │     └─ Все ScanJob со статусом "pending"/"running" → "failed"│
 │        (процесс был остановлен, задание потеряно)           │
 │                                                             │
-│  3. init_scheduler(store_code)      (scheduler.py)          │
-│     └─ Если задан STORE_CODE → register_jobs():             │
-│        ├─ update_prices  — ежедневно 8:00                   │
-│        └─ scan_catalog   — воскресенье 6:00                 │
+│  3. init_scheduler()                (scheduler.py)          │
+│     └─ всегда (от STORE_CODE не зависит):                   │
+│        ├─ scan_all_stores — ежедневно 8:00                  │
+│        └─ update_catalog  — воскресенье 6:00                │
 │                                                             │
 │  yield  ← приложение обрабатывает запросы                   │
 │                                                             │
@@ -200,19 +196,21 @@ add_selected_stores()  →  Store(id=store_hash_id(...), shop_type=STORE_TYPE_CO
         │
         ▼
 POST /api/stores/select  →  .env + os.environ (STORE_CODE, STORE_TYPE)
-        └─ scheduler.register_jobs(store_code) — задания переезжают на новый магазин без перезапуска
+        └─ выбранный магазин — источник каталога для полной замены (планировщик не зависит)
+
+DELETE /api/stores/{id}, POST /api/stores/delete-batch
+        └─ delete_store_products() — товары и история цен магазина (код + тип) удаляются вместе с ним
 ```
 
 ### 3. Полная замена каталога (фоновой нитью)
 
 ```
-POST /api/categories/fetch-magnit-ids
-        │
-        │  threading.Thread(daemon=True)
+POST /api/categories/fetch-magnit-ids   (или еженедельное задание update_catalog)
+        │  try_begin_catalog_update() — проверка и взятие флага под блокировкой;
+        │  уже идёт → {status: "in_progress"}
+        │  threading.Thread(daemon=True), через run_logged
         ▼
-_fetch_and_update_categories_background()  (routes/catalog.py, через run_logged)
-        │  под _catalog_update_lock:
-        │  _catalog_update_status["in_progress"] = True
+run_catalog_update()  (services/catalog_updater.py) — магазин-источник: STORE_CODE или первый активный
         ▼
 CatalogUpdater.replace_all_categories()    (services/catalog_updater.py)
         │  1. Загрузить корневые из categories.json
@@ -231,22 +229,17 @@ _catalog_update_status (в памяти процесса, не ScanJob): in_prog
 ### 4. Scheduler (автоматические задания)
 
 ```
-init_scheduler(store_code)  (scheduler.py)  →  register_jobs(store_code)
-        │   повторный вызов безопасен (replace_existing=True): его же вызывает
-        │   POST /api/stores/select при смене магазина
+init_scheduler()  (scheduler.py) — при каждом старте
         │
-        ├─ CronTrigger(hour=8, minute=0) → update_prices_job(store_code)
-        │       │
-        │       └─ CatalogScanner.scan_products(tracked_only=True)
-        │              → ScanJob(job_type="prices"); отслеживаемые категории
-        │                читаются в момент запуска
+        ├─ CronTrigger(hour=8, minute=0) → scan_all_stores_job()
+        │       ├─ уже есть активное задание scan_all_stores → пропуск
+        │       └─ create_scan_all_stores_job() + run_scan_all_stores()  (services/store_scan.py)
+        │              — то же, что кнопка «Сканировать все магазины»; магазины
+        │                и отслеживаемые категории читаются в момент запуска
         │
-        └─ CronTrigger(day_of_week="sun", hour=6, minute=0) → scan_catalog_job(store_code)
-                ├─ scan_categories()  → ScanJob(job_type="catalog")
-                └─ scan_products(tracked_only=True)  → ScanJob(job_type="prices")
-
-        Тип магазина — из STORE_TYPE (его выставляет /api/stores/select);
-        если у кода несколько типов и STORE_TYPE не задан — задание завершается failed.
+        └─ CronTrigger(day_of_week="sun", hour=6, minute=0) → update_catalog_job()
+                └─ try_begin_catalog_update() + run_catalog_update()  — полная замена каталога
+                   (скан в 8:00 идёт уже по новому каталогу)
 ```
 
 ---
@@ -258,7 +251,7 @@ init_scheduler(store_code)  (scheduler.py)  →  register_jobs(store_code)
 | Механизм | Где используется | Сессия БД |
 |----------|-----------------|-----------|
 | `BackgroundTasks` (FastAPI) | `scan-all-stores`, `prices/update` | Создаёт **новую `SessionLocal()`** внутри (FastAPI-сессия уже закрыта) |
-| `threading.Thread` (daemon) через `utils/threads.py:run_logged` | `fetch-magnit-ids`, `open-product-in-browser` | Создаёт свою `SessionLocal()` или не работает с БД; ошибки потока пишутся в лог с traceback |
+| `threading.Thread` (daemon) через `utils/threads.py:run_logged` | `fetch-magnit-ids` | Создаёт свою `SessionLocal()` или не работает с БД; ошибки потока пишутся в лог с traceback |
 
 > 🔴 **Критично:** никогда не используйте сессию из `Depends(get_db)` внутри фоновой задачи — она закрывается после отправки HTTP-ответа. Всегда создавайте новую `SessionLocal()` и закрывайте в `finally`.
 
@@ -271,7 +264,7 @@ init_scheduler(store_code)  (scheduler.py)  →  register_jobs(store_code)
 SQLite работает в режиме WAL с `busy_timeout` 30 с (`database.py:_set_sqlite_pragma`): чтение из HTTP-запросов не блокируется записью сканера, а конкурирующая запись ждёт освобождения блокировки, а не падает с `database is locked`.
 
 ### Глобальное состояние
-- `_catalog_update_status` + `_catalog_update_lock` (`threading.Lock`) в `routes/catalog.py` — статус фоновой замены каталога; хранится **в памяти процесса** (не в `ScanJob`) и сбрасывается при перезапуске.
+- `_catalog_update_status` + `_catalog_update_lock` (`threading.Lock`) в `services/catalog_updater.py` — статус фоновой замены каталога; хранится **в памяти процесса** (не в `ScanJob`) и сбрасывается при перезапуске.
 
 ---
 
@@ -287,7 +280,7 @@ SQLite работает в режиме WAL с `busy_timeout` 30 с (`database.p
 ┌──────────────────────────────▼───────────────────────────┐
 │ Сервисы (services/)                                      │
 │  Бизнес-логика: API-клиенты, сканеры, bulk-операции      │
-│  Playwright-автоматизация, формирование уведомлений      │
+│  Выборка товаров, сканирование всех магазинов            │
 └──────────────────────────────┬───────────────────────────┘
                                │
 ┌──────────────────────────────▼───────────────────────────┐
@@ -298,7 +291,6 @@ SQLite работает в режиме WAL с `busy_timeout` 30 с (`database.p
 ┌──────────────────────────────▼───────────────────────────┐
 │ Внешние системы                                          │
 │  magnit.ru API (goods/search, stores-facade)             │
-│  magnit.ru браузер (Playwright)                          │
 └──────────────────────────────────────────────────────────┘
 ```
 

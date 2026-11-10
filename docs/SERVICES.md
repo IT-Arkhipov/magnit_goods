@@ -1,6 +1,6 @@
 # Сервисный слой (`src/server/services/`)
 
-Модули бизнес-логики, не относящиеся к HTTP-роутам. Здесь — работа с внешним API Магнита, сканирование, bulk-операции с БД и браузерная автоматизация (Playwright).
+Модули бизнес-логики, не относящиеся к HTTP-роутам: работа с внешним API Магнита, сканирование, bulk-операции с БД, выборка товаров и фоновые задания.
 
 | Файл | Технология | БД | Внешние вызовы | Threading |
 |------|-----------|----|-----------------|-----------|
@@ -9,8 +9,7 @@
 | `catalog_updater.py` | SQLAlchemy | `Category` (upsert по `magnit_id`, `is_tracked` сохраняется) | через `MagnitAPIClient` | нет, sync |
 | `product_query.py` | SQLAlchemy | `Product` (чтение) | нет | нет, sync |
 | `jobs.py` | SQLAlchemy | `ScanJob` | нет | нет, sync |
-| `load_catalog_from_json.py` | SQLAlchemy | `Category` | нет (чтение JSON) | нет, sync |
-| `product_opener.py` | Playwright | нет | magnit.ru (видимый браузер) | нет, sync (вызывается из потока) |
+| `store_scan.py` | SQLAlchemy | `ScanJob`, `Store`, `Category` (+ через сканер) | через `CatalogScanner` | нет, sync (BackgroundTasks / планировщик) |
 
 ---
 
@@ -18,7 +17,7 @@
 
 Единая точка взаимодействия с внешним API magnit.ru. Два независимых клиента.
 
-### `MagnitAPIClient` (товары и категории) — `magnit_api.py`
+### `MagnitAPIClient` (товары и сырые данные категорий) — `magnit_api.py`
 
 **Конструктор:** `__init__(base_url="https://magnit.ru", store_code=None, store_type=None, timeout=15, rate_limit=0.5)`
 - `store_code` — из аргумента или env `STORE_CODE`; `store_type` — из аргумента или `constants.py:get_configured_store_type()` (`STORE_TYPE`, по умолчанию `DEFAULT_STORE_TYPE` = «Магнит»).
@@ -39,14 +38,14 @@
 def search(self, store_code=None, store_type=None, category_ids=None,
            limit=50, offset=0) -> dict
 ```
-- Универсальный: если `category_ids` не задан → возвращает категории; если задан → товары.
+- Возвращает товары указанных категорий (`_parse_product`; товары без id или цены пропускаются).
+- Ошибка — `MagnitAPIError(status_code, body)`: HTTP-код (`None` — сетевая ошибка) и начало ответа. `is_retryable` — сетевые ошибки, 429 и 5xx; прочие 4xx (например, категория недоступна для типа магазина) повторять бесполезно.
 - Эндпоинт: **POST `https://magnit.ru/webgate/v2/goods/search`**.
 - Возвращает `{items, total, hasMore, next_offset}`. `hasMore`/`next_offset` берётся из `pagination.nextOffset` API либо вычисляется `offset + len(items)`.
 
 **`fetch_category_raw(category_id, store_code=None, store_type=None)`** — сырой ответ API для одной категории (поля `category` и `fastCategoriesExtended` — название и подкатегории), `limit=32, offset=0`. С ограничением частоты запросов; при ошибке возвращает `None`. Через него идут `CatalogScanner._fetch_category_data` и `CatalogUpdater.fetch_category_data`.
 
 **Парсинг:**
-- `_parse_category(item)` → `{magnit_id, name, url, product_count, parent_id}`.
 - `_parse_product(item)` → словарь с полями товара. **Цена конвертируется из копеек в рубли (деление на 100)**, так же `unit_price` весовых. **Товар без цены (отсутствует или ≤ 0) пропускается** (`None` + предупреждение в логе) — иначе цена 0 дала бы ложное «снижение на 100%». Берёт `gallery[0].url` как `image_url`, `ratings` → `rating`/`scores_count`/`comments_count`, `orderProperties` → `min_order_qty`/`order_step_qty`, `weighted` → `is_weighted`/`unit_price`. При ошибке парсинга логирует traceback и возвращает `None`.
 
 **Прочее:** `close()`.
@@ -68,7 +67,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ## 2. `catalog_scanner.py` — сканирование каталога
 
-Класс `CatalogScanner`. Сканирование каталога товаров и категорий через `MagnitAPIClient` с сохранением в БД. Реализует bulk-операции, отслеживание истории цен, очистку и интеграцию с `ScanJob`.
+Класс `CatalogScanner`. Сканирование товаров через `MagnitAPIClient` с сохранением в БД. Реализует bulk-операции, отслеживание истории цен, очистку и интеграцию с `ScanJob`.
 
 **Константы:** `PRICE_HISTORY_RETENTION_DAYS = 30`, `PROGRESS_MIN_INTERVAL = 2.0` (с).
 
@@ -76,6 +75,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - `get_tracked_category_magnit_ids(db)` — единое определение отслеживаемых категорий (подкатегории с `is_tracked`, порядок по `id`); используется всеми операциями сканирования.
 - `resolve_store_type(db, store_code, store_type=None)` — тип магазина: явный → тип единственного магазина с таким кодом в БД → из конфигурации; если у кода несколько типов и тип не указан — `AmbiguousStoreError` (роуты отвечают 400).
 - `resolve_store_type_filter(db, store_code, store_type=None)` — то же правило для **чтения** товаров и истории (роуты `routes/catalog.py`, `routes/prices.py`): явный тип → его код (`constants.py:parse_store_type_code`, нераспознанный — `ValueError` → 400); иначе код типа единственного магазина с этим кодом; несколько типов — `AmbiguousStoreError`; магазина с кодом в БД нет — `None` (без фильтра по типу). В отличие от `resolve_store_type`, не подставляет тип из конфигурации: чтение отдаёт то, что есть в БД.
+- `delete_store_products(db, store_code, store_type)` — удалить товары и историю цен магазина (код + код типа) при удалении магазина (`routes/stores.py`); коммит — за вызывающим.
 - `parse_store_ref(ref)` / `parse_store_refs(csv)` — элемент набора магазинов `код` или `код|тип` → `(код, тип или None)`; CSV → список элементов без пустых и повторов.
 
 **Конструктор:** `__init__(db: Session, store_code=None, address=None, job_id=None, store_type=None)`
@@ -88,18 +88,12 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - `_flush_progress()` — записать накопленное.
 - `_is_cancelled()` — читает одну колонку `ScanJob.status` (без загрузки сущности и `expire_all()`); предварительный `commit()` завершает транзакцию, чтобы в режиме WAL увидеть отмену из другой сессии.
 
-### `scan_categories()`
-→ `{scanned, added, updated, deleted}`
-- Получает **все корневые категории с `magnit_id`** (`parent_id IS NULL AND magnit_id IS NOT NULL`), независимо от `is_tracked`: в UI отмечаются только подкатегории, корни никогда не «отслеживаются». `is_tracked` существующих подкатегорий не меняется.
-- **Фаза 1 — запросы к API:** для каждого корня `_fetch_category_data(magnit_id)` → `MagnitAPIClient.fetch_category_raw` (с rate limiting). БД в этой фазе не меняется. Корень, по которому API вернул ошибку или пустой ответ, пропускается: его подкатегории остаются как есть.
-- **Фаза 2 — одна транзакция:** подкатегории всех полученных корней читаются одним SELECT; обновляется название корня из `category.title`; **полная синхронизация подкатегорий** — удаляются те, которых нет в API, обновляются существующие (по `magnit_id`), добавляются новые с `parent_id=root_cat.id`. Один `commit()` в конце; при ошибке — `rollback()` и исключение (задание планировщика → `failed`, `POST /api/categories/update-catalog` → 500), частичных изменений не остаётся.
-
 ### `scan_products(category_ids=None, tracked_only=False, on_category_start=None)`
 → `{scanned, added, updated, price_changes, deleted, history_deleted, marked_missing}`; при отмене — нулевая статистика с `"cancelled": True`.
 - Если `category_ids` не задан: при `tracked_only=True` — `get_tracked_category_magnit_ids(db)`, иначе все категории с `magnit_id`. Набор читается в момент запуска и одинаков для `POST /api/catalog/scan` (`tracked_only=true`), `scan-prices`, `scan-all-stores`, `POST /api/prices/update` и заданий планировщика.
 - **Сканирует по одной категории за раз.** Колбэк `on_category_start(номер, всего, magnit_id)` вызывается перед каждой категорией (прогресс `scan-all-stores`).
 - **Проверка отмены** перед каждой категорией и каждым запросом страницы (`_is_cancelled()`).
-- **Retry:** до 3 попыток, между ними пауза 2 и 4 секунды (`2**retry_count`). Особая обработка `invalid_service_pair`/`service not found` — категория считается недоступной для типа магазина и пропускается.
+- **Retry:** до 3 попыток с паузой 2 и 4 с — только для повторяемых ошибок (`MagnitAPIError.is_retryable`: сетевые, 429, 5xx). Прочие 4xx — категория сразу пропускается как недоступная для типа магазина (сообщение в прогрессе задания); пропущенная категория не участвует в пометке отсутствующих.
 - **Пагинация:** цикл `while has_more`, использует `next_offset` из API либо вычисляет `offset + len(products)`. Прерывается при пустом `products`.
 - Обновляет `current_category_items_total` и `current_category_items_loaded` (число загруженных в **текущей** категории) в `ScanJob`.
 - После сканирования обновляет `Category.last_scanned = datetime.utcnow()`.
@@ -143,7 +137,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 ## 3. `catalog_updater.py` — обновление дерева категорий
 
-Класс `CatalogUpdater` (`catalog_updater.py`). Обновление дерева категорий из API. Единственный режим — **полная замена** (upsert по `magnit_id`) с сохранением `id` и `is_tracked`; синхронизация подкатегорий живёт только в `CatalogScanner.scan_categories`.
+Класс `CatalogUpdater` (`catalog_updater.py`). Обновление дерева категорий из API. Единственный режим — **полная замена** (upsert по `magnit_id`) с сохранением `id` и `is_tracked` — единственный способ обновить категории.
 
 **Конструктор:** `__init__(store_code=None, store_type=None)`
 - Код магазина — из аргумента или `STORE_CODE`; **захардкоженного магазина по умолчанию нет** — без магазина `ValueError("Не выбран магазин ...")`. Тип — из аргумента, иначе `STORE_TYPE`, иначе `DEFAULT_STORE_TYPE`.
@@ -152,7 +146,7 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 
 **Методы:**
 - `fetch_category_data(category_id)` — делегирует `MagnitAPIClient.fetch_category_raw` (POST с `categories: [category_id]`, `limit: 32`, `offset: 0`).
-- `load_root_categories_from_file()` — читает `categories.json` через модульную функцию `load_root_categories(path)`, которой пользуется и `load_catalog_from_json` (без магазина).
+- `load_root_categories_from_file()` — читает `categories.json` через модульную функцию `load_root_categories(path)`.
 
 ### `replace_all_categories()` (`catalog_updater.py`) — полная замена
 1. Загружает корневые категории из файла.
@@ -165,24 +159,21 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 **Модульные функции-обёртки:**
 - `replace_catalog_from_api(store_code, store_type)` — полная замена (закрывает HTTP-клиент по окончании).
 
-> Используется фоновой задачей `_fetch_and_update_categories_background()` в `routes/catalog.py` (запускается через `POST /api/categories/fetch-magnit-ids`).
+**Статус и запуск** (в памяти процесса — не `ScanJob`):
+- `try_begin_catalog_update()` — проверить и взять флаг `in_progress` под одной блокировкой; `False`, если замена уже идёт.
+- `run_catalog_update()` — замена с записью статуса; магазин-источник — `STORE_CODE` (тип — `STORE_TYPE` или тип магазина), иначе первый активный магазин (`_catalog_source_store`); флаг снимается в `finally`.
+- `get_catalog_update_status()` — снимок для `GET /api/categories/fetch-magnit-ids/status`; `end_catalog_update()` — снять флаг, если поток не запустился.
+
+> Вызывают `POST /api/categories/fetch-magnit-ids` (в потоке через `run_logged`) и еженедельное задание планировщика `update_catalog`. Это единственный способ обновить категории.
 
 ---
 
-## 4. `load_catalog_from_json.py` — загрузка корневых категорий из JSON
+## 4. `store_scan.py` — сканирование всех магазинов
 
-Функция `load_catalog_from_json(db: Session = None) -> dict`. Загружает **корневые категории** из `src/data/categories.json` — плоского массива `[{"id": <magnit_id>, "title": <название>}]` — в таблицу `Category`. Подкатегорий в файле нет: их добавляет синхронизация с API (`CatalogScanner.scan_categories`). Используется `POST /api/categories/load-from-json`.
+Одна реализация для `POST /api/catalog/scan-all-stores` и ежедневного задания планировщика `scan_all_stores`.
 
-**Логика:**
-1. Если `db=None` — создаёт `SessionLocal()` и закрывает его по окончании.
-2. Файла нет — `FileNotFoundError` (эндпоинт отвечает 404 `Файл categories.json не найден`).
-3. Читает массив через `load_root_categories()` (`catalog_updater.py`).
-4. Для каждого элемента ищет категорию по `magnit_id`: есть — при изменении названия обновляет `name` (`is_tracked`, родитель и подкатегории не трогает); нет — создаёт корневую (`parent_id=None`, `is_tracked=False`, `product_count=0`).
-5. Один `db.commit()` в конце; при ошибке — `db.rollback()` + `raise`.
-
-**Возвращает:** `{scanned, added, updated}` (`updated` — категории с изменённым названием; повторная загрузка даёт `added: 0`).
-
----
+- `create_scan_all_stores_job(db)` → `job_id`: `ScanJob(job_type="scan_all_stores", status="pending")`; `NothingToScanError`, если нет активных магазинов или отслеживаемых категорий.
+- `run_scan_all_stores(job_id)` — своя `SessionLocal()`; магазины и отслеживаемые категории читаются в момент запуска. Для каждого активного магазина — **один** `CatalogScanner.scan_products` со своим типом; прогресс (магазин × категория) через `on_category_start`; ошибка магазина пишется в `progress_message` и не прерывает остальные. Отмена проверяется между магазинами и в сканере; итог — `finalize_job` (отмена не затирается).
 
 ## 4a. `product_query.py` — выборка товаров для API
 
@@ -194,19 +185,6 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - `product_to_list_item(p)` — элемент ответа (контракт — схема `ProductListItem`); `get_products_stats(db, stores)` — агрегаты (`ProductStats`) по набору магазинов: `stores` — пары `(store_code, store_type_code или None)`, условие строит `store_condition(stores)`.
 
 ---
-
-## 5. `product_opener.py` — открытие товара в браузере
-
-Функция `open_product_with_store(product_url, store_code, store_type)` (`product_opener.py`). Открывает страницу товара на magnit.ru в **видимом Chromium через Playwright** с попыткой автоматического выбора магазина.
-
-**Логика (`product_opener.py`):**
-- `sync_playwright()`, `p.chromium.launch(headless=False)` — **видимое окно**.
-- `page.goto("https://magnit.ru/", domcontentloaded)`, `sleep(2)`.
-- Пытается выбрать магазин: ищет кнопку «Выбрать магазин», заполняет поле поиска кодом магазина, кликает первый результат «Выбрать». При ошибке — логирует и продолжает («Пользователь может выбрать магазин вручную»).
-- `page.goto(product_url, domcontentloaded)`.
-- **Браузер НЕ закрывается автоматически** — остаётся открытым для пользователя (`product_opener.py`).
-
-> Запускается из `main.py` (`GET /open-product-in-browser`) через `threading.Thread` и `utils/threads.py:run_logged` (ошибки потока пишутся в лог с traceback), чтобы не блокировать HTTP-ответ. Адрес товара предварительно проверяется: только `https://magnit.ru/...`.
 
 ---
 
@@ -226,15 +204,8 @@ def search(self, store_code=None, store_type=None, category_ids=None,
 - Один `commit()` в конце.
 
 ### Retry
-Только в `CatalogScanner.scan_products()`: до 3 попыток, между ними пауза 2 и 4 сек (`2**retry_count`). Особая обработка `invalid_service_pair`/`service not found` — категория пропускается.
+Только в `CatalogScanner.scan_products()`: до 3 попыток с паузой 2 и 4 сек, только для `MagnitAPIError.is_retryable` (сетевые ошибки, 429, 5xx); прочие 4xx — категория пропускается без повторов.
 
 ### Проверка отмены и статусы заданий
 `CatalogScanner._is_cancelled()` — чтение колонки `ScanJob.status` перед каждой категорией и каждым запросом страницы. Задание помечается `cancelled` через `POST /api/jobs/{id}/cancel` (`routes/jobs.py`). Итоговый статус фоновых заданий пишет `services/jobs.py:finalize_job`: он перечитывает задание и **не затирает `cancelled`**. `mark_unfinished_jobs_failed()` при старте сервера переводит оставшиеся `pending`/`running` в `failed`.
 
-### Playwright
-| Модуль | Назначение | headless |
-|--------|-----------|----------|
-| `services/product_opener.py` | Открытие товара пользователю в видимом браузере | **False** (видимое окно) |
-| `scripts/verify_categories.py` | Standalone-скрипт: сверка названий корневых категорий в `categories.json` через перехват API, запись после подтверждения (`input()`) | **False** |
-
-Перед использованием Playwright: `playwright install chromium`.

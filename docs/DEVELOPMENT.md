@@ -16,7 +16,7 @@
 - Линтер: **ruff** (в проекте есть `.ruff_cache/`). Запускайте `ruff check` перед коммитом.
 - НЕ добавляйте комментарии, если явно не просят.
 - Импорты: сторонние библиотеки → локальные модули (`from src.server...`).
-- Логирование: используется `logging` (`logging.getLogger(__name__)`), `print()` в `src/` не используется. Standalone-скрипты настраивают вывод сами (`logging.basicConfig` в `if __name__ == "__main__"`, см. `scripts/verify_categories.py`).
+- Логирование: используется `logging` (`logging.getLogger(__name__)`), `print()` в `src/` не используется. Ошибки с traceback — `logger.exception`, не `traceback.print_exc()`.
 - **Поведение и документация меняются в одном изменении.** Изменили эндпоинт, миграцию, правило сканирования — поправьте `AGENTS.md` и затронутые файлы `docs/` сразу. Ссылайтесь на код как `файл:функция`, не по номерам строк (они устаревают).
 
 ### Структура
@@ -128,7 +128,7 @@ Engine создаётся с `connect_args={"check_same_thread": False, "timeout
 
 Нет. Закрыт техдолг «ключ товара не включает тип магазина»: товары и история цен ключуются `(product_id, store_code, store_type_code)` (миграция `add_product_store_type`, см. `docs/DATABASE.md`), API товаров принимает `store_type`, UI различает магазины по паре «код|тип». Попутно исправлен испорченный `stores.shop_type` (миграция `fix_store_shop_type`).
 
-Остаётся вне объёма: товары удалённого магазина (кода, которого нет в `stores`) не удаляются и не очищаются сканом — они хранятся с типом по умолчанию.
+Товары и история цен удаляются вместе с магазином (`catalog_scanner.py:delete_store_products`); накопленные ранее убрала миграция `cleanup_orphan_store_products`.
 
 ### Замечания из code review
 
@@ -165,8 +165,6 @@ python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 # Линтинг
 ruff check src/
 
-# Установка браузеров Playwright
-playwright install chromium
 
 # Проверка БД
 sqlite3 src/data/magnit.db ".tables"

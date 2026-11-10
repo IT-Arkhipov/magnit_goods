@@ -1,6 +1,6 @@
 # magnit_goods
 
-FastAPI-сервер для мониторинга цен в магазинах «Магнит». Сканирует каталог товаров через публичное API magnit.ru, отслеживает изменения цен, уведомляет об акциях.
+FastAPI-сервер для мониторинга цен в магазинах «Магнит». Сканирует каталог товаров через публичное API magnit.ru, отслеживает изменения цен, показывает снижения цен.
 
 ## Возможности
 
@@ -13,8 +13,8 @@ FastAPI-сервер для мониторинга цен в магазинах 
 - **Сравнение цен** одного товара в нескольких магазинах
 - **Список покупок** с проверкой наличия и экспортом
 - **Фоновые задания** с прогрессом и возможностью отмены
-- **Автоматические задания** (scheduler): ежедневное обновление цен, еженедельное сканирование каталога
-- **Открытие товара в браузере** через Playwright с автоматическим выбором магазина
+- **Автоматические задания** (scheduler): ежедневное сканирование всех магазинов, еженедельное обновление каталога категорий
+- **Ссылки на товар** на magnit.ru с выбранным магазином
 
 ## Быстрый старт
 
@@ -24,7 +24,6 @@ python -m venv venv
 venv\Scripts\activate            # Windows
 # source venv/bin/activate        # Linux/macOS
 pip install -r requirements.txt
-playwright install chromium
 python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -44,7 +43,6 @@ python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 | Шаблоны | Jinja2 |
 | Scheduler | APScheduler |
 | HTTP-клиент | requests |
-| Браузерная автоматизация | Playwright |
 
 ## Архитектура
 
@@ -54,9 +52,9 @@ src/server/
 ├── database.py          # engine, SessionLocal, init_db(), 11 миграций
 ├── models.py            # Store, Category, Product, PriceHistory, ScanJob
 ├── constants.py         # типы магазинов
-├── scheduler.py         # APScheduler: update_prices, scan_catalog
-├── routes/              # HTTP-эндпоинты (39 API + 10 роутов в main.py)
-├── services/            # 8 модулей: API-клиенты, сканеры, Playwright, уведомления
+├── scheduler.py         # APScheduler: scan_all_stores, update_catalog
+├── routes/              # HTTP-эндпоинты API (страницы и ссылки на товар — в main.py)
+├── services/            # API-клиенты, сканеры, выборка товаров, фоновые задания
 ├── utils/               # Извлечение города из адреса
 └── templates/           # Jinja2 HTML
 ```
@@ -71,7 +69,7 @@ src/server/
 | [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) | Архитектура, дерево модулей, потоки данных, жизненный цикл |
 | [docs/API.md](docs/API.md) | Полный справочник всех 39+ эндпоинтов с параметрами и ответами |
 | [docs/DATABASE.md](docs/DATABASE.md) | Модели, индексы, 11 миграций, логика отслеживания цен |
-| [docs/SERVICES.md](docs/SERVICES.md) | Детальное описание 8 сервисов, rate limiting, bulk-операции, Playwright |
+| [docs/SERVICES.md](docs/SERVICES.md) | Сервисный слой, rate limiting, bulk-операции |
 | [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md) | Переменные окружения, запуск, scheduler, конфигурация |
 | [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) | Конвенции, критические особенности, типичные ошибки, техдолг |
 | [AGENTS.md](AGENTS.md) | Краткая инструкция для AI-агентов с критическими особенностями |

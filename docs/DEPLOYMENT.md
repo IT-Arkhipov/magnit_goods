@@ -4,10 +4,6 @@
 
 - **Python:** 3.10+ (используются `dict[str, int]`, `str | int` в аннотациях)
 - **ОС:** Windows / Linux / macOS (разработка ведётся на Windows)
-- **Playwright:** для браузерной автоматизации требуется установить браузеры:
-  ```bash
-  playwright install chromium
-  ```
 
 ## Установка зависимостей
 
@@ -17,7 +13,6 @@ python -m venv venv
 venv\Scripts\activate            # Windows
 # source venv/bin/activate        # Linux/macOS
 pip install -r requirements.txt
-playwright install chromium
 ```
 
 Содержимое `requirements.txt`:
@@ -25,7 +20,6 @@ playwright install chromium
 - `SQLAlchemy>=2.0`, `pydantic>=2.5` — ORM и валидация
 - `APScheduler>=3.10` — планировщик
 - `requests` — HTTP-клиент для API Магнита
-- `playwright>=1.40` — браузерная автоматизация
 - `python-dotenv>=1.0` — управление `.env`
 - `Jinja2>=3.1` — шаблоны
 
@@ -52,7 +46,7 @@ CORS_ORIGINS=*
 **Как читается `.env`:**
 - При старте сервер загружает `.env` из корня репозитория (`main.py`, `load_dotenv(override=False)`) **до** запуска планировщика. Запускать uvicorn с `--env-file` не нужно.
 - Переменные, уже заданные в окружении процесса, приоритетнее значений из `.env`.
-- `POST /api/stores/select` (при `update_env=true`) кроме записи в `.env` обновляет `os.environ` работающего процесса и перерегистрирует задания планировщика на выбранный магазин — перезапуск не требуется. Если планировщик не был запущен (при старте не было `STORE_CODE`), он запускается. Ответ содержит `scheduler_updated`.
+- `POST /api/stores/select` (при `update_env=true`) кроме записи в `.env` обновляет `os.environ` работающего процесса — перезапуск не требуется. `STORE_CODE` — магазин-источник для полной замены каталога; планировщик от него не зависит.
 
 ### Типы магазинов (`constants.py`)
 
@@ -98,9 +92,9 @@ python -m src.server.main
 ## Что происходит при старте
 
 0. При импорте `main.py` загружается `.env` (`load_dotenv(override=False)`).
-1. `init_db()` — создание таблиц + 17 миграций. Каждая выполняется один раз и регистрируется в `schema_migrations` только при успехе; упавшая миграция даёт `WARNING` в логе и повторяется при следующем старте. См. `docs/DATABASE.md`.
+1. `init_db()` — создание таблиц + 18 миграций. Каждая выполняется один раз и регистрируется в `schema_migrations` только при успехе; упавшая миграция даёт `WARNING` в логе и повторяется при следующем старте. См. `docs/DATABASE.md`.
 2. `mark_unfinished_jobs_failed()` (`services/jobs.py`) — все зависшие `ScanJob` со статусами `pending` и `running` помечаются `failed` (процесс был остановлен).
-3. `init_scheduler(store_code)` — если задан `STORE_CODE`, запускаются автоматические задания.
+3. `init_scheduler()` — автоматические задания запускаются всегда (сканируют все активные магазины).
 
 ---
 
@@ -110,15 +104,15 @@ python -m src.server.main
 
 | Job ID | Расписание | Функция | Что делает |
 |--------|-----------|---------|-----------|
-| `update_prices` | Ежедневно 08:00 | `update_prices_job()` (`scheduler.py`) | Обновление цен для отслеживаемых категорий. Создаёт `ScanJob(job_type="prices")`. |
-| `scan_catalog` | Воскресенье 06:00 | `scan_catalog_job()` (`scheduler.py`) | Полное сканирование: сначала категории (`ScanJob(job_type="catalog")`), затем товары (`ScanJob(job_type="prices")`). |
+| `scan_all_stores` | Ежедневно 08:00 | `scan_all_stores_job()` (`scheduler.py`) | Сканирование всех активных магазинов по отслеживаемым категориям — то же, что кнопка «Сканировать все магазины» (`services/store_scan.py`). Пропускается, если такое задание уже идёт |
+| `update_catalog` | Воскресенье 06:00 | `update_catalog_job()` (`scheduler.py`) | Полная замена каталога категорий (`catalog_updater.py:run_catalog_update`); скан в 08:00 идёт уже по новому каталогу |
 Расписание задаётся через `CronTrigger`:
 ```python
-CronTrigger(hour=8, minute=0)                      # update_prices
-CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
+CronTrigger(hour=8, minute=0)                      # scan_all_stores
+CronTrigger(day_of_week="sun", hour=6, minute=0)   # update_catalog
 ```
 
-Отслеживаемые категории задания читают из БД **в момент запуска** (`catalog_scanner.py:get_tracked_category_magnit_ids`), поэтому новые отметки в UI учитываются без перезапуска. Тип магазина берётся из `STORE_TYPE`; если у кода магазина в БД несколько типов и `STORE_TYPE` не задан — задание завершится `failed`. `register_jobs()` можно вызывать повторно (его использует `POST /api/stores/select`).
+Отслеживаемые категории задания читают из БД **в момент запуска** (`catalog_scanner.py:get_tracked_category_magnit_ids`), поэтому новые отметки в UI учитываются без перезапуска. Каждый магазин сканируется со своим типом (`stores.store_type`), поэтому `STORE_TYPE` заданиям не нужен.
 
 > Scheduler работает в отдельном потоке (`BackgroundScheduler`). Каждое задание создаёт **свою `SessionLocal()`** и закрывает в `finally` (`scheduler.py`).
 
@@ -143,4 +137,4 @@ CronTrigger(day_of_week="sun", hour=6, minute=0)   # scan_catalog
 - **Rate limiting:** 0.5s в `MagnitAPIClient` + случайная пауза 0.1-0.5s. **Не убирайте** — API Магнита блокирует. См. `docs/SERVICES.md`.
 - **SQLite:** подходит для однопользовательского приложения. При высокой нагрузке рассмотрите PostgreSQL.
 - **Логи:** `logging.basicConfig(level=INFO)` в `main.py`. Уровень можно изменить.
-- **Playwright:** `product_opener.py` запускает **видимое окно браузера** — не работает на серверах без дисплея.
+- **Планировщик** срабатывает, только если сервер запущен в 08:00 / по воскресеньям в 06:00 — пропущенные запуски не догоняются.

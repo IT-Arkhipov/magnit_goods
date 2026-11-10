@@ -1,6 +1,6 @@
 # magnit_goods
 
-FastAPI-сервер для мониторинга цен в магазинах "Магнит". Сканирует каталог товаров, отслеживает цены, уведомляет об акциях.
+FastAPI-сервер для мониторинга цен в магазинах "Магнит". Сканирует каталог товаров, отслеживает цены, показывает снижения цен.
 
 > 📖 **Полная документация:** в каталоге `docs/`. Этот файл — краткая инструкция для AI-агентов с критическими особенностями. Подробности:
 > - `docs/ARCHITECTURE.md` — архитектура и потоки данных
@@ -20,7 +20,6 @@ cd D:\pythonProjects\magnit_goods
 python -m venv venv
 venv\Scripts\activate
 pip install -r requirements.txt
-playwright install chromium
 python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
@@ -31,25 +30,24 @@ python -m uvicorn src.server.main:app --host 0.0.0.0 --port 8000 --reload
 
 ```
 src/server/
-├── main.py              # Точка входа, lifespan, загрузка .env, страницы, утилитарные роуты
-├── database.py          # engine (WAL), SessionLocal, init_db(), 17 миграций
+├── main.py              # Точка входа, lifespan, загрузка .env, веб-страницы
+├── database.py          # engine (WAL), SessionLocal, init_db(), 18 миграций
 ├── models.py            # Store, Category, Product, PriceHistory, ScanJob, SchemaMigration
 ├── schemas.py           # Pydantic-модели запросов и ответов API
 ├── constants.py         # типы магазинов (STORE_TYPE_*, resolve_store_type_code), STALE_DAYS_*
-├── scheduler.py         # APScheduler (update_prices, scan_catalog), register_jobs()
+├── scheduler.py         # APScheduler: scan_all_stores (ежедневно), update_catalog (еженедельно)
 ├── routes/
 │   ├── stores.py        # /api/stores — CRUD, preview, add-selected, select (11 эндпоинтов)
 │   ├── jobs.py          # /api/jobs — статусы, отмена (4 эндпоинта)
-│   ├── catalog.py       # /api/categories (9), /api/products (8), /api/catalog/* (3) — 20 эндпоинтов
+│   ├── catalog.py       # /api/categories (6), /api/products (8), /api/catalog/* (3) — 17 эндпоинтов
 │   └── prices.py        # /api/prices — decreased, update (2 эндпоинта)
 ├── services/
-│   ├── magnit_api.py            # MagnitAPIClient (товары/категории), StoresAPI (магазины)
-│   ├── catalog_scanner.py       # CatalogScanner — bulk-операции, история цен; get_tracked_category_magnit_ids
-│   ├── catalog_updater.py       # CatalogUpdater — полная замена каталога (upsert по magnit_id)
+│   ├── magnit_api.py            # MagnitAPIClient (товары, сырые данные категорий), MagnitAPIError, StoresAPI
+│   ├── catalog_scanner.py       # CatalogScanner — bulk-операции, история цен; get_tracked_category_magnit_ids, delete_store_products
+│   ├── catalog_updater.py       # CatalogUpdater — полная замена каталога (upsert по magnit_id) и её статус в памяти
 │   ├── product_query.py         # выборка товаров для API: фильтры, поиск, сортировка, статистика
-│   ├── jobs.py                  # finalize_job, mark_unfinished_jobs_failed — статусы заданий
-│   ├── load_catalog_from_json.py # Загрузка корневых категорий из categories.json
-│   └── product_opener.py        # open_product_with_store — Playwright (видимый браузер)
+│   ├── store_scan.py            # сканирование всех активных магазинов (кнопка UI и планировщик)
+│   └── jobs.py                  # finalize_job, mark_unfinished_jobs_failed — статусы заданий
 ├── utils/
 │   ├── city_extractor.py        # extract_city_from_address — regex-извлечение города
 │   └── threads.py               # run_logged — логирование ошибок фоновых потоков
@@ -59,8 +57,7 @@ src/server/
 ```
 
 Дополнительно:
-- `src/data/` — `categories.json`, `stores.json`, `magnit.db` (БД, в `.gitignore`, рядом файлы WAL `*.db-wal`, `*.db-shm`)
-- `src/scripts/verify_categories.py` — standalone-скрипт верификации категорий (Playwright)
+- `src/data/` — `categories.json` (корневые категории для полной замены каталога), `stores.json`, `magnit.db` (БД, в `.gitignore`, рядом файлы WAL `*.db-wal`, `*.db-shm`)
 
 ## База данных
 
@@ -88,13 +85,13 @@ src/server/
 
 > `DailyPriceSnapshot` и поля акций (`old_price`, `discount_percent`, `is_promotion`, `promo_end_date`, `historical_*`) удалены миграцией `migrate_simplify_price_tracking`.
 
-## Миграции (реестр `schema_migrations`, 17 шт.)
+## Миграции (реестр `schema_migrations`, 18 шт.)
 
 Подробности: `docs/DATABASE.md`. Вызываются из `init_db()` через `_run_migration(db, "<имя>", func, ...)`.
 
 **Контракт:** миграция выполняется **один раз** и регистрируется в `schema_migrations` **только при успехе**. Функция либо возвращается, либо бросает исключение (внутри ошибки не глушить); при сбое — `WARNING` в логе, миграция не регистрируется и повторяется при следующем старте. Новую миграцию добавляйте функцией в `database.py` и вызовом `_run_migration(...)` с уникальным именем в **конец** списка. Не запрашивайте в миграциях всю сущность (`db.query(Product)`) — колонки, добавленные позже, ещё могут отсутствовать; выбирайте нужные колонки.
 
-Имена по порядку: `simplify_price_tracking`, `add_last_change_fields`, `add_product_indexes`, `store_ids`, `categories`, `add_shop_type`, `fill_shop_type`, `add_last_scan_found`, `add_scan_job_progress_fields`, `fix_previous_price`, `create_price_history`, `backfill_price_history`, `ensure_product_last_scan_index`, `add_store_code_type_unique`, `add_product_name_search`, `add_product_store_type`, `fix_store_shop_type`.
+Имена по порядку: `simplify_price_tracking`, `add_last_change_fields`, `add_product_indexes`, `store_ids`, `categories`, `add_shop_type`, `fill_shop_type`, `add_last_scan_found`, `add_scan_job_progress_fields`, `fix_previous_price`, `create_price_history`, `backfill_price_history`, `ensure_product_last_scan_index`, `add_store_code_type_unique`, `add_product_name_search`, `add_product_store_type`, `fix_store_shop_type`, `cleanup_orphan_store_products`.
 
 `add_product_store_type` пересобирает `price_history` в одной транзакции на отдельном соединении (`BEGIN IMMEDIATE`, при ошибке `ROLLBACK`) — образец для миграций, меняющих ограничения таблиц SQLite.
 
@@ -108,22 +105,19 @@ src/server/
 - `GET /api/stores/search?q=...` — поиск
 - `GET /api/stores/{store_id}` — по ID (строка!)
 - `PUT /api/stores/{store_id}` — обновить; нельзя менять `store_type` и `full_address` (400)
-- `DELETE /api/stores/{store_id}` — удалить
-- `POST /api/stores/select` — выбрать магазин → обновить .env, окружение процесса и планировщик
+- `DELETE /api/stores/{store_id}` — удалить (вместе с товарами и историей цен магазина)
+- `POST /api/stores/select` — выбрать магазин → обновить .env и окружение процесса (источник каталога категорий)
 - `POST /api/stores/preview` — поиск через API Магнита без сохранения (400 при неподдерживаемом типе)
 - `POST /api/stores/add-selected` — сохранить выбранные из preview
-- `POST /api/stores/delete-batch` — удалить несколько
+- `POST /api/stores/delete-batch` — удалить несколько (тоже с товарами и историей)
 - `GET /api/stores/by-code/{store_code}` — по store_code
 
-### Категории (`/api/categories`, 9 эндпоинтов)
+### Категории (`/api/categories`, 6 эндпоинтов)
 - `GET /api/categories` — список (фильтры: tracked, parent_id)
-- `POST /api/categories/scan` — **устарел**, алиас `update-catalog`
-- `POST /api/categories/update-catalog` — синхронизировать подкатегории всех корней с API (основной)
 - `GET /api/categories/tree` — дерево категорий с children
-- `POST /api/categories/load-from-json` — корневые категории из categories.json
 - `PUT /api/categories/{category_id}/track` — включить/выключить отслеживание
 - `POST /api/categories/update-tracking` — обновить список (отмечаются только подкатегории)
-- `POST /api/categories/fetch-magnit-ids` — ⭐ полная замена каталога (фоновой нитью)
+- `POST /api/categories/fetch-magnit-ids` — ⭐ полная замена каталога (фоновой нитью; единственный способ обновить категории, корни — из `categories.json`)
 - `GET /api/categories/fetch-magnit-ids/status` — статус фоновой замены
 
 ### Товары (`/api/products`, 8 эндпоинтов)
@@ -157,14 +151,14 @@ src/server/
 
 ### Роуты в main.py
 - Веб-страницы: `/`, `/catalog`, `/products`, `/jobs`, `/shopping-list`
-- `GET /redirect-to-product` — редирект с установкой cookies (только `https://magnit.ru/...`, иначе 400)
-- `GET /open-product-in-browser` — открыть товар через Playwright (threading.Thread через `run_logged`; та же проверка адреса)
+- Ссылки на товар — прямые `https://magnit.ru/product/...?shopCode=&shopType=` из шаблона (серверных роутов для них нет)
 
 ## Rate Limiting
 
 - **MagnitAPIClient**: 0.5s + случайная пауза 0.1-0.5s (`MagnitAPIClient._rate_limit_wait`). Через него идут **все** запросы каталога, включая подкатегории (`fetch_category_raw`) и `CatalogUpdater`
 - **StoresAPI**: 0.3s
 - 🔴 **НЕ убирать** — API Магнита заблокирует
+- Повтор запроса товаров (до 3 попыток) — только при сетевых ошибках, 429 и 5xx (`MagnitAPIError.is_retryable`); прочие 4xx — категория пропускается сразу
 
 ## Веб-страницы
 
@@ -178,17 +172,18 @@ src/server/
 
 ## Scheduler (APScheduler)
 
-Запускается через `init_scheduler(store_code)` (`scheduler.py:init_scheduler`) → `register_jobs(store_code)`. `register_jobs` безопасно вызывается повторно (`replace_existing=True`) — `POST /api/stores/select` использует его, чтобы перенацелить задания на новый магазин без перезапуска. Отслеживаемые категории задания читают в момент запуска.
+Запускается при каждом старте (`main.py:lifespan` → `scheduler.py:init_scheduler`), от `STORE_CODE` не зависит. Задания делают то же, что кнопки UI; магазины и отслеживаемые категории читаются в момент запуска.
 
 | Job ID | Расписание | Функция |
 |-------|-----------|---------|
-| `update_prices` | Ежедневно 8:00 | `scheduler.py:update_prices_job` |
-| `scan_catalog` | Воскресенье 6:00 | `scheduler.py:scan_catalog_job` |
+| `scan_all_stores` | Ежедневно 8:00 | `scheduler.py:scan_all_stores_job` → `store_scan.py:run_scan_all_stores` (пропуск, если скан уже идёт) |
+| `update_catalog` | Воскресенье 6:00 | `scheduler.py:update_catalog_job` → `catalog_updater.py:run_catalog_update` |
+
 ## Критические особенности
 
 1. **API endpoint order**: статические пути ДО параметрических. `/api/products/stats` и `/api/products/multi-prices` ДОЛЖНЫ быть определены ДО `/api/products/{product_id}`. `/api/jobs/active` — ДО `/api/jobs/{job_id}`. См. `docs/API.md`.
 2. **Store IDs**: всегда строки (MD5), не integers. Path-параметры: `store_id: str`.
-3. **.env**: загружается при старте (`main.py`, `load_dotenv(override=False)` — переменные окружения процесса приоритетнее). Обновляется только через `POST /api/stores/select` (`stores.py:select_store`) — НЕ редактировать вручную; выбор применяется сразу: `os.environ` и задания планировщика обновляются без перезапуска.
+3. **.env**: загружается при старте (`main.py`, `load_dotenv(override=False)` — переменные окружения процесса приоритетнее). Обновляется только через `POST /api/stores/select` (`stores.py:select_store`) — НЕ редактировать вручную; выбор применяется сразу: `os.environ` обновляется без перезапуска.
 4. **Фоновые задачи**: создают **свою `SessionLocal()`** внутри (FastAPI-сессия закрыта после HTTP-ответа). Статус `cancelled` окончательный: итоговый статус пишите через `finalize_job` (`services/jobs.py`), а не присваиванием. См. `docs/DEVELOPMENT.md`.
 5. **Bulk operations**: `_save_products()` использует `bulk_insert_mappings()` / `bulk_update_mappings()` — не заменять на построчные.
 6. **Очистка**: `cleanup_stale_products(days_threshold=STALE_DAYS_DELETE)` — **6 дней** (`constants.py`: 1 день товар виден после `last_seen`, затем 5 дней скрыт, затем удаляется), `cleanup_price_history(days=30)`.
@@ -226,6 +221,7 @@ CORS_ORIGINS=   # разрешённые origins (CSV), по умолчанию 
 - Редактировать `.env` вручную вместо `POST /api/stores/select`
 - Присваивать `job.status = "completed"` напрямую — затрёт отмену (использовать `finalize_job`)
 - Глушить ошибки внутри миграции — она зарегистрируется как выполненная
+- Править функцию, не проверив, что её вызывают: в `products.html` полгода жила подменённая копия загрузчика товаров, и доработки в ней не работали. Перед правкой UI — grep вызовов и переопределений
 
 ## Известные расхождения / техдолг
 
