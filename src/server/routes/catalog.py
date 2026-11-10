@@ -357,6 +357,7 @@ def get_multi_store_prices(
             "price": p.price,
             "previous_price": p.previous_price,
             "price_change_percent": p.price_change_percent,
+            "last_change_price": p.last_change_price,
             "in_stock": p.in_stock,
             "quantity": p.quantity,
             "last_seen": p.last_seen.isoformat() if p.last_seen else None,

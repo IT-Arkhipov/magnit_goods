@@ -899,6 +899,56 @@ function highlightSearch(text) {
 // Данные теперь приходят из БД в /api/products
 // ============================================
 
+// Изменение цены записи товара для текущего режима отображения.
+// info — запись с полями price, previous_price, price_change_percent,
+// last_change_price, last_change_date, last_seen (multi-prices, /api/products).
+// Режим 1 «Новая цена»: изменение от предыдущего дня сканирования.
+// Режим 2 «Последнее изменение» — процент показывается, только если:
+//   B: last_change_price > price и last_change_date не старше 7 дней
+//      (снижение за последнюю неделю) — приоритетнее;
+//   A: price_change_percent > 0 и последний скан был не сегодня
+//      (снижение на старом скане, видимое благодаря relax_stale).
+// Возвращает { changePercent (0 — нет изменения), previousPrice, changeDate }.
+function priceChangeForMode(info) {
+    if (showNewPriceMode) {
+        const percent = info.price_change_percent;
+        return {
+            changePercent: percent !== null && percent !== undefined ? percent : 0,
+            previousPrice: info.previous_price || null,
+            changeDate: info.last_change_date || null,
+        };
+    }
+    const sevenDaysMs = 7 * 24 * 3600 * 1000;
+    const oneDayMs = 24 * 3600 * 1000;
+    const nowMs = Date.now();
+    const lastChangeMs = info.last_change_date ? new Date(info.last_change_date).getTime() : null;
+    const lastSeenMs = info.last_seen ? new Date(info.last_seen).getTime() : null;
+    const hasRecentDecrease = info.last_change_price !== null
+        && info.last_change_price !== undefined
+        && info.last_change_price > info.price
+        && lastChangeMs !== null
+        && (nowMs - lastChangeMs) < sevenDaysMs;
+    if (hasRecentDecrease) {
+        return {
+            changePercent: Math.round((info.last_change_price - info.price) / info.last_change_price * 1000) / 10,
+            previousPrice: info.last_change_price,
+            changeDate: info.last_change_date,
+        };
+    }
+    const hasLastScanDecrease = info.price_change_percent !== null
+        && info.price_change_percent !== undefined
+        && info.price_change_percent > 0;
+    const lastScanNotToday = lastSeenMs !== null && (nowMs - lastSeenMs) > oneDayMs;
+    if (hasLastScanDecrease && lastScanNotToday) {
+        return {
+            changePercent: info.price_change_percent,
+            previousPrice: info.previous_price,
+            changeDate: info.last_change_date || null,
+        };
+    }
+    return { changePercent: 0, previousPrice: null, changeDate: null };
+}
+
 async function compareInStores(productId, currentStoreRef, productName) {
     // Текущий магазин — ref «код|тип» (или только код у старых вызовов)
     const isCurrentStore = (store) => currentStoreRef && parseStoreRef(currentStoreRef).typeCode
@@ -935,40 +985,7 @@ async function compareInStores(productId, currentStoreRef, productName) {
                     if (productData.quantity === 0 || productData.quantity === null || productData.quantity === undefined) {
                         return null; // Skip out-of-stock products in comparison
                     }
-                    let changePercent, previousPrice;
-
-                    if (showNewPriceMode) {
-                        changePercent = productData.price_change_percent;
-                        previousPrice = productData.previous_price;
-                    } else {
-                        // Режим 2 «Последнее изменение» (та же логика, что в renderProductRow):
-                        // Branch B приоритетнее, иначе Branch A.
-                        const sevenDaysMs = 7 * 24 * 3600 * 1000;
-                        const oneDayMs = 24 * 3600 * 1000;
-                        const nowMs = Date.now();
-                        const lastChangeMs = productData.last_change_date ? new Date(productData.last_change_date).getTime() : null;
-                        const lastSeenMs = productData.last_seen ? new Date(productData.last_seen).getTime() : null;
-                        const hasLastScanDecrease = productData.price_change_percent !== null
-                            && productData.price_change_percent !== undefined
-                            && productData.price_change_percent > 0;
-                        const lastScanNotToday = lastSeenMs !== null && (nowMs - lastSeenMs) > oneDayMs;
-                        const hasRecentDecrease = productData.last_change_price !== null
-                            && productData.last_change_price !== undefined
-                            && productData.last_change_price > productData.price
-                            && lastChangeMs !== null
-                            && (nowMs - lastChangeMs) < sevenDaysMs;
-
-                        if (hasRecentDecrease) {
-                            changePercent = Math.round((productData.last_change_price - productData.price) / productData.last_change_price * 1000) / 10;
-                            previousPrice = productData.last_change_price;
-                        } else if (hasLastScanDecrease && lastScanNotToday) {
-                            changePercent = productData.price_change_percent;
-                            previousPrice = productData.previous_price;
-                        } else {
-                            changePercent = null;
-                            previousPrice = null;
-                        }
-                    }
+                    const { changePercent, previousPrice } = priceChangeForMode(productData);
 
                     const changeText = changePercent !== null && changePercent !== undefined && changePercent !== 0
                         ? (changePercent > 0 ? `↓${changePercent}%` : `↑${Math.abs(changePercent)}%`)
@@ -1711,8 +1728,8 @@ async function loadProducts() {
          if (savingsFilter && selectedStores.length > 0) {
              const minSavingsPercent = parseInt(savingsFilter);
              products = products.filter(p => {
-                 // Проверка 1: Изменение цены >= minSavingsPercent (только снижение)
-                 if (p.price_change_percent !== null && p.price_change_percent !== undefined && p.price_change_percent >= minSavingsPercent) {
+                 // Проверка 1: снижение цены по текущему режиму >= minSavingsPercent
+                 if (priceChangeForMode(p).changePercent >= minSavingsPercent) {
                      return true;
                  }
                  
@@ -1933,9 +1950,9 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                 if (!priceInfo) {
                                      return `<td style="color:#999;text-align:left;">-</td>`;
                                 }
-                                  // Расчёт изменения цены
-                                   const changePercent = priceInfo.price_change_percent !== null && priceInfo.price_change_percent !== undefined ? priceInfo.price_change_percent : 0;
-                                   
+                                  // Изменение цены по текущему режиму («Новая цена» / «Последнее изменение»)
+                                   const { changePercent, previousPrice, changeDate } = priceChangeForMode(priceInfo);
+
                                    // Если все цены одинаковые - черный, иначе выделяем минимальную цену красным
                                    const color = allEqual ? '#000' : (priceInfo.price === minPrice ? '#e31e25' : '#000');
                                    
@@ -1951,10 +1968,10 @@ function renderProductsList(products, selectedStores, allStorePrices, storeInfoM
                                   const fontSizeIncrease = !allEqual && priceInfo.price === minPrice ? getSavingsFontSize(savingsPercent) : '0px';
                                   const savingsStyle = fontSizeIncrease !== '0px' ? `font-size:calc(14px + ${fontSizeIncrease});` : 'font-size:14px;';
                                   
-                                  // Tooltip с предыдущей ценой
-                                  const oldPriceText = priceInfo.previous_price
-                                      ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
-                                          ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                                  // Tooltip с предыдущей ценой — только когда изменение показано
+                                  const oldPriceText = previousPrice && changePercent !== 0
+                                      ? `Предыдущая цена: ${previousPrice} ₽${changeDate
+                                          ? ' (' + formatDate(changeDate) + ')'
                                           : ''} `
                                       : '';
                                 // Информация для tooltip
@@ -2097,9 +2114,10 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
                           // Информация для tooltip
                           const quantity = priceInfo.quantity !== undefined ? priceInfo.quantity : 'неизвестно';
                            const lastUpdate = priceInfo.last_seen ? new Date(priceInfo.last_seen).toLocaleString('ru-RU', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' }) : 'неизвестно';
-                          const oldPriceText = priceInfo.previous_price
-                              ? `Предыдущая цена: ${priceInfo.previous_price} ₽${priceInfo.last_change_date
-                                  ? ' (' + formatDate(priceInfo.last_change_date) + ')'
+                          const change = priceChangeForMode(priceInfo);
+                          const oldPriceText = change.previousPrice && change.changePercent !== 0
+                              ? `Предыдущая цена: ${change.previousPrice} ₽${change.changeDate
+                                  ? ' (' + formatDate(change.changeDate) + ')'
                                   : ''} | `
                               : '';
                           const tooltipText = `${oldPriceText}Остаток: ${quantity} | Обновлено: ${lastUpdate}`;
@@ -2127,7 +2145,7 @@ function renderSimpleList(products, selectedStores, activeStoreCode, otherStoreP
               const activePriceLink = activeProductUrl
                   ? `<a href="javascript:void(0)" onclick="openProductLink('${activeProductUrl}', '${activeCodeOnly}', ${activeShopType})" style="text-decoration: none; color: inherit;"><strong>${p.price} ₽${activeSavingsText}</strong></a>`
                   : `<strong>${p.price} ₽${activeSavingsText}</strong>`;
-               html += `<tr><td class="product-name-cell"><strong>${highlightSearch(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${p.price_change_percent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
+               html += `<tr><td class="product-name-cell"><strong>${highlightSearch(p.name)}</strong>${p.image_url ? `<div class="product-image-tooltip"><img src="${escapeHtml(p.image_url)}" alt="${escapeHtml(p.name)}" onerror="this.style.display='none'"></div>` : ''}</td>${otherStoreCells}<td>${activePriceLink}</td><td>${priceChangeForMode(p).changePercent || '-'}</td><td>${p.in_stock ? 'Да' : 'Нет'}</td></tr>`;
          });
          html += '</tbody></table>';
     });
