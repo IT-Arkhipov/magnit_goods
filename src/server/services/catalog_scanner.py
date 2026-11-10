@@ -22,7 +22,7 @@ from src.server.constants import (
     parse_store_type_code,
     resolve_store_type_code,
 )
-from src.server.services.magnit_api import MagnitAPIClient
+from src.server.services.magnit_api import MagnitAPIClient, MagnitAPIError
 
 logger = logging.getLogger(__name__)
 
@@ -311,68 +311,49 @@ class CatalogScanner:
             has_more = True
             category_failed = False  # True если категория прервана (ошибки API)
             while has_more:
-                # Retry logic: попытаемся 3 раза с задержкой
+                # До 3 попыток с паузой 2, 4 с; ошибки 4xx (кроме 429) не повторяются —
+                # например, категория недоступна для типа магазина
                 max_retries = 3
-                retry_count = 0
+                result = None
                 last_error = None
-
-                while retry_count < max_retries:
+                for attempt in range(1, max_retries + 1):
                     # Проверка на отмену перед каждым запросом
                     if self._is_cancelled():
-                        logger.debug(f"DEBUG: Задание {self.job_id} отменено, выходим")
+                        logger.debug(f"Задание {self.job_id} отменено, выходим")
                         return {"scanned": 0, "added": 0, "updated": 0, "price_changes": 0, "cancelled": True}
-
                     try:
-                        logger.debug(
-                            f"DEBUG: Calling search with category_ids={[cat_magnit_id]}, store_code={self.store_code} (attempt {retry_count + 1}/{max_retries})"
-                        )
                         result = self.api.search(
                             store_code=self.store_code,
                             category_ids=[cat_magnit_id],
                             limit=32,
                             offset=offset,
                         )
-                        logger.debug(
-                            f"DEBUG: search returned {len(result.get('items', []))} products"
-                        )
-                        break  # Успешно, выходим из retry цикла
+                        break
                     except Exception as e:
                         last_error = e
-                        retry_count += 1
-                        if retry_count < max_retries:
-                            wait_time = (
-                                2**retry_count
-                            )  # Exponential backoff: 2, 4, 8 секунд
-                            logger.warning(
-                                f"WARN: Ошибка получения товаров (попытка {retry_count}/{max_retries}): {e}"
-                            )
-                            logger.debug(
-                                f"DEBUG: Ожидание {wait_time} секунд перед повтором..."
-                            )
-                            time.sleep(wait_time)
-                        else:
-                            err_msg = str(e)
-                            if "invalid_service_pair" in err_msg or "service not found" in err_msg:
-                                logger.warning(
-                                    f"WARN: Категория {cat_magnit_id} недоступна для типа магазина {self.store_type} — пропускаем"
-                                )
-                            else:
-                                logger.error(
-                                    f"ERROR: Ошибка получения товаров после {max_retries} попыток (категория {cat_magnit_id}): {e}"
-                                )
-                            logger.exception("Traceback")
-
-                # Если все попытки исчерпаны, пропускаем эту категорию
-                if retry_count >= max_retries and last_error:
-                    err_msg = str(last_error)
-                    if "invalid_service_pair" in err_msg or "service not found" in err_msg:
-                        msg = f"⚠️ Категория {cat_name} недоступна для {self.store_type}"
-                        if self.job_id:
-                            self._update_job_progress(msg, force=True)
-                        logger.warning(f"WARN: Категория {cat_magnit_id} недоступна для {self.store_type} — пропущена")
-                    else:
+                        retryable = not isinstance(e, MagnitAPIError) or e.is_retryable
+                        if not retryable or attempt == max_retries:
+                            break
+                        wait_time = 2 ** attempt
                         logger.warning(
-                            f"WARN: Пропускаем категорию {cat_magnit_id} из-за ошибок API"
+                            f"Ошибка получения товаров (попытка {attempt}/{max_retries}), "
+                            f"повтор через {wait_time} с: {e}"
+                        )
+                        time.sleep(wait_time)
+
+                if result is None:
+                    if isinstance(last_error, MagnitAPIError) and not last_error.is_retryable:
+                        logger.warning(
+                            f"Категория {cat_magnit_id} недоступна для {self.store_type} "
+                            f"({self.store_code}) — пропущена: {last_error}"
+                        )
+                        if self.job_id:
+                            self._update_job_progress(
+                                f"⚠️ Категория {cat_name} недоступна для {self.store_type}", force=True
+                            )
+                    else:
+                        logger.error(
+                            f"Пропускаем категорию {cat_magnit_id} после {max_retries} попыток: {last_error}"
                         )
                     category_failed = True
                     break

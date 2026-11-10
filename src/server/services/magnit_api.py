@@ -26,6 +26,21 @@ from src.server.constants import (
 logger = logging.getLogger(__name__)
 
 
+class MagnitAPIError(Exception):
+    """Ошибка запроса к API Магнита: HTTP-код (None — сетевая ошибка) и начало ответа."""
+
+    def __init__(self, status_code: Optional[int], body: str):
+        self.status_code = status_code
+        self.body = body
+        super().__init__(f"Ошибка при поиске: HTTP {status_code}: {body}" if status_code else f"Ошибка при поиске: {body}")
+
+    @property
+    def is_retryable(self) -> bool:
+        """Сетевые ошибки, 429 и 5xx — повторять; прочие 4xx детерминированы (категория
+        недоступна для типа магазина, неверный запрос) — повтор бесполезен."""
+        return self.status_code is None or self.status_code == 429 or self.status_code >= 500
+
+
 class MagnitAPIClient:
     """Клиент для взаимодействия с API Магнита."""
 
@@ -117,7 +132,8 @@ class MagnitAPIClient:
             logger.debug(f"DEBUG: Response status: {response.status_code}")
             logger.debug(f"DEBUG: Response text: {response.text[:500]}")
 
-            response.raise_for_status()
+            if not response.ok:
+                raise MagnitAPIError(response.status_code, response.text[:500])
             data = response.json()
 
             logger.debug(f"DEBUG: Response keys: {list(data.keys())}")
@@ -151,7 +167,7 @@ class MagnitAPIClient:
             }
         except requests.RequestException as e:
             logger.error(f"ERROR: {e}")
-            raise Exception(f"Ошибка при поиске: {str(e)}")
+            raise MagnitAPIError(None, str(e)) from e
 
     def _build_payload(
         self,
