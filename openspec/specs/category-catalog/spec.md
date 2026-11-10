@@ -1,45 +1,9 @@
 # category-catalog Specification
 
 ## Purpose
-Определяет хранение дерева категорий Магнита и набор эндпоинтов для его синхронизации и загрузки.
+Определяет хранение дерева категорий Магнита и его обновление полной заменой из API.
 
 ## Requirements
-
-### Requirement: Один основной эндпоинт синхронизации подкатегорий
-Синхронизация подкатегорий SHALL выполняться через `POST /api/categories/update-catalog`. `POST /api/categories/scan` SHALL оставаться рабочим с тем же результатом, но SHALL быть помечен в OpenAPI как устаревший.
-
-#### Scenario: Устаревший эндпоинт
-- **WHEN** клиент вызывает `POST /api/categories/scan?store_code=<код>`
-- **THEN** ответ совпадает по структуре и результату с `POST /api/categories/update-catalog?store_code=<код>`, а в `/docs` эндпоинт отмечен как deprecated
-
-### Requirement: Загрузка корневых категорий доступна по одному пути
-Загрузка корневых категорий из файла SHALL быть доступна только по `POST /api/categories/load-from-json`; прежние алиасы `build-from-playwright` и `seed-from-playwright` SHALL отсутствовать.
-
-#### Scenario: Вызов удалённого алиаса
-- **WHEN** клиент вызывает `POST /api/categories/build-from-playwright`
-- **THEN** ответ — 404 или 405, категории не изменяются
-
-### Requirement: Синхронизация подкатегорий обрабатывает все корни
-Синхронизация подкатегорий (`POST /api/categories/scan`, `POST /api/categories/update-catalog`, плановое задание сканирования каталога) SHALL обрабатывать каждую корневую категорию, у которой есть `magnit_id`, независимо от её `is_tracked`, и SHALL сохранять `is_tracked` существующих подкатегорий.
-
-#### Scenario: Корни не отмечены
-- **WHEN** отмечены только подкатегории (как после сохранения на странице «Каталог»), и выполняется `POST /api/categories/scan?store_code=<код>`
-- **THEN** ответ содержит `scanned`, равный числу корней с `magnit_id`, а новые подкатегории из API добавлены
-
-### Requirement: Загрузка корневых категорий из файла
-`POST /api/categories/load-from-json` SHALL читать `src/data/categories.json` в формате массива объектов `{id, title}`, создавать отсутствующие корневые категории и обновлять названия существующих (по `magnit_id`), не меняя их `is_tracked` и не удаляя подкатегории.
-
-#### Scenario: Пустая БД
-- **WHEN** таблица категорий пуста, и вызывается `POST /api/categories/load-from-json`
-- **THEN** создаётся по одной корневой категории на каждый элемент файла, ответ содержит `added`, равный их числу
-
-#### Scenario: Повторная загрузка
-- **WHEN** корни уже загружены, и вызов повторяется
-- **THEN** новые категории не создаются, ответ содержит `added: 0`
-
-#### Scenario: Файл отсутствует
-- **WHEN** файла `categories.json` нет
-- **THEN** ответ — 404 с именем `categories.json`
 
 ### Requirement: Полная замена каталога сохраняет идентичность категорий
 При полной замене каталога категория, `magnit_id` которой присутствует и в БД, и в ответе API, SHALL сохранить свой внутренний идентификатор и флаг `is_tracked`; изменяются только её название и родитель.
@@ -69,3 +33,17 @@
 #### Scenario: Сбой одной корневой категории
 - **WHEN** запрос к API для одной из корневых категорий завершился ошибкой
 - **THEN** `GET /api/categories/fetch-magnit-ids/status` показывает ошибку, а категории в БД остались прежними
+
+### Requirement: Каталог обновляется только полной заменой
+Категории SHALL обновляться только полной заменой каталога (`POST /api/categories/fetch-magnit-ids` и еженедельное задание планировщика). Эндпоинты `POST /api/categories/update-catalog`, `POST /api/categories/scan` и `POST /api/categories/load-from-json` SHALL отсутствовать.
+
+#### Scenario: Вызов удалённого эндпоинта
+- **WHEN** клиент вызывает `POST /api/categories/update-catalog`
+- **THEN** ответ — 404 или 405, категории не изменяются
+
+### Requirement: Полная замена каталога не выполняется параллельно
+Пока идёт полная замена каталога, новый запуск SHALL NOT начинаться: `POST /api/categories/fetch-magnit-ids` SHALL возвращать `status: "in_progress"`, задание планировщика SHALL пропускаться.
+
+#### Scenario: Двойной клик
+- **WHEN** клиент дважды подряд вызывает `POST /api/categories/fetch-magnit-ids`
+- **THEN** первый ответ — `started`, второй — `in_progress`, выполняется одна замена
