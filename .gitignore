@@ -222,9 +222,14 @@ marimo/_static/
 marimo/_lsp/
 __marimo__/
 
-# Артефакты AI-агентов: сгенерированные openspec-команды, планы и временные скрипты
-# (уже отслеживаемые файлы — .agents/skills, openspec/, opencode_temp/programs.* — не затрагиваются)
-.agents/skills/.openspec-target
+# Локальные файлы других AI-агентов (Koda, OpenCode, Kilo, Codemaker) — не часть приложения.
+# В репозитории из агентских файлов остаются AGENTS.md, CLAUDE.md и openspec/.
+.agents/
+.codemaker/
+.opencode/
+.kilocode/
+.pi/
+KODA.md
 .claude/commands/opsx/
 .claude/settings.local.json
 .koda/
