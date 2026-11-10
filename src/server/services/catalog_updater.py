@@ -242,11 +242,7 @@ class CatalogUpdater:
         except Exception as e:
             db.rollback()
             error_msg = f"Critical error during category replacement: {str(e)}"
-            logger.error(error_msg)
-            import traceback
-
-            traceback.print_exc()
-
+            logger.exception(error_msg)
             return {
                 "status": "error",
                 "errors": [error_msg],

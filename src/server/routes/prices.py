@@ -63,13 +63,13 @@ def get_decreased_prices(
 
 @router.post("/update")
 def update_prices(
+    background_tasks: BackgroundTasks,
     store_code: str = Query(..., description="Код магазина"),
     store_type: Optional[str] = Query(
         None, description="Тип магазина (обязателен, если у кода магазина в БД несколько типов)"
     ),
     category_ids: Optional[str] = Query(None, description="Список ID категорий через запятую"),
     tracked_only: bool = Query(True),
-    background_tasks: BackgroundTasks = None,
     db: Session = Depends(get_db),
 ):
     """
@@ -136,9 +136,5 @@ def update_prices(
         finally:
             bg_db.close()
 
-    if background_tasks:
-        background_tasks.add_task(run_update)
-        return {"job_id": job.id, "status": "pending"}
-    else:
-        run_update()
-        return {"job_id": job.id, "status": "completed"}
+    background_tasks.add_task(run_update)
+    return {"job_id": job.id, "status": "pending"}

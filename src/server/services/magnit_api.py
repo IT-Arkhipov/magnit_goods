@@ -324,10 +324,8 @@ class MagnitAPIClient:
                 "unit_price": unit_price,
                 "category_id": item.get("categoryId"),
             }
-        except Exception as e:
-            logger.error(f"Ошибка парсинга товара: {e}")
-            import traceback
-            traceback.print_exc()
+        except Exception:
+            logger.exception("Ошибка парсинга товара")
             return None
 
     def close(self):

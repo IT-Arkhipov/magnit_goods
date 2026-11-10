@@ -391,47 +391,6 @@ async function addSelectedStores() {
     }
 }
 
-// === Проверка статуса заданий ===
-async function pollJobStatus(jobId, progressDivId, refreshTable) {
-    const progressDiv = document.getElementById(progressDivId);
-
-    const checkStatus = async () => {
-        try {
-            const resp = await fetch(`/api/jobs/${jobId}`);
-            const job = await resp.json();
-
-            if (job.status === 'running' || job.status === 'pending') {
-                if (progressDiv) {
-                    progressDiv.innerHTML = `
-                        <div class="progress-bar" style="margin:8px 0;">
-                            <div class="progress-bar-fill" style="width: ${job.progress}%"></div>
-                        </div>
-                        <small>${job.progress_message || 'Выполняется...'} (${job.progress}%)</small>
-                    `;
-                }
-                setTimeout(checkStatus, 2000);
-            } else if (job.status === 'completed') {
-                if (progressDiv) {
-                    progressDiv.innerHTML = `
-                        <div class="badge badge-success">
-                            ✓ Завершено! ${job.progress_message || `Просканировано: ${job.items_scanned}, Добавлено: ${job.items_added}`}
-                        </div>
-                    `;
-                }
-                if (refreshTable) filterStores();
-            } else if (job.status === 'failed') {
-                if (progressDiv) {
-                    progressDiv.innerHTML = `<div class="badge badge-danger">✗ Ошибка: ${job.error_message}</div>`;
-                }
-            }
-        } catch (e) {
-            console.error('Ошибка проверки статуса:', e);
-        }
-    };
-
-    checkStatus();
-}
-
 // === Загрузка и отображение ===
 async function filterStores() {
     const resp = await fetch('/api/stores');
