@@ -12,6 +12,7 @@ from src.server.models import Store
 from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectStoreRequest, ScanStoresRequest, DeleteStoresRequest, StorePreviewItem, AddSelectedStoresRequest
 from src.server.constants import STORE_TYPE_MAP as API_STORE_TYPE_MAP
 from src.server.utils.city_extractor import extract_city_from_address
+from src.server.services.catalog_scanner import delete_store_products
 from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_CODES
 
 logger = logging.getLogger(__name__)
@@ -120,10 +121,11 @@ def update_store(store_id: str, data: StoreUpdate, db: Session = Depends(get_db)
 
 @router.delete("/{store_id}", status_code=204)
 def delete_store(store_id: str, db: Session = Depends(get_db)):
-    """Удалить магазин."""
+    """Удалить магазин вместе с его товарами и историей цен."""
     store = db.query(Store).filter(Store.id == store_id).first()
     if not store:
         raise HTTPException(status_code=404, detail="Магазин не найден")
+    delete_store_products(db, store.store_code, store.store_type)
     db.delete(store)
     db.commit()
     return None
@@ -375,11 +377,13 @@ def delete_stores_batch(
     req: DeleteStoresRequest,
     db: Session = Depends(get_db),
 ):
-    """Удалить несколько магазинов по ID."""
+    """Удалить несколько магазинов по ID вместе с их товарами и историей цен."""
     if not req.ids:
         raise HTTPException(status_code=400, detail="Список ID пуст")
 
-    db.query(Store).filter(Store.id.in_(req.ids)).delete(synchronize_session=False)
+    for store in db.query(Store).filter(Store.id.in_(req.ids)).all():
+        delete_store_products(db, store.store_code, store.store_type)
+        db.delete(store)
     db.commit()
     return None
 

@@ -75,6 +75,7 @@ def init_db():
         _run_migration(db, "add_product_name_search", migrate_add_product_name_search, db)
         _run_migration(db, "add_product_store_type", migrate_add_product_store_type)
         _run_migration(db, "fix_store_shop_type", migrate_fix_store_shop_type, db)
+        _run_migration(db, "cleanup_orphan_store_products", migrate_cleanup_orphan_store_products, db)
     finally:
         db.close()
 
@@ -858,3 +859,36 @@ def migrate_fix_store_shop_type(db):
             fixed += 1
     db.commit()
     logger.info("  + shop_type исправлен у %s магазинов", fixed)
+
+
+def migrate_cleanup_orphan_store_products(db):
+    """Удалить товары и историю цен магазинов, которых нет в stores.
+
+    Раньше удаление магазина не трогало его товары — они оставались навсегда
+    (скан их не обновлял и не чистил). Теперь товары удаляются вместе с
+    магазином (catalog_scanner.py:delete_store_products), а эта миграция один
+    раз убирает накопленное. Магазин — пара (store_code, код типа по
+    stores.store_type). Если магазинов нет совсем, ничего не удаляется.
+    """
+    from src.server.constants import resolve_store_type_code
+
+    stores = {
+        (code, resolve_store_type_code(store_type))
+        for code, store_type in db.execute(text("SELECT store_code, store_type FROM stores")).fetchall()
+    }
+    if not stores:
+        logger.info("  = Магазинов нет — очистка товаров пропущена")
+        return
+    for table in ("products", "price_history"):
+        pairs = db.execute(
+            text(f"SELECT DISTINCT store_code, store_type_code FROM {table}")
+        ).fetchall()
+        for store_code, type_code in pairs:
+            if (store_code, type_code) in stores:
+                continue
+            deleted = db.execute(
+                text(f"DELETE FROM {table} WHERE store_code = :code AND store_type_code = :type"),
+                {"code": store_code, "type": type_code},
+            ).rowcount
+            logger.info("  - %s: удалено %s записей магазина %s|%s", table, deleted, store_code, type_code)
+    db.commit()

@@ -100,6 +100,22 @@ def parse_store_refs(value: Optional[str]) -> list[str]:
     return list(dict.fromkeys(r for r in refs if r and parse_store_ref(r)[0]))
 
 
+def delete_store_products(db: Session, store_code: str, store_type: Optional[str]) -> tuple[int, int]:
+    """Удалить товары и историю цен магазина (код + тип) — при удалении магазина.
+
+    Магазин другого типа с тем же кодом не затрагивается. Коммит — за вызывающим.
+    Returns: (удалено товаров, удалено записей истории).
+    """
+    type_code = resolve_store_type_code(store_type)
+    products = db.query(Product).filter(
+        Product.store_code == store_code, Product.store_type_code == type_code
+    ).delete(synchronize_session=False)
+    history = db.query(PriceHistory).filter(
+        PriceHistory.store_code == store_code, PriceHistory.store_type_code == type_code
+    ).delete(synchronize_session=False)
+    return products, history
+
+
 def get_tracked_category_magnit_ids(db: Session) -> list[int]:
     """
     magnit_id отслеживаемых категорий — единое определение для всех операций
