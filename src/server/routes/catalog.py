@@ -5,9 +5,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query, Body, BackgroundTasks
 from sqlalchemy.orm import Session
 from typing import Optional
-from datetime import datetime
 import threading
-import os
 import logging
 
 from src.server.database import get_db
@@ -22,7 +20,6 @@ from src.server.services.catalog_scanner import (
     resolve_store_type_filter,
 )
 from src.server.services import product_query
-from src.server.services.jobs import finalize_job
 from src.server.utils.threads import run_logged
 
 logger = logging.getLogger(__name__)
@@ -104,66 +101,6 @@ def list_categories(
     ]
 
 
-def _sync_subcategories(db: Session, store_code: str, store_type: Optional[str]) -> dict:
-    """Синхронизировать подкатегории всех корневых категорий с API Магнита.
-
-    Единая реализация для /categories/update-catalog и устаревшего /categories/scan.
-    """
-    from src.server.services.catalog_scanner import CatalogScanner
-
-    scanner = CatalogScanner(
-        db,
-        store_code=store_code,
-        store_type=_resolve_store_type_or_400(db, store_code, store_type),
-    )
-    try:
-        result = scanner.scan_categories()
-        return {"status": "completed", **result}
-    except Exception as e:
-        logger.exception("Ошибка при синхронизации подкатегорий")
-        raise HTTPException(status_code=500, detail=str(e))
-    finally:
-        scanner.close()
-
-
-@router.post("/categories/update-catalog")
-def update_catalog_from_api(
-    store_code: str = Query(..., description="Код магазина для получения подкатегорий"),
-    store_type: Optional[str] = Query(None, description=STORE_TYPE_QUERY_DESCRIPTION),
-    db: Session = Depends(get_db),
-):
-    """
-    Обновить каталог — синхронизировать подкатегории с API Магнита (синхронно).
-
-    Основной endpoint для ручного обновления каталога. Для всех корневых
-    категорий: добавляет новые подкатегории, обновляет названия существующих,
-    удаляет подкатегории, которых нет в API. `is_tracked` существующих
-    подкатегорий не меняется.
-
-    Возвращает:
-    {
-        "status": "completed",
-        "scanned": количество обработанных корневых категорий,
-        "added": добавлено новых подкатегорий,
-        "updated": обновлено существующих,
-        "deleted": удалено устаревших подкатегорий
-    }
-    """
-    return _sync_subcategories(db, store_code, store_type)
-
-
-@router.post("/categories/scan", deprecated=True)
-def scan_categories(
-    store_code: str = Query(..., description="Код магазина-источника"),
-    store_type: Optional[str] = Query(None, description=STORE_TYPE_QUERY_DESCRIPTION),
-    db: Session = Depends(get_db),
-):
-    """
-    Устарел: используйте `POST /api/categories/update-catalog` (тот же результат).
-    """
-    return _sync_subcategories(db, store_code, store_type)
-
-
 @router.get("/categories/tree")
 def get_categories_tree(db: Session = Depends(get_db)):
     """Получить дерево категорий с подкатегориями."""
@@ -192,24 +129,6 @@ def get_categories_tree(db: Session = Depends(get_db)):
             if parent:
                 parent["children"].append(cat)
     return roots
-
-
-@router.post("/categories/load-from-json")
-def load_categories_from_json(db: Session = Depends(get_db)):
-    """
-    Загрузить корневые категории из файла src/data/categories.json.
-    """
-    from src.server.services.load_catalog_from_json import load_catalog_from_json
-
-    try:
-        result = load_catalog_from_json()
-        return {"status": "completed", **result}
-    except FileNotFoundError:
-        raise HTTPException(
-            status_code=404, detail="Файл categories.json не найден"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.put("/categories/{category_id}/track")
@@ -505,181 +424,28 @@ def scan_products(
 
 @router.post("/catalog/scan-all-stores")
 def scan_all_stores(
-    tracked_only: bool = Query(True, description="Только отслеживаемые категории"),
-    background_tasks: BackgroundTasks = None,
+    background_tasks: BackgroundTasks,
+    tracked_only: bool = Query(True, description="Только отслеживаемые категории (другие значения не поддерживаются)"),
     db: Session = Depends(get_db),
 ):
     """
-    Сканировать товары из ВСЕХ магазинов в БД по отслеживаемым категориям.
+    Сканировать товары из ВСЕХ активных магазинов по отслеживаемым категориям.
     Запускает фоновое задание, возвращает job_id для polling.
     """
-    from src.server.services.catalog_scanner import CatalogScanner
-    from src.server.models import Store, ScanJob
-    import json
-
-    # Получаем все магазины
-    stores = db.query(Store).filter(Store.is_active == True).all()  # noqa: E712
-    if not stores:
-        raise HTTPException(status_code=400, detail="Нет магазинов в БД")
-
-    # Отслеживаемые категории — единое определение (только подкатегории)
-    cat_codes = get_tracked_category_magnit_ids(db)
-    if not cat_codes:
-        raise HTTPException(status_code=400, detail="Нет отслеживаемых категорий")
-
-    # Сохраняем список магазинов для фоновой задачи
-    store_codes_list = [(s.store_code, s.store_type, s.full_address) for s in stores]
-
-    # Создаём задание
-    job = ScanJob(
-        job_type="scan_all_stores",
-        store_code=f"{len(stores)} stores",
-        category_ids=json.dumps(cat_codes),
-        status="pending",
-        created_at=datetime.utcnow(),
+    from src.server.services.store_scan import (
+        NothingToScanError,
+        create_scan_all_stores_job,
+        run_scan_all_stores,
     )
-    db.add(job)
-    db.commit()
-    db.refresh(job)
-    job_id = job.id
 
-    def run_scan_all():
-        from src.server.database import SessionLocal as NewSession
+    try:
+        job_id = create_scan_all_stores_job(db)
+    except NothingToScanError as e:
+        raise HTTPException(status_code=400, detail=str(e))
 
-        bg_db = NewSession()
-        try:
-            job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
-            # Отменено ещё до запуска — статус `cancelled` окончательный
-            if not job_db or job_db.status == "cancelled":
-                return
-
-            job_db.status = "running"
-            job_db.started_at = datetime.utcnow()
-            job_db.progress = 0
-            job_db.progress_message = "Запуск..."
-            bg_db.commit()
-
-            total_scanned = 0
-            total_added = 0
-            total_updated = 0
-            total_stores = len(store_codes_list)
-            total_categories = len(cat_codes)
-            total_operations = total_stores * total_categories
-
-            for idx, (store_code, store_type, address) in enumerate(store_codes_list):
-                # commit завершает транзакцию — иначе в WAL виден старый снимок и отмена не заметна
-                bg_db.commit()
-                status_row = bg_db.query(ScanJob.status).filter(ScanJob.id == job_id).first()
-                if status_row and status_row[0] == "cancelled":
-                    bg_db.query(ScanJob).filter(ScanJob.id == job_id).update(
-                        {"progress_message": "Отменено пользователем"}
-                    )
-                    bg_db.commit()
-                    return
-                job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
-                
-                # Обновляем прогресс по магазинам
-                job_db.total_stores = total_stores
-                job_db.current_store_index = idx + 1
-                job_db.current_store_code = store_code
-                job_db.current_store_address = address
-                job_db.total_categories = total_categories
-                
-                # Показать магазин ДО начала сканирования
-                job_db.progress_message = f"🏪 {store_code}: {address}<br>📁 Магазин {idx + 1}/{total_stores}"
-                bg_db.commit()
-                
-                try:
-                    scanner = CatalogScanner(
-                        bg_db, store_code=store_code, store_type=store_type,
-                        address=address, job_id=job_id,
-                    )
-                    try:
-                        # Загружаем маппинг категорий один раз до скана магазина
-                        cat_name_map = {
-                            cat.magnit_id: cat.name
-                            for cat in bg_db.query(Category.magnit_id, Category.name)
-                            .filter(Category.magnit_id.in_(cat_codes))
-                            .all()
-                        }
-
-                        def on_category_start(cat_index, _cat_total, cat_code, _idx=idx,
-                                              _store_code=store_code, _address=address):
-                            """Прогресс по позиции в (магазин × категория), без счётчика."""
-                            done = _idx * total_categories + (cat_index - 1)
-                            pct = int(done / total_operations * 100) if total_operations else 0
-                            bg_db.query(ScanJob).filter(ScanJob.id == job_id).update({
-                                "current_category_index": cat_index,
-                                "current_category_name": cat_name_map.get(cat_code, f"ID:{cat_code}"),
-                                "current_category_magnit_id": cat_code,
-                                "progress": pct,
-                                "progress_message": (
-                                    f"🏪 {_store_code}: {_address[:30]}...<br>"
-                                    f"📁 Категория {done + 1}/{total_operations}"
-                                ),
-                            })
-                            bg_db.commit()
-
-                        # Один вызов на магазин: очистка устаревших товаров, истории цен и
-                        # пометка отсутствующих выполняются один раз, а не после каждой категории
-                        result = scanner.scan_products(
-                            category_ids=cat_codes, on_category_start=on_category_start
-                        )
-                    finally:
-                        scanner.close()
-
-                    # Сканер увидел отмену — дальше по категориям и магазинам не идём
-                    if result.get("cancelled"):
-                        bg_db.query(ScanJob).filter(ScanJob.id == job_id).update(
-                            {"progress_message": "Отменено пользователем"}
-                        )
-                        bg_db.commit()
-                        return
-
-                    total_scanned += result.get("scanned", 0)
-                    total_added += result.get("added", 0)
-                    total_updated += result.get("updated", 0)
-
-                    done_pct = int((idx + 1) * total_categories / total_operations * 100) if total_operations else 0
-                    bg_db.query(ScanJob).filter(ScanJob.id == job_id).update({
-                        "items_scanned": total_scanned,
-                        "items_added": total_added,
-                        "items_updated": total_updated,
-                        "progress": done_pct,
-                    })
-                    bg_db.commit()
-                except Exception as e:
-                    bg_db.rollback()
-                    logger.error(f"ERROR scanning store {store_code}: {str(e)}")
-                    job_db = bg_db.query(ScanJob).filter(ScanJob.id == job_id).first()
-                    job_db.progress_message = f"Ошибка {store_code}: {str(e)}"
-                    bg_db.commit()
-
-            # Если задание отменили во время скана — остаётся cancelled
-            finalize_job(
-                bg_db, job_id, "completed",
-                progress=100,
-                progress_message="Завершено",
-                items_scanned=total_scanned,
-                items_added=total_added,
-                items_updated=total_updated,
-            )
-
-        except Exception as e:
-            finalize_job(
-                bg_db, job_id, "failed",
-                error_message=str(e),
-                progress_message=f"Ошибка: {str(e)}",
-            )
-        finally:
-            bg_db.close()
-
-    if background_tasks:
-        background_tasks.add_task(run_scan_all)
-        return {"job_id": job_id, "status": "pending", "stores_count": len(stores)}
-    else:
-        run_scan_all()
-        return {"job_id": job_id, "status": "completed"}
+    stores_count = db.query(Store).filter(Store.is_active.is_(True)).count()
+    background_tasks.add_task(run_scan_all_stores, job_id)
+    return {"job_id": job_id, "status": "pending", "stores_count": stores_count}
 
 
 @router.post("/catalog/scan-prices")
@@ -712,126 +478,33 @@ def scan_prices_in_store(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# Глобальная переменная для отслеживания статуса обновления каталога
-_catalog_update_status = {
-    "in_progress": False,
-    "total": 0,
-    "processed": 0,
-    "updated": 0,
-    "not_found": 0,
-    "errors": [],
-}
-_catalog_update_lock = threading.Lock()
-
-
-def _fetch_and_update_categories_background():
-    """Фоновая задача для полной замены каталога категорий."""
-    from src.server.services.catalog_updater import replace_catalog_from_api
-    from src.server.database import SessionLocal
-
-    global _catalog_update_status
-
-    try:
-        with _catalog_update_lock:
-            _catalog_update_status["in_progress"] = True
-            _catalog_update_status["errors"] = []
-
-        logger.info("Начало полной замены каталога из API Магнита...")
-
-        # Магазин: STORE_CODE из .env, иначе первый активный магазин из БД.
-        # Тип — из STORE_TYPE, иначе тип самого магазина.
-        store_code = os.getenv("STORE_CODE")
-        store_type = os.getenv("STORE_TYPE")
-
-        db = SessionLocal()
-        try:
-            if store_code:
-                if not store_type:
-                    row = db.query(Store).filter(Store.store_code == store_code).first()
-                    store_type = row.store_type if row else None
-            else:
-                row = db.query(Store).filter(Store.is_active.is_(True)).first()
-                if row:
-                    store_code, store_type = row.store_code, row.store_type
-        finally:
-            db.close()
-
-        logger.debug(f"DEBUG: store_code={store_code}, store_type={store_type}")
-
-        if store_code:
-            stats = replace_catalog_from_api(store_code=store_code, store_type=store_type)
-        else:
-            stats = {
-                "status": "error",
-                "errors": ["Не выбран магазин: задайте STORE_CODE или добавьте магазин"],
-            }
-
-        logger.debug(f"DEBUG: replace_catalog_from_api returned: {stats}")
-
-        # Проверяем статус ответа
-        if stats.get("status") == "error":
-            # Ошибка при получении данных из API
-            with _catalog_update_lock:
-                _catalog_update_status["errors"] = stats.get("errors", ["Unknown error"])
-            logger.error(
-                f"Ошибка при получении данных из API: {_catalog_update_status['errors']}"
-            )
-            return
-
-        # Успешная замена
-        with _catalog_update_lock:
-            _catalog_update_status["total"] = stats.get("total", 0)
-            _catalog_update_status["processed"] = stats.get("total", 0)  # все обработаны
-            _catalog_update_status["updated"] = stats.get("updated", 0)
-            _catalog_update_status["not_found"] = (
-                0  # при полной замене не удаляем по-старому
-            )
-
-            if stats.get("errors"):
-                _catalog_update_status["errors"] = stats["errors"]
-
-        logger.info(
-            f"Каталог заменён: Всего {stats.get('total', 0)} категорий, "
-            f"Добавлено: {stats.get('added', 0)}, Обновлено: {stats.get('updated', 0)}, "
-            f"Удалено: {stats.get('deleted', 0)}"
-        )
-
-    except Exception as e:
-        with _catalog_update_lock:
-            _catalog_update_status["errors"].append(f"Критическая ошибка: {str(e)}")
-        logger.error(f"Ошибка при замене каталога: {e}")
-        logger.exception("Traceback")
-    finally:
-        with _catalog_update_lock:
-            _catalog_update_status["in_progress"] = False
-
-
 @router.post("/categories/fetch-magnit-ids")
-def fetch_magnit_category_ids_endpoint(db: Session = Depends(get_db)):
+def fetch_magnit_category_ids_endpoint():
     """
-    Запустить получение ID категорий из API Магнита.
-    Запускается в фоновом потоке.
+    Запустить полную замену каталога категорий из API Магнита (фоновый поток).
+    Статус — GET /api/categories/fetch-magnit-ids/status.
     """
-    global _catalog_update_status
-
-    with _catalog_update_lock:
-        if _catalog_update_status["in_progress"]:
-            return {
-                "status": "in_progress",
-                "message": "Обновление уже в процессе",
-                "progress": {
-                    "processed": _catalog_update_status["processed"],
-                    "total": _catalog_update_status["total"],
-                },
-            }
-
-    # Запускаем фоновую задачу в отдельном потоке
-    thread = threading.Thread(
-        target=run_logged,
-        args=(_fetch_and_update_categories_background,),
-        daemon=True,
+    from src.server.services.catalog_updater import (
+        end_catalog_update,
+        get_catalog_update_status,
+        run_catalog_update,
+        try_begin_catalog_update,
     )
-    thread.start()
+
+    if not try_begin_catalog_update():
+        status = get_catalog_update_status()
+        return {
+            "status": "in_progress",
+            "message": "Обновление уже в процессе",
+            "progress": {"processed": status["processed"], "total": status["total"]},
+        }
+
+    thread = threading.Thread(target=run_logged, args=(run_catalog_update,), daemon=True)
+    try:
+        thread.start()
+    except Exception:
+        end_catalog_update()
+        raise
 
     return {
         "status": "started",
@@ -842,18 +515,9 @@ def fetch_magnit_category_ids_endpoint(db: Session = Depends(get_db)):
 @router.get("/categories/fetch-magnit-ids/status")
 def get_fetch_status():
     """Получить статус обновления каталога."""
-    global _catalog_update_status
+    from src.server.services.catalog_updater import get_catalog_update_status
 
-    with _catalog_update_lock:
-        return {
-            "in_progress": _catalog_update_status["in_progress"],
-            "total": _catalog_update_status["total"],
-            "processed": _catalog_update_status["processed"],
-            "updated": _catalog_update_status["updated"],
-            "not_found": _catalog_update_status["not_found"],
-            "error_count": len(_catalog_update_status["errors"]),
-            "errors": _catalog_update_status["errors"][:10],  # Первые 10 ошибок
-        }
+    return get_catalog_update_status()
 
 
 @router.delete("/products/clear")

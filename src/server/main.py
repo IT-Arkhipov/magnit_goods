@@ -67,10 +67,8 @@ async def lifespan(app: FastAPI):
     finally:
         db_session.close()
 
-    # Инициализация планировщика
-    store_code = os.getenv("STORE_CODE")
-    if store_code:
-        init_scheduler(store_code)
+    # Планировщик: ежедневное сканирование всех магазинов, еженедельное обновление каталога
+    init_scheduler()
 
     yield
 

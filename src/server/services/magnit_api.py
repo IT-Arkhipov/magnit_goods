@@ -79,21 +79,19 @@ class MagnitAPIClient:
         offset: int = 0,
     ) -> dict:
         """
-        Универсальный метод для поиска категорий и товаров через /webgate/v2/goods/search.
+        Товары категорий через /webgate/v2/goods/search.
 
         Args:
             store_code: Код магазина
             store_type: Тип магазина (MM, ME, DG, GM, MO, MC, ZARYAD, MM_MINI)
                        Или числовой код (6 для Экстра, и т.д.)
-            category_ids: Список ID категорий для фильтрации товаров
-                         Если None - возвращаются категории
-                         Если указаны - возвращаются товары из этих категорий
+            category_ids: magnit_id категорий, товары которых нужны
             limit: Кол-во результатов за запрос (макс ~50-100)
             offset: Смещение для пагинации
 
         Returns:
             {
-                "items": [...],  # Категории или товары
+                "items": [...],  # Товары (см. _parse_product)
                 "total": 1234,
                 "hasMore": True,
                 "next_offset": 50
@@ -124,30 +122,11 @@ class MagnitAPIClient:
 
             logger.debug(f"DEBUG: Response keys: {list(data.keys())}")
 
-            # Парсим ответ
-            items = []
-
-            if category_ids:
-                # Ищем товары - они в items
-                raw_items = data.get("items", [])
-                for item in raw_items:
-                    parsed_item = self._parse_product(item)
-                    if parsed_item:
-                        items.append(parsed_item)
-            else:
-                # Ищем категории - используем fastCategories на верхнем уровне
-                # или fastCategoriesExtended внутри category (если есть)
-                fast_cats = data.get("fastCategories", [])
-                category_data = data.get("category", {}) or {}
-                fast_cats_extended = category_data.get("fastCategoriesExtended", [])
-
-                # Используем fastCategoriesExtended если есть, иначе fastCategories
-                cats_source = fast_cats_extended if fast_cats_extended else fast_cats
-
-                for cat in cats_source:
-                    parsed_item = self._parse_category(cat)
-                    if parsed_item:
-                        items.append(parsed_item)
+            # Товары — в items; не распознанные (без id или цены) пропускаются
+            items = [
+                parsed for parsed in (self._parse_product(item) for item in data.get("items", []))
+                if parsed
+            ]
 
             # Пагинация
             pagination = data.get("pagination", {})
@@ -228,24 +207,6 @@ class MagnitAPIClient:
             return response.json()
         except Exception as e:
             logger.error(f"Error fetching category {category_id}: {e}")
-            return None
-
-    def _parse_category(self, item: dict) -> Optional[dict]:
-        """Парсинг данных категории из ответа API."""
-        try:
-            category_id = item.get("id") or item.get("categoryId")
-            if not category_id:
-                return None
-
-            return {
-                "magnit_id": int(category_id),
-                "name": item.get("name", "Без названия"),
-                "url": item.get("url", ""),
-                "product_count": item.get("productCount", 0),
-                "parent_id": item.get("parentId"),
-            }
-        except Exception as e:
-            logger.error(f"Ошибка парсинга категории: {e}")
             return None
 
     def _parse_product(self, item: dict) -> Optional[dict]:

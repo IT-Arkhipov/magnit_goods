@@ -4,10 +4,12 @@
 
 import json
 import logging
+import os
+import threading
 from pathlib import Path
 from typing import Dict, List, Optional
 from src.server.database import SessionLocal
-from src.server.models import Category, Product
+from src.server.models import Category, Product, Store
 from src.server.services.magnit_api import MagnitAPIClient
 
 logger = logging.getLogger(__name__)
@@ -263,3 +265,118 @@ def replace_catalog_from_api(store_code: str = None, store_type: str = None) -> 
         return updater.replace_all_categories()
     finally:
         updater.close()
+
+
+# Статус полной замены каталога — в памяти процесса (не в ScanJob). Читается
+# GET /api/categories/fetch-magnit-ids/status; запускают кнопка в UI и
+# еженедельное задание планировщика — одновременно идёт не больше одной замены.
+_catalog_update_status = {
+    "in_progress": False,
+    "total": 0,
+    "processed": 0,
+    "updated": 0,
+    "not_found": 0,
+    "errors": [],
+}
+_catalog_update_lock = threading.Lock()
+
+
+def get_catalog_update_status() -> dict:
+    """Снимок статуса полной замены каталога (не больше 10 ошибок)."""
+    with _catalog_update_lock:
+        return {
+            "in_progress": _catalog_update_status["in_progress"],
+            "total": _catalog_update_status["total"],
+            "processed": _catalog_update_status["processed"],
+            "updated": _catalog_update_status["updated"],
+            "not_found": _catalog_update_status["not_found"],
+            "error_count": len(_catalog_update_status["errors"]),
+            "errors": _catalog_update_status["errors"][:10],
+        }
+
+
+def try_begin_catalog_update() -> bool:
+    """Занять флаг замены каталога. False — замена уже идёт.
+
+    Проверка и взятие флага — под одной блокировкой: два быстрых запроса не
+    запустят две полные замены одновременно. После True вызывающий обязан
+    вызвать run_catalog_update (она снимает флаг) или end_catalog_update.
+    """
+    with _catalog_update_lock:
+        if _catalog_update_status["in_progress"]:
+            return False
+        _catalog_update_status["in_progress"] = True
+        _catalog_update_status["errors"] = []
+        return True
+
+
+def end_catalog_update() -> None:
+    """Снять флаг замены каталога."""
+    with _catalog_update_lock:
+        _catalog_update_status["in_progress"] = False
+
+
+def _catalog_source_store() -> tuple[Optional[str], Optional[str]]:
+    """Магазин-источник каталога: STORE_CODE из .env, иначе первый активный магазин.
+    Тип — из STORE_TYPE, иначе тип самого магазина."""
+    store_code = os.getenv("STORE_CODE")
+    store_type = os.getenv("STORE_TYPE")
+    db = SessionLocal()
+    try:
+        if store_code:
+            if not store_type:
+                row = db.query(Store).filter(Store.store_code == store_code).first()
+                store_type = row.store_type if row else None
+        else:
+            row = db.query(Store).filter(Store.is_active.is_(True)).first()
+            if row:
+                store_code, store_type = row.store_code, row.store_type
+    finally:
+        db.close()
+    return store_code, store_type
+
+
+def run_catalog_update() -> dict:
+    """Полная замена каталога с записью статуса; флаг in_progress снимается в конце.
+
+    Вызывать после успешного try_begin_catalog_update(). Возвращает статистику
+    replace_catalog_from_api (или {"status": "error", "errors": [...]}).
+    """
+    stats: dict = {"status": "error", "errors": []}
+    try:
+        logger.info("Начало полной замены каталога из API Магнита...")
+        store_code, store_type = _catalog_source_store()
+        if store_code:
+            stats = replace_catalog_from_api(store_code=store_code, store_type=store_type)
+        else:
+            stats = {
+                "status": "error",
+                "errors": ["Не выбран магазин: задайте STORE_CODE или добавьте магазин"],
+            }
+
+        with _catalog_update_lock:
+            if stats.get("status") == "error":
+                _catalog_update_status["errors"] = stats.get("errors") or ["Unknown error"]
+            else:
+                _catalog_update_status["total"] = stats.get("total", 0)
+                _catalog_update_status["processed"] = stats.get("total", 0)
+                _catalog_update_status["updated"] = stats.get("updated", 0)
+                _catalog_update_status["not_found"] = 0
+                _catalog_update_status["errors"] = stats.get("errors") or []
+
+        if stats.get("status") == "error":
+            logger.error(f"Ошибка замены каталога: {stats.get('errors')}")
+        else:
+            logger.info(
+                f"Каталог заменён: Всего {stats.get('total', 0)} категорий, "
+                f"Добавлено: {stats.get('added', 0)}, Обновлено: {stats.get('updated', 0)}, "
+                f"Удалено: {stats.get('deleted', 0)}"
+            )
+    except Exception as e:
+        logger.exception("Ошибка при замене каталога")
+        with _catalog_update_lock:
+            _catalog_update_status["errors"].append(f"Критическая ошибка: {e}")
+        stats = {"status": "error", "errors": [str(e)]}
+    finally:
+        end_catalog_update()
+    return stats

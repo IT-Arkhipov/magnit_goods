@@ -13,7 +13,6 @@ from src.server.schemas import StoreCreate, StoreUpdate, StoreResponse, SelectSt
 from src.server.constants import STORE_TYPE_MAP as API_STORE_TYPE_MAP
 from src.server.utils.city_extractor import extract_city_from_address
 from src.server.constants import PREVIEW_STORE_TYPES, STORE_TYPE_CODES
-from src.server.scheduler import register_jobs
 
 logger = logging.getLogger(__name__)
 
@@ -135,7 +134,11 @@ def select_store(
     req: SelectStoreRequest,
     db: Session = Depends(get_db),
 ):
-    """Выбрать магазин из БД по адресу и типу → обновить .env."""
+    """Выбрать магазин из БД по адресу и типу → обновить .env.
+
+    Выбранный магазин — источник каталога категорий (CatalogUpdater); планировщик
+    от него не зависит: он сканирует все активные магазины.
+    """
     # Строим запрос
     query = db.query(Store).filter(
         Store.is_active == True,  # noqa: E712
@@ -156,7 +159,6 @@ def select_store(
 
     # Обновляем .env если нужно
     env_updated = False
-    scheduler_updated = False
     if req.update_env:
         env_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), '.env')
         dotenv.load_dotenv(env_path)
@@ -186,14 +188,8 @@ def select_store(
 
         env_updated = True
 
-        # Применяем выбор к работающему процессу без перезапуска сервера:
-        # переменные окружения и задания планировщика (запустится, если ещё не был).
+        # Применяем выбор к работающему процессу без перезапуска сервера
         os.environ.update(env_vars)
-        try:
-            register_jobs(store.store_code)
-            scheduler_updated = True
-        except Exception:
-            logger.exception("Не удалось перерегистрировать задания планировщика")
 
     return {
         "store_code": store.store_code,
@@ -202,7 +198,6 @@ def select_store(
         "address": store.full_address,
         "city": store.city,
         "env_updated": env_updated,
-        "scheduler_updated": scheduler_updated,
     }
 
 
